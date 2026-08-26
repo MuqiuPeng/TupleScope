@@ -23,6 +23,7 @@ import {
 } from '@statescope/scenario-engine';
 import type { CaptureScope, Run, Scenario } from '@statescope/core';
 import { createGuard, mintToken } from './security.js';
+import { removeSession, writeSession } from './session.js';
 
 interface WorkspaceConfig {
   name: string;
@@ -230,6 +231,16 @@ async function main(): Promise<void> {
   await app.listen({ port: PORT, host: '127.0.0.1' });
 
   const url = `http://127.0.0.1:${PORT}/?token=${token}`;
+  // So the URL is recoverable after the terminal that printed it is gone.
+  const sessionFile = writeSession({
+    pid: process.pid,
+    port: PORT,
+    token,
+    url,
+    workspace: config.name,
+    startedAt: new Date().toISOString(),
+  });
+
   console.log(`
   StateScope runtime
   ------------------
@@ -237,9 +248,11 @@ async function main(): Promise<void> {
   Workspace ${config.name}  ->  ${config.baseUrl}
   Capture   ${adapter.captureMethod} (${adapter.detection} detection)
   Scenarios ${scenarios.length} loaded from ${config.scenariosDir}
+${sessionFile ? `  Lost it?  pnpm url        (reads ${sessionFile})` : ''}
 `);
 
   const shutdown = async (): Promise<void> => {
+    removeSession(PORT);
     await app.close();
     await adapter.close();
     process.exit(0);

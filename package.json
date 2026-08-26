@@ -9,7 +9,8 @@
     "build": "tsc -b packages/core packages/expr packages/http-runner packages/db-postgres packages/scenario-engine apps/runtime",
     "typecheck": "pnpm build",
     "start": "pnpm --filter @statescope/runtime start",
-    "test": "pnpm -r --no-bail run test"
+    "test": "pnpm -r --no-bail run test",
+    "url": "pnpm --filter @statescope/runtime url"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -32,6 +32,13 @@ pnpm start
 
 The runtime prints a URL carrying a per-session access token. Open that.
 
+Lost it? The terminal that printed it is not the only copy:
+
+```bash
+open "$(pnpm -s url)"     # the running instance, token and all
+pnpm url --all            # if you have several
+```
+
 Write a scenario in `scenariosDir`:
 
 ```yaml
@@ -264,6 +271,11 @@ rebinding gets past the same-origin policy. So:
 
 Masking happens at capture, before a value is ever stored or serialised — not at
 render time, which would leak into run history, `--json` output and CI reports.
+
+The token is also written to `~/.statescope/sessions/<port>.json`, mode 0600, so
+`pnpm url` can recover it after the terminal is gone. That file is deleted on a
+clean shutdown, and a stale one left by a crash is discarded on read rather than
+handed back as a dead URL.
 
 ## Status
 
