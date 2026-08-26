@@ -7,81 +7,30 @@
  * serves the UI.
  */
 
-import { readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
-import YAML from 'yaml';
-import { MvccPostgresAdapter } from '@statescope/db-postgres';
-import { HttpRunner } from '@statescope/http-runner';
+import { addAssertion, removeAssertion, ScenarioSaveError } from '@statescope/scenario-engine';
 import {
-  ScenarioEngine,
-  addAssertion,
-  removeAssertion,
-  ScenarioSaveError,
-} from '@statescope/scenario-engine';
+  loadWorkspaceConfig,
+  openWorkspace,
+  WorkspaceConfigError,
+  WorkspaceError,
+} from '@statescope/workspace';
 import type { CaptureScope, Run, Scenario } from '@statescope/core';
 import { createGuard, mintToken } from './security.js';
 import { removeSession, writeSession } from './session.js';
 
-interface WorkspaceConfig {
-  name: string;
-  baseUrl: string;
-  database: { connectionString: string };
-  scenariosDir: string;
-  identities?: Array<{ id: string; header: { name: string; value: string } }>;
-  ignoreColumns?: string[];
-  maskColumns?: string[];
-  /** Endpoint that wipes and reseeds, used by datasets declaring `resetFirst`. */
-  resetUrl?: string;
-  /** Idle window watched before each run to detect writers other than the scenario. */
-  baselineWindowMs?: number;
-}
-
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env['STATESCOPE_PORT'] ?? 7420);
-const CONFIG_PATH = resolve(
-  process.env['STATESCOPE_CONFIG'] ?? resolve(here, '../../../statescope.yaml'),
-);
-
-async function loadConfig(): Promise<{ config: WorkspaceConfig; dir: string }> {
-  const raw = await readFile(CONFIG_PATH, 'utf8');
-  const config = YAML.parse(raw) as WorkspaceConfig;
-  const dir = dirname(CONFIG_PATH);
-  if (!isAbsolute(config.scenariosDir)) {
-    config.scenariosDir = resolve(dir, config.scenariosDir);
-  }
-  return { config, dir };
-}
 
 async function main(): Promise<void> {
-  const { config } = await loadConfig();
+  const config = await loadWorkspaceConfig();
   const token = process.env['STATESCOPE_TOKEN'] ?? mintToken();
 
-  const adapter = new MvccPostgresAdapter({
-    connectionString: config.database.connectionString,
-    ...(config.maskColumns ? { maskColumns: config.maskColumns } : {}),
-  });
-  const runner = new HttpRunner({
-    baseUrl: config.baseUrl,
-    ...(config.identities ? { identities: config.identities } : {}),
-  });
-  const engine = new ScenarioEngine({
-    adapter,
-    runner,
-    baselineWindowMs: config.baselineWindowMs ?? 0,
-    ...(config.resetUrl
-      ? {
-          reset: async () => {
-            const response = await fetch(config.resetUrl!, { method: 'POST' });
-            if (!response.ok) {
-              throw new Error(`Reset endpoint answered ${response.status}. Is the backend running?`);
-            }
-          },
-        }
-      : {}),
-  });
+  const workspace = openWorkspace(config);
+  const { adapter, engine } = workspace;
 
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'warn' } });
   app.addHook('onRequest', createGuard({ token, port: PORT, publicPaths: new Set(['/health']) }));
@@ -93,7 +42,7 @@ async function main(): Promise<void> {
   /** Which file each scenario came from, so an edit can be written back to it. */
   let files = new Map<string, string>();
   const reloadScenarios = async (): Promise<void> => {
-    const loaded = await loadScenariosWithPaths(config.scenariosDir);
+    const loaded = await workspace.scenarios();
     scenarios = loaded.map((l) => l.scenario);
     files = new Map(loaded.map((l) => [l.scenario.id, l.file]));
   };
@@ -155,7 +104,7 @@ async function main(): Promise<void> {
 
     let scope: CaptureScope;
     try {
-      scope = await buildScope(adapter, scenario, config);
+      scope = await workspace.scopeFor(scenario);
     } catch (error) {
       return reply.status(503).send({
         error: 'DATABASE_UNREACHABLE',
@@ -254,68 +203,11 @@ ${sessionFile ? `  Lost it?  pnpm url        (reads ${sessionFile})` : ''}
   const shutdown = async (): Promise<void> => {
     removeSession(PORT);
     await app.close();
-    await adapter.close();
+    await workspace.close();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
-}
-
-/**
- * Loads scenarios while remembering which file each came from, so a promoted
- * assertion can be written back to the right one.
- */
-async function loadScenariosWithPaths(
-  dir: string,
-): Promise<Array<{ scenario: Scenario; file: string }>> {
-  const { readdir } = await import('node:fs/promises');
-  const { loadScenario } = await import('@statescope/scenario-engine');
-  const names = (await readdir(dir)).filter((f) => f.endsWith('.yaml') || f.endsWith('.yml')).sort();
-  const out: Array<{ scenario: Scenario; file: string }> = [];
-  for (const name of names) {
-    const file = resolve(dir, name);
-    out.push({ scenario: await loadScenario(file), file });
-  }
-  return out;
-}
-
-/**
- * Turns a scenario's optional `watch` into a capture scope.
- *
- * Omitting `watch` observes everything, which is the better default: a
- * hand-picked list quietly hides whatever it forgot, and demanding one before
- * the first run is the main thing standing between a new user and their first
- * diff.
- */
-async function buildScope(
-  adapter: MvccPostgresAdapter,
-  scenario: Scenario,
-  config: WorkspaceConfig,
-): Promise<CaptureScope> {
-  const ignoreColumns = [...(config.ignoreColumns ?? []), ...(scenario.ignoreColumns ?? [])];
-  const maskedColumns = [...(config.maskColumns ?? []), ...(scenario.maskColumns ?? [])];
-
-  if (!scenario.watch || scenario.watch.length === 0) {
-    return adapter.fullScope({ ignoreColumns, maskedColumns });
-  }
-  const full = await adapter.fullScope({ ignoreColumns, maskedColumns });
-  const byName = new Map(full.tables.map((t) => [t.table, t]));
-  return {
-    allTables: false,
-    tables: scenario.watch.map((spec) => {
-      const base = byName.get(spec.table);
-      if (!base) {
-        throw new Error(
-          `Scenario \`${scenario.id}\` watches \`${spec.table}\`, which is not a table in this database.`,
-        );
-      }
-      return {
-        ...base,
-        ...(spec.where !== undefined ? { where: spec.where } : {}),
-        ignoreColumns: [...ignoreColumns, ...(spec.ignoreColumns ?? [])],
-      };
-    }),
-  };
 }
 
 void main().catch((error: unknown) => {

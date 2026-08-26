@@ -35,6 +35,9 @@ importers:
       '@statescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
+      '@statescope/workspace':
+        specifier: workspace:*
+        version: link:../../packages/workspace
       fastify:
         specifier: ^5.2.0
         version: 5.12.1
@@ -128,6 +131,28 @@ importers:
       '@statescope/http-runner':
         specifier: workspace:*
         version: link:../http-runner
+      yaml:
+        specifier: ^2.6.1
+        version: 2.9.0
+    devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
+
+  packages/workspace:
+    dependencies:
+      '@statescope/core':
+        specifier: workspace:*
+        version: link:../core
+      '@statescope/db-postgres':
+        specifier: workspace:*
+        version: link:../db-postgres
+      '@statescope/http-runner':
+        specifier: workspace:*
+        version: link:../http-runner
+      '@statescope/scenario-engine':
+        specifier: workspace:*
+        version: link:../scenario-engine
       yaml:
         specifier: ^2.6.1
         version: 2.9.0

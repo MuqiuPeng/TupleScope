@@ -19,6 +19,9 @@
     },
     {
       "path": "../../packages/scenario-engine"
+    },
+    {
+      "path": "../../packages/workspace"
     }
   ],
   "exclude": [
