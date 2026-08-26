@@ -25,8 +25,15 @@
  * The cookie is not a convenience. A page loaded with `?token=` does not pass
  * that token on to its own stylesheet and script tags, so without it the guard
  * answers 401 to the UI's own assets and the page renders as unstyled text with
- * no behaviour. It is set the first time a valid query token arrives, and it is
- * SameSite=Strict, so a cross-site request still cannot carry it.
+ * no behaviour. It is SameSite=Strict, so a cross-site request still cannot
+ * carry it.
+ *
+ * Any one of the three matching is enough, and that matters: the token is
+ * minted per start, so after a restart the browser is holding a cookie for a
+ * token that no longer exists. If the cookie were consulted first — or were
+ * allowed to veto — pasting the fresh URL would still be refused, and the only
+ * way back in would be to clear site data. A valid query token therefore always
+ * wins and replaces the stale cookie.
  */
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -98,24 +105,28 @@ export function createGuard(options: GuardOptions) {
 
     if (options.publicPaths?.has(request.url.split('?')[0] ?? '')) return;
 
-    // 2. The token, from whichever of the three places it arrived in.
-    const header = request.headers['x-statescope-token'];
+    // 2. The token. Any one of the three sources matching is enough — a stale
+    //    cookie from a previous run must not shadow a freshly pasted URL.
+    const rawHeader = request.headers['x-statescope-token'];
+    const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
     const query = (request.query as { token?: string } | undefined)?.token;
-    const provided =
-      (Array.isArray(header) ? header[0] : header) ??
-      cookieToken(request.headers.cookie) ??
-      query;
+    const cookie = cookieToken(request.headers.cookie);
 
-    if (provided && query && tokenMatches(provided, options.token)) {
+    const matched = [header, query, cookie].some(
+      (candidate) => candidate !== undefined && tokenMatches(candidate, options.token),
+    );
+
+    if (matched && query !== undefined) {
       // Arrived by URL: hand the browser a cookie so the page's own stylesheet,
-      // script and later fetches are not each refused.
+      // script and later fetches are not each refused — and so a cookie left
+      // over from an earlier run is overwritten rather than left to rot.
       void reply.header(
         'set-cookie',
         `${COOKIE}=${options.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
       );
     }
 
-    if (!provided || !tokenMatches(provided, options.token)) {
+    if (!matched) {
       // A person who typed the address into a browser gets a page that says
       // where the token is. A fetch() gets JSON it can act on. Same refusal,
       // told in the language the caller speaks.

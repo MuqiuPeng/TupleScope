@@ -113,6 +113,35 @@ describe('createGuard', () => {
     assert.equal(result.body?.error, 'UNAUTHORISED');
   });
 
+  it('lets a fresh URL in past a cookie from a previous run', async () => {
+    // The token is minted per start, so after a restart the browser is holding
+    // a cookie for a token that no longer exists. If that could veto, pasting
+    // the new URL would still be refused and the only way in would be to clear
+    // site data.
+    const result = await call({
+      url: '/',
+      query: { token: TOKEN },
+      cookie: 'statescope_token=token-from-the-previous-run',
+    });
+    assert.ok(allowed(result), 'the fresh query token should win');
+    // ...and the stale cookie is overwritten, not left to rot.
+    assert.match(result.headers['set-cookie'] ?? '', new RegExp(`^statescope_token=${TOKEN};`));
+  });
+
+  it('lets a header through past a stale cookie too', async () => {
+    assert.ok(allowed(await call({ header: TOKEN, cookie: 'statescope_token=stale' })));
+  });
+
+  it('refuses when every source is wrong', async () => {
+    const result = await call({
+      header: 'no',
+      cookie: 'statescope_token=nope',
+      query: { token: 'nah' },
+    });
+    assert.equal(result.status, 401);
+    assert.equal(result.headers['set-cookie'], undefined);
+  });
+
   it('refuses a wrong cookie', async () => {
     assert.equal((await call({ cookie: 'statescope_token=nope' })).status, 401);
   });
