@@ -253,6 +253,100 @@ describe('ScenarioEngine', () => {
     assert.equal(f.calls.length, 1);
   });
 
+  it('fails a step that got an error status it never said to expect', async () => {
+    // The forbidden green this closes: a negative assertion — "nothing was
+    // written" — is evidence only if the request reached the handler. Over a
+    // 401 nothing was written because nothing ran, and the assertion passes
+    // vacuously. Rotate a token or mistype a path and the double-charge check
+    // goes green exactly when it stops working.
+    for (const status of [401, 404, 500, 503]) {
+      const f = fakes({ responses: [{ status, body: {} }] });
+      const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+      const run = await engine.run(
+        scenario([
+          {
+            id: 'replay',
+            name: 'replay',
+            request: { method: 'POST', path: '/a' },
+            assert: ['hasWrite(changes(*)) == false'],
+          },
+        ]),
+        'd',
+        SCOPE,
+      );
+      assert.equal(run.status, 'failed', `HTTP ${status} should not pass`);
+      const injected = run.steps[0]!.assertions[0]!;
+      assert.equal(injected.source, 'response.status < 400');
+      assert.equal(injected.actual, String(status));
+      // The message has to explain why an unasked-for check appeared.
+      assert.match(injected.reason!, /Assertions about what was NOT written prove nothing/);
+    }
+  });
+
+  it('still lets a 2xx through with no expectStatus', async () => {
+    for (const status of [200, 201, 204]) {
+      const f = fakes({ responses: [{ status, body: {} }] });
+      const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+      const run = await engine.run(
+        scenario([{ id: 'a', name: 'a', request: { method: 'POST', path: '/a' } }]),
+        'd',
+        SCOPE,
+      );
+      assert.equal(run.status, 'passed', `HTTP ${status} should pass`);
+      assert.equal(run.steps[0]!.assertions.length, 0);
+    }
+  });
+
+  it('refuses an assertion whose placeholder nothing captured', async () => {
+    // Predicates are raw source slices, not parsed nodes, so the evaluator's
+    // own "no variable was captured" guard never sees them: the text
+    // `{{payment_id}}` gets compared against the column, matches nothing, and
+    // `count(...) == 0` passes over the very row it was written to catch.
+    const f = fakes({ responses: [{ status: 200, body: { paymentId: 'p1' } }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([
+        {
+          id: 'create',
+          name: 'create',
+          request: { method: 'POST', path: '/a' },
+          capture: { payment_id: 'response.body.id' }, // the field is `paymentId`
+        },
+        {
+          id: 'check',
+          name: 'check',
+          request: { method: 'POST', path: '/b' },
+          assert: ['count(inserted(refunds).where(payment_id = {{payment_id}})) == 0'],
+        },
+      ]),
+      'd',
+      SCOPE,
+    );
+    const result = run.steps[1]!.assertions[0]!;
+    assert.equal(result.status, 'unevaluable');
+    assert.match(result.reason!, /nothing captured `payment_id`/);
+  });
+
+  it('does not quote a placeholder that is already quoted', async () => {
+    // `where(id = '{{payment_id}}')` is how the examples quote every other
+    // literal. Quoting again produced `"p1"` with the quotes inside the value,
+    // which matches no row — so the assertion passed while the row it was
+    // looking for sat in the diff.
+    assert.equal(
+      template("where(id = '{{payment_id}}')", { payment_id: 'p1' }, { quote: true }),
+      "where(id = 'p1')",
+    );
+    assert.equal(
+      template('where(id = "{{payment_id}}")', { payment_id: 'p1' }, { quote: true }),
+      'where(id = "p1")',
+    );
+    // Unquoted still gets quoted, so a value with a space cannot split a token.
+    assert.equal(
+      template('where(id = {{payment_id}})', { payment_id: 'a b' }, { quote: true }),
+      'where(id = "a b")',
+    );
+  });
+
   it('scores an expected rejection as a pass and keeps going', async () => {
     const f = fakes({ responses: [{ status: 422, body: { error: 'ALREADY_REFUNDED' } }, { status: 200, body: {} }] });
     const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });

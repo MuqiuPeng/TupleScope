@@ -174,8 +174,16 @@ export class ScenarioEngine {
         this.check(source, changes, exchange, run.variables),
       );
 
+      // An unstated expectation is not "any status will do". A negative
+      // assertion — `hasWrite(changes(*)) == false`, `count(...) == 0` — is
+      // evidence only if the request reached the handler; over a 401 or a 500
+      // nothing was written because nothing ran, and the assertion passes
+      // vacuously. That turns a broken endpoint into a green build precisely
+      // for the checks this product exists to make.
       const statusMatched =
-        step.expectStatus === undefined || exchange.response.status === step.expectStatus;
+        step.expectStatus === undefined
+          ? exchange.response.status < 400
+          : exchange.response.status === step.expectStatus;
       const failed = assertions.some((a) => a.status === 'failed') || !statusMatched;
 
       return {
@@ -199,12 +207,26 @@ export class ScenarioEngine {
         assertions: statusMatched
           ? assertions
           : [
-              {
-                source: `response.status == ${step.expectStatus}`,
-                status: 'failed',
-                expected: String(step.expectStatus),
-                actual: String(exchange.response.status),
-              },
+              // Rendered as the assertion the author did not have to write, so
+              // the report says which expectation was violated rather than
+              // `response.status == undefined`.
+              step.expectStatus === undefined
+                ? {
+                    source: 'response.status < 400',
+                    status: 'failed' as const,
+                    expected: 'a success status',
+                    actual: String(exchange.response.status),
+                    reason:
+                      'The step did not declare expectStatus, so a success was assumed. ' +
+                      'Assertions about what was NOT written prove nothing over a failed ' +
+                      'request. Add `expectStatus` if this status is intended.',
+                  }
+                : {
+                    source: `response.status == ${step.expectStatus}`,
+                    status: 'failed' as const,
+                    expected: String(step.expectStatus),
+                    actual: String(exchange.response.status),
+                  },
               ...assertions,
             ],
       };
@@ -233,8 +255,25 @@ export class ScenarioEngine {
     exchange: { response: { status: number; headers: Record<string, string> }; body: unknown },
     variables: Readonly<Record<string, string>>,
   ): AssertionResult {
+    const templated = template(source, variables, { quote: true });
+    // A surviving `{{name}}` means nothing captured it. Predicates are raw
+    // source slices rather than parsed nodes, so the evaluator's own
+    // "no variable was captured" guard never sees them — the text is compared
+    // against the column literally, matches nothing, and every negative
+    // assertion built on it passes for the wrong reason.
+    const stranded = [...templated.matchAll(PLACEHOLDER)].map((m) => m[1]);
+    if (stranded.length > 0) {
+      return {
+        source,
+        status: 'unevaluable',
+        reason:
+          `nothing captured ${stranded.map((n) => `\`${n}\``).join(', ')}, so this assertion ` +
+          `was never evaluated against a real value`,
+      };
+    }
+
     try {
-      const expr = parseExpr(template(source, variables, { quote: true }));
+      const expr = parseExpr(templated);
       const { passed, actual, expected } = evaluateAssertion(expr, {
         changes,
         response: {
@@ -270,10 +309,18 @@ export function template(
   variables: Readonly<Record<string, string>>,
   options?: { quote?: boolean },
 ): string {
-  return text.replace(PLACEHOLDER, (match, name: string) => {
+  return text.replace(PLACEHOLDER, (match, name: string, offset: number) => {
     const value = variables[name];
     if (value === undefined) return match;
-    return options?.quote ? JSON.stringify(value) : value;
+    if (!options?.quote) return value;
+    // Already inside quotes — as `where(id = '{{payment_id}}')` is, matching how
+    // the examples quote every other literal. Quoting again yields `"p1"` with
+    // the quotes part of the value, which matches no row, so a `count(...) == 0`
+    // written to catch a duplicate passes while the duplicate sits in the diff.
+    const before = text[offset - 1];
+    const after = text[offset + match.length];
+    if ((before === '"' || before === "'") && before === after) return value;
+    return JSON.stringify(value);
   });
 }
 

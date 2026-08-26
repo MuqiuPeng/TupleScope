@@ -88,11 +88,21 @@ datasets:
           as: merchant
           idempotencyKey: "ref-{{run}}"
         assert:
+          - response.status == 200
           - hasWrite(changes(*)) == false              # the retry wrote nothing
 ```
 
-Note `{{run}}`: a per-run suffix that keeps idempotency keys unique between
-runs. Without it a dataset passes once and then replays its own previous key.
+Two things in there are load-bearing.
+
+`{{run}}` is a per-run suffix that keeps idempotency keys unique between runs.
+Without it a dataset passes once and then replays its own previous key.
+
+And the `response.status` line above the `hasWrite` one is not decoration. An
+assertion about what was *not* written is evidence only if the request reached
+the handler — over a 401 nothing was written because nothing ran. StateScope
+will not let that pass silently (a step that returns 4xx or 5xx without
+declaring `expectStatus` fails on its own), but stating the status you expect
+is what makes the scenario say out loud which of the two it means.
 
 ---
 
