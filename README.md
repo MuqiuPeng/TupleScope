@@ -27,17 +27,49 @@ Local-first. Your database credentials never leave your machine.
 ```bash
 pnpm install && pnpm build
 cp statescope.example.yaml statescope.yaml   # point it at your API and dev database
-pnpm start
 ```
 
-The runtime prints a URL carrying a per-session access token. Open that.
-
-Lost it? The terminal that printed it is not the only copy:
+Two ways in. From a terminal or a pipeline:
 
 ```bash
-open "$(pnpm -s url)"     # the running instance, token and all
-pnpm url --all            # if you have several
+statescope status              does this workspace point at something that answers?
+statescope ls                  every scenario and dataset
+statescope run                 all of them
+statescope run refund/happy    one dataset
 ```
+
+Or the UI, for reading a diff and keeping what you see as an assertion:
+
+```bash
+pnpm start
+open "$(statescope url)"       # right whoever started the runtime
+```
+
+### In CI
+
+```yaml
+- run: statescope run --junit results.xml
+```
+
+| exit | meaning |
+|---|---|
+| 0 | every check evaluated and passed |
+| 1 | a check failed — the system under test is wrong |
+| 2 | a step could not be executed |
+| 3 | **undecided** — it ran, nothing failed, but something was never checked |
+| 4 | bad invocation, or a workspace that will not load |
+| 5 | the target matched no dataset |
+
+`3` is the one that matters. An assertion that could not be *decided* — a
+mutation count against a value-comparing engine, a `single()` that matched
+three rows, a misspelled table name — is neither a pass nor a failure, and in
+CI nothing but the exit code is ever read. Merging it into `0` would make the
+build green on a check that never happened; merging it into `1` would make
+"open a bug against the backend" ambiguous, since a scenario that used to pass
+has opposite owners depending on whether the endpoint regressed or somebody
+narrowed the watch scope.
+
+`--unevaluable=warn` opts out, and says so in the summary and in the envelope.
 
 Write a scenario in `scenariosDir`:
 
@@ -234,15 +266,24 @@ payment id with a fresh idempotency key. Runs started mid-dataset are marked
 
 ```
 packages/
-  core/              types only — no React, no driver, no MCP
+  core/              types and the verdict — no React, no driver, no MCP
   expr/              the selector language: parser, evaluator, exact decimals
   db-postgres/       the mvcc-xmin capture engine
   http-runner/       no retries, no redirect-following, by default
   scenario-engine/   sequencing, variables, assertions, promote, save
+  workspace/         config in, a running engine out — the composition root
+  report/            the JSON envelope and the JUnit writer
 apps/
+  cli/               statescope(1) — drives the engine in-process
   runtime/           local HTTP API + static UI, 127.0.0.1 only
   web/               three-column UI, no bundler
 ```
+
+The CLI never talks to the runtime. CI has no server, and requiring one would
+mean starting a web server, waiting on a health check and managing a token for
+a localhost process the job just launched. `workspace` is what lets the CLI,
+the runtime and (next) MCP be three callers of one assembly rather than three
+assemblies that drift.
 
 `core` holds contracts and nothing else. v0.1 is deliberately relational and
 Postgres-shaped rather than pretending to a database-neutral value model it
