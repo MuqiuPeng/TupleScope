@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+.pgdata/
+
+# Kept local, not published.
+#   The two records below reference private work and an unpublished plan.
+#   The examples and the workspace they configure are for local development;
+#   statescope.example.yaml is the published template.
+docs/prototype-carryover.md
+docs/technical-review.md
+examples/
+statescope.yaml

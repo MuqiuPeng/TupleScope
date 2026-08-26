@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StateScope</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <h1>StateScope</h1>
+        <span class="tagline">run backend scenarios &middot; see exactly what changed</span>
+      </div>
+      <div class="topbar-meta" id="workspaceMeta"></div>
+    </header>
+
+    <main class="layout">
+      <section class="col col-scenarios">
+        <h2 class="col-title">Scenarios</h2>
+        <div id="scenarios" class="scenario-list"></div>
+      </section>
+
+      <section class="col col-steps">
+        <h2 class="col-title">Steps <span class="hint" id="runSummary"></span></h2>
+        <div id="steps" class="panel">
+          <p class="muted">Pick a dataset on the left and run it.</p>
+        </div>
+      </section>
+
+      <section class="col col-db">
+        <h2 class="col-title">
+          Database changes
+          <span class="hint" id="diffSummary"></span>
+        </h2>
+        <div id="diff" class="panel">
+          <p class="muted">What the API committed will appear here.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "@statescope/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": { "start": "tsx src/server.ts", "typecheck": "tsc -b" },
+  "dependencies": {
+    "@fastify/static": "^8.0.3",
+    "@statescope/core": "workspace:*",
+    "@statescope/db-postgres": "workspace:*",
+    "@statescope/http-runner": "workspace:*",
+    "@statescope/scenario-engine": "workspace:*",
+    "fastify": "^5.2.0",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": { "tsx": "^4.19.2" }
+}

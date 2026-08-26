@@ -1,0 +1,45 @@
+# StateScope workspace — copy to statescope.yaml and point it at your backend.
+#
+#   cp statescope.example.yaml statescope.yaml
+#   pnpm start
+#
+# The runtime prints a URL carrying a per-session access token. Open that.
+
+name: My API
+baseUrl: http://127.0.0.1:8000
+
+database:
+  # A development database. StateScope holds a real connection to it and reads
+  # what your API writes, so never point this at anything you care about.
+  connectionString: postgresql://user:password@127.0.0.1:5432/myapp_dev
+
+# Where your scenario files live, relative to this file.
+scenariosDir: scenarios
+
+# Optional. Called before any dataset that declares `resetFirst: true`.
+# resetUrl: http://127.0.0.1:8000/test/reset
+
+# Who a step can act as. Multi-party flows — transfers, approvals, anything
+# with two sides — cannot be expressed with a single ambient token.
+identities:
+  - id: alice
+    header: { name: authorization, value: "Bearer <token>" }
+  - id: bob
+    header: { name: authorization, value: "Bearer <token>" }
+
+# Hidden from the diff, never from `hasWrite`. An idempotency assertion still
+# sees a retry that only touched a timestamp.
+ignoreColumns:
+  - updated_at
+  - last_seen
+
+# Redacted at capture, before the value is stored or serialised anywhere.
+maskColumns:
+  - password_hash
+  - card_number
+  - api_token
+
+# Watch an idle window before each run. Anything that writes during it is not
+# your scenario — background jobs, session sweepers, outbox pollers — and the
+# report says so instead of blaming your API. Set to 0 to skip.
+baselineWindowMs: 400

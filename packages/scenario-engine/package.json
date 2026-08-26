@@ -1,0 +1,28 @@
+{
+  "name": "@statescope/scenario-engine",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@statescope/core": "workspace:*",
+    "@statescope/expr": "workspace:*",
+    "@statescope/http-runner": "workspace:*",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

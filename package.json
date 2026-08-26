@@ -1,0 +1,19 @@
+{
+  "name": "statescope",
+  "private": true,
+  "version": "0.0.0",
+  "license": "MIT",
+  "packageManager": "pnpm@9.15.2",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b packages/core packages/expr packages/http-runner packages/db-postgres packages/scenario-engine apps/runtime",
+    "typecheck": "pnpm build",
+    "start": "pnpm --filter @statescope/runtime start",
+    "test": "pnpm -r --no-bail run test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
