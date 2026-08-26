@@ -15,6 +15,18 @@
  *      Origin for the attacker's own domain
  *   4. Origin allow-list for browser requests, so a cross-site fetch cannot
  *      ride along even if the token leaks into a log
+ *
+ * The token may arrive three ways, and all three are needed:
+ *
+ *   header    what the UI's own fetches send
+ *   query     the opening URL, the only thing a person can paste
+ *   cookie    everything else the browser asks for on its own
+ *
+ * The cookie is not a convenience. A page loaded with `?token=` does not pass
+ * that token on to its own stylesheet and script tags, so without it the guard
+ * answers 401 to the UI's own assets and the page renders as unstyled text with
+ * no behaviour. It is set the first time a valid query token arrives, and it is
+ * SameSite=Strict, so a cross-site request still cannot carry it.
  */
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -25,6 +37,19 @@ export const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']
 
 export function mintToken(): string {
   return randomBytes(32).toString('base64url');
+}
+
+const COOKIE = 'statescope_token';
+
+/** Reads one cookie without pulling in a parser: the header is `a=1; b=2`. */
+function cookieToken(header: string | undefined): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === COOKIE) return part.slice(eq + 1).trim();
+  }
+  return undefined;
 }
 
 /** Constant-time compare, so a wrong token cannot be found one byte at a time. */
@@ -73,11 +98,23 @@ export function createGuard(options: GuardOptions) {
 
     if (options.publicPaths?.has(request.url.split('?')[0] ?? '')) return;
 
-    // 2. The token. Query string is accepted only for the initial page load,
-    //    which then keeps it in memory and uses the header from that point on.
+    // 2. The token, from whichever of the three places it arrived in.
     const header = request.headers['x-statescope-token'];
     const query = (request.query as { token?: string } | undefined)?.token;
-    const provided = (Array.isArray(header) ? header[0] : header) ?? query;
+    const provided =
+      (Array.isArray(header) ? header[0] : header) ??
+      cookieToken(request.headers.cookie) ??
+      query;
+
+    if (provided && query && tokenMatches(provided, options.token)) {
+      // Arrived by URL: hand the browser a cookie so the page's own stylesheet,
+      // script and later fetches are not each refused.
+      void reply.header(
+        'set-cookie',
+        `${COOKIE}=${options.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
+      );
+    }
+
     if (!provided || !tokenMatches(provided, options.token)) {
       // A person who typed the address into a browser gets a page that says
       // where the token is. A fetch() gets JSON it can act on. Same refusal,
