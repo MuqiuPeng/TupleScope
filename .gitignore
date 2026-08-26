@@ -15,3 +15,7 @@ docs/prototype-carryover.md
 docs/technical-review.md
 examples/
 statescope.yaml
+
+# Stored runs. Values are masked at capture, but this is still a record of
+# what your development database contained.
+.statescope/

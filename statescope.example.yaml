@@ -43,3 +43,8 @@ maskColumns:
 # your scenario — background jobs, session sweepers, outbox pollers — and the
 # report says so instead of blaming your API. Set to 0 to skip.
 baselineWindowMs: 400
+
+# Stored runs live in .statescope/runs next to this file, newest 50 kept.
+# `statescope runs` lists them; `--from` and `--only` read a previous run's
+# variables from there, which is the only reason the store exists.
+# Disable with --no-save.

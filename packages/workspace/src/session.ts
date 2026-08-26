@@ -20,6 +20,7 @@ import type { CaptureScope, Scenario, TableScope } from '@statescope/core';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ResolvedWorkspaceConfig } from './config.js';
+import { openStore, type RunStore } from './history.js';
 
 export class WorkspaceError extends Error {
   constructor(
@@ -38,6 +39,14 @@ export class WorkspaceError extends Error {
 
 export interface WorkspaceSession {
   readonly config: ResolvedWorkspaceConfig;
+  /**
+   * Stored runs, or `undefined` when history is off.
+   *
+   * Optional so a session can have no filesystem dependency at all, which is
+   * what the runtime and MCP want: only the CLI needs to hand a run id back to
+   * a later invocation.
+   */
+  readonly history?: RunStore;
   readonly adapter: MvccPostgresAdapter;
   readonly runner: HttpRunner;
   readonly engine: ScenarioEngine;
@@ -56,6 +65,8 @@ export interface OpenOptions {
   baselineWindowMs?: number;
   /** How long the reset endpoint gets before it is called failed. */
   resetTimeoutMs?: number;
+  /** Stored runs. Off unless asked for; `keep: 0` also disables it. */
+  history?: { keep: number } | false;
 }
 
 export function openWorkspace(
@@ -106,11 +117,17 @@ export function openWorkspace(
       : {}),
   });
 
+  const history =
+    options.history !== undefined && options.history !== false && options.history.keep > 0
+      ? openStore(resolve(config.configDir, '.statescope', 'runs'), options.history)
+      : undefined;
+
   const session: WorkspaceSession = {
     config,
     adapter,
     runner,
     engine,
+    ...(history ? { history } : {}),
 
     async scenarios() {
       // Re-read every time. The runtime used to serve a copy cached at startup,

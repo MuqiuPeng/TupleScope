@@ -51,6 +51,8 @@ const OPTIONS = {
   diff: { type: 'string' },
   columns: { type: 'string' },
   wide: { type: 'boolean' },
+  'continue-from': { type: 'string' },
+  'no-save': { type: 'boolean' },
   'exit-zero': { type: 'boolean' },
   'pass-with-no-scenarios': { type: 'boolean' },
   'no-color': { type: 'boolean' },
@@ -64,6 +66,10 @@ const HELP = `statescope — run backend scenarios, see exactly what changed
 
   statescope run [target…]     run scenarios and report what the API wrote
   statescope ls                every scenario and dataset in this workspace
+  statescope show <target>     one scenario or dataset, in detail
+  statescope check [target]    what this suite can and cannot prove, without running it
+  statescope runs [n]          stored runs, newest first
+  statescope runs show <id>    re-render a stored run (an id, or 'last')
   statescope status            what this workspace points at, and whether it answers
   statescope url               the URL of a running runtime, token and all
 
@@ -73,6 +79,9 @@ Run options
   -d, --dataset <id>           shorthand for one dataset of one scenario
       --from <stepId>          start at this step and run to the end
       --only <stepId>          run this step alone
+      --continue-from <id>     reuse a stored run's variables; 'last' for the
+                               newest full run of the same dataset
+      --no-save                do not record this run in .statescope/runs
       --unevaluable <mode>     error | warn        whether an undecided check
                                reaches the exit code                 (error)
       --warnings <mode>        default | strict | off                (default)
@@ -130,6 +139,12 @@ async function main(argv: string[]): Promise<number> {
       return commandRun(positionals.slice(1), values, argv);
     case 'ls':
       return commandList(values);
+    case 'show':
+      return commandShow(positionals.slice(1), values);
+    case 'check':
+      return commandCheck(positionals.slice(1), values);
+    case 'runs':
+      return commandRuns(positionals.slice(1), values);
     case 'status':
       return commandStatus(values);
     default:
@@ -215,6 +230,9 @@ async function open(values: Values) {
     ...(baseline !== undefined
       ? { baselineWindowMs: baseline === 'off' ? 0 : Number(baseline) }
       : {}),
+    // History is opt-in per surface. The CLI wants it because --continue-from
+    // has nowhere else to read from; the runtime and MCP do not.
+    history: values['no-save'] ? false : { keep: 50 },
   });
 }
 
@@ -272,6 +290,178 @@ async function commandStatus(values: Values): Promise<number> {
   return typeof result === 'number' ? result : 0;
 }
 
+// ─── show / check / runs ──────────────────────────────────────────────────────
+
+async function commandShow(targets: string[], values: Values): Promise<number> {
+  if (targets.length !== 1) {
+    process.stderr.write('show needs exactly one target: scenario[/dataset].\n');
+    return EXIT_USAGE;
+  }
+  const result = await withWorkspace(values, async (session) => {
+    const loaded = await session.scenarios();
+    const selected = select(loaded, targets, values.dataset);
+    if (typeof selected === 'string') {
+      process.stderr.write(`${selected}\n`);
+      return EXIT_USAGE;
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const { scenario, dataset, file } of selected) {
+      if (!seen.has(scenario.id)) {
+        seen.add(scenario.id);
+        out.push('', `${scenario.id}  ${scenario.title}`, `  file   ${file}`);
+        if (scenario.why) out.push(`  why    ${scenario.why.trim().replace(/\n\s*/g, ' ')}`);
+        out.push(
+          `  watch  ${
+            scenario.watch?.length
+              ? scenario.watch.map((w) => w.table + (w.where ? ` where ${w.where}` : '')).join(', ')
+              : 'every table (nothing declared, which is the better default)'
+          }`,
+        );
+        if (scenario.ignoreColumns?.length) out.push(`  ignore ${scenario.ignoreColumns.join(', ')}`);
+      }
+      out.push('', `  ${scenario.id}/${dataset.id}  ${dataset.label}`);
+      if (dataset.note) out.push(`    ${dataset.note}`);
+      if (dataset.resetFirst) out.push('    resets the database first');
+      for (const step of dataset.steps) {
+        const expects = step.expectStatus !== undefined ? `  expects ${step.expectStatus}` : '';
+        out.push(`    ${step.id.padEnd(18)} ${step.request.method} ${step.request.path}${expects}`);
+        for (const assertion of step.assert ?? []) out.push(`      ${assertion}`);
+        if ((step.assert ?? []).length === 0) out.push('      (checks nothing)');
+      }
+    }
+    process.stdout.write(`${out.join('\n')}\n`);
+    return 0;
+  });
+  return typeof result === 'number' ? result : 0;
+}
+
+/**
+ * What this suite can prove, without touching the backend.
+ *
+ * The point is to surface a hole before CI does: a table an assertion names
+ * that the database does not have, a step that checks nothing. A scenario can
+ * be perfectly valid YAML and still establish nothing.
+ */
+async function commandCheck(targets: string[], values: Values): Promise<number> {
+  const result = await withWorkspace(values, async (session) => {
+    const loaded = await session.scenarios();
+    const selected = select(loaded, targets, values.dataset);
+    if (typeof selected === 'string') {
+      process.stderr.write(`${selected}\n`);
+      return EXIT_USAGE;
+    }
+    let tables: string[];
+    try {
+      tables = (await session.preflight()).tables;
+    } catch (error) {
+      const workspaceError = error instanceof WorkspaceError ? error : undefined;
+      process.stderr.write(`${workspaceError?.message ?? String(error)}\n`);
+      if (workspaceError?.remedy) process.stderr.write(`${workspaceError.remedy}\n`);
+      return 2;
+    }
+
+    const known = new Set(tables);
+    const problems: string[] = [];
+    let assertions = 0;
+    let unchecked = 0;
+
+    for (const { scenario, dataset } of selected) {
+      for (const step of dataset.steps) {
+        const list = step.assert ?? [];
+        assertions += list.length;
+        if (list.length === 0) {
+          unchecked++;
+          problems.push(
+            `  ${scenario.id}/${dataset.id}/${step.id}  checks nothing — it will be observed and verified by no one`,
+          );
+        }
+        // No check here for "a negative assertion with no declared status": the
+        // engine now treats a missing expectStatus as "a success is expected",
+        // so a 4xx fails the step outright. Repeating it here only produced a
+        // false positive on every step that declared its status as an
+        // assertion rather than as expectStatus, which is the commoner spelling.
+        for (const assertion of list) {
+          const missing = tablesNamedIn(assertion).filter((t) => !known.has(t));
+          for (const table of missing) {
+            problems.push(
+              `  ${scenario.id}/${dataset.id}/${step.id}  names table \`${table}\`, which is not in this database`,
+            );
+          }
+        }
+      }
+    }
+
+    const out = [
+      `statescope · ${session.config.name}`,
+      `  selected   ${selected.length} dataset(s), ${assertions} assertion(s)`,
+      `  database   ${tables.length} tables`,
+    ];
+    if (problems.length === 0) {
+      out.push('', '  Nothing here would fail for a reason other than the system under test.');
+    } else {
+      out.push('', ...problems);
+    }
+    process.stdout.write(`${out.join('\n')}\n`);
+    // Exit 3: the suite is not wrong, it just does not establish what it looks
+    // like it does — the same meaning the code has everywhere else.
+    return problems.length > 0 ? 3 : 0;
+  });
+  return typeof result === 'number' ? result : 0;
+}
+
+const RESERVED = new Set([
+  'response', 'status', 'body', 'headers', 'count', 'single', 'sum', 'min', 'max',
+  'any', 'all', 'inserted', 'updated', 'deleted', 'changes', 'rows', 'hasWrite',
+  'isEmpty', 'before', 'after', 'delta', 'where', 'true', 'false', 'null', 'and', 'or', 'not',
+]);
+
+/** Table names are the identifiers in a selector's first argument position. */
+function tablesNamedIn(source: string): string[] {
+  return [...source.matchAll(/\b(?:changes|inserted|updated|deleted|rows)\(\s*([A-Za-z_][A-Za-z0-9_]*)/g)]
+    .map((m) => m[1]!)
+    .filter((name) => !RESERVED.has(name));
+}
+
+async function commandRuns(args: string[], values: Values): Promise<number> {
+  const result = await withWorkspace(values, async (session) => {
+    const store = session.history;
+    if (!store) {
+      process.stderr.write('Run history is off for this invocation.\n');
+      return EXIT_USAGE;
+    }
+    if (args[0] === 'show') {
+      const id = args[1];
+      if (!id) {
+        process.stderr.write('runs show needs a run id, or `last`.\n');
+        return EXIT_USAGE;
+      }
+      const stored = id === 'last' ? await store.latest() : await store.get(id);
+      if (!stored) {
+        process.stderr.write(`No stored run \`${id}\`. \`statescope runs\` lists what is there.\n`);
+        return EXIT_USAGE;
+      }
+      process.stdout.write(`${JSON.stringify(stored, null, 2)}\n`);
+      return 0;
+    }
+
+    const limit = Number(args[0] ?? 20) || 20;
+    const rows = await store.list(limit);
+    if (rows.length === 0) {
+      process.stdout.write(`No stored runs yet. They land in ${store.dir} as runs happen.\n`);
+      return 0;
+    }
+    const out = rows.map(
+      (row) =>
+        `  ${row.id.padEnd(16)} ${row.outcome.padEnd(10)} ${`${row.scenarioId}/${row.datasetId}`.padEnd(28)}` +
+        `${row.coverage === 'partial' ? 'partial  ' : '         '}${row.startedAt}`,
+    );
+    process.stdout.write(`${out.join('\n')}\n`);
+    return 0;
+  });
+  return typeof result === 'number' ? result : 0;
+}
+
 // ─── run ──────────────────────────────────────────────────────────────────────
 
 async function commandRun(targets: string[], values: Values, argv: string[]): Promise<number> {
@@ -280,7 +470,8 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
     process.stderr.write(`${policy}\n`);
     return EXIT_USAGE;
   }
-  if ((values.from ?? values.only) !== undefined && targets.length !== 1) {
+  const partial = (values.from ?? values.only) !== undefined;
+  if (partial && targets.length !== 1) {
     process.stderr.write('--from and --only need exactly one target, so it is clear which dataset they mean.\n');
     return EXIT_USAGE;
   }
@@ -325,11 +516,47 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         return EXIT_USAGE;
       }
+      // A partial run continues a previous one, so it needs that run's whole
+      // variable context — `{{run}}` included. Pairing an old payment id with
+      // a fresh suffix is not a replay of anything: the idempotency key would
+      // not match, and a step written to send a duplicate sends a new request.
+      let carried: Readonly<Record<string, string>> | undefined;
+      if (partial) {
+        const source = values['continue-from'] ?? 'last';
+        const stored =
+          source === 'last'
+            ? await session.history?.latest({
+                scenarioId: scenario.id,
+                datasetId: dataset.id,
+                coverage: 'full',
+              })
+            : await session.history?.get(source);
+        if (!stored) {
+          process.stderr.write(
+            source === 'last'
+              ? `--from/--only continue a previous run, and there is no stored full run of ` +
+                `\`${scenario.id}/${dataset.id}\` to continue. Run the whole dataset once first.\n`
+              : `No stored run \`${source}\`. \`statescope runs\` lists what is there.\n`,
+          );
+          return EXIT_USAGE;
+        }
+        const variables = (stored.run as { variables?: Record<string, string> }).variables;
+        if (!variables) {
+          process.stderr.write(`Stored run \`${stored.run.id}\` recorded no variables.\n`);
+          return EXIT_USAGE;
+        }
+        carried = variables;
+        process.stderr.write(
+          `carrying variables from ${stored.run.id} (${stored.run.startedAt ?? 'unknown time'})\n`,
+        );
+      }
+
       let run;
       try {
         run = await session.engine.run(scenario, dataset.id, scope, {
           ...(values.from !== undefined ? { fromStepId: values.from } : {}),
           ...(values.only !== undefined ? { onlyStepId: values.only } : {}),
+          ...(carried ? { variables: carried } : {}),
         });
       } catch (error) {
         // A reset that could not run, or a partial run with no variables to
@@ -391,6 +618,21 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
       },
       exitCode,
     });
+
+    if (session.history) {
+      for (const single of envelope.runs) {
+        // Stored as a one-run envelope rather than a second on-disk schema:
+        // it already carries the policy, the producer and the exit code.
+        await session.history.save({
+          ...single,
+          run: { ...single.run, scenarioId: single.scenario.id, datasetId: single.dataset.id },
+          schema: envelope.schema,
+          producer: envelope.producer,
+          workspace: envelope.workspace,
+          policy: envelope.policy,
+        } as never);
+      }
+    }
 
     if (values.json) process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
     if (values.junit !== undefined) {
