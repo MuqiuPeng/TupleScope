@@ -82,6 +82,9 @@ export class ScenarioEngine {
       startedAt: now().toISOString(),
       status: 'running',
       coverage: options.fromStepId || options.onlyStepId ? 'partial' : 'full',
+      // Filled in below. Recorded even when the probe is disabled, because
+      // "not probed" is a fact a verdict has to be able to state.
+      baseline: { probed: false, windowMs: 0 },
       steps: [],
       variables: builtins(now, options),
     };
@@ -100,9 +103,13 @@ export class ScenarioEngine {
 
     const baselineWindowMs = this.options.baselineWindowMs ?? 0;
     const mutable = run as { -readonly [K in keyof Run]: Run[K] };
+    mutable.baseline = { probed: baselineWindowMs > 0, windowMs: baselineWindowMs };
     if (baselineWindowMs > 0) {
       const noise = await this.options.adapter.probeBaselineNoise(scope, baselineWindowMs);
-      if (noise.changes.length > 0) mutable.baselineNoise = noise;
+      // Kept whenever the probe found anything at all, including warnings with
+      // no rows — an empty `changes` with a non-empty `warnings` still bounds
+      // what the run proves.
+      if (noise.changes.length > 0 || noise.warnings.length > 0) mutable.baselineNoise = noise;
     }
 
     const steps: StepResult[] = [];

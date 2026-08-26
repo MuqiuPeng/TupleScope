@@ -211,6 +211,40 @@ describe('refusals', () => {
     fails('single(updated(payments)).status == "REFUNDED"', REFUND, /needs a side/);
   });
 
+  it('refuses a table name that does not exist, even with no watch list', () => {
+    // The forbidden green, in its purest form: `paymnets` is a typo for
+    // `payments`, the table does not exist, the selection is empty, the count
+    // is 0, and `== 0` passes. A misspelled table name used to satisfy an
+    // assertion and turn a CI job green.
+    //
+    // `allTables: true` says the scope was not narrowed. It says nothing about
+    // whether the name in the assertion is real, and short-circuiting on it was
+    // the bug.
+    fails('count(inserted(paymnets)) == 0', REFUND, /no table `paymnets` in this database/);
+  });
+
+  it('names the table the author probably meant', () => {
+    assert.throws(() => check('count(inserted(paymnets)) == 0', REFUND), (e: unknown) => {
+      assert.match((e as Error).message, /did you mean `payments`\?/);
+      return true;
+    });
+    // A transposition and a missing letter both count as one edit.
+    assert.throws(() => check('count(inserted(wallet)) == 0', REFUND), /did you mean `wallets`\?/);
+  });
+
+  it('lists what it does know when nothing is close', () => {
+    assert.throws(
+      () => check('count(inserted(kubernetes_pods)) == 0', REFUND),
+      /tables: ledger_entries, payments, wallets/,
+    );
+  });
+
+  it('still accepts every table that is really there', () => {
+    // The fix must not make a legitimate assertion unevaluable.
+    assert.ok(check('count(inserted(ledger_entries)) == 2', REFUND).passed);
+    assert.ok(check('count(updated(wallets)) == 2', REFUND).passed);
+  });
+
   it('refuses a table outside the watch scope', () => {
     const scoped: ChangeSet = {
       ...REFUND,

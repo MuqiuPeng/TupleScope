@@ -169,8 +169,14 @@ function evaluate(expr: Expr, ctx: EvalContext): Eval {
     case 'select': {
       const { kind, table, predicate } = expr.selector;
       if (table && !inScope(ctx.changes, table)) {
+        const known = knownTables(ctx.changes);
+        const near = known.find((t) => close(t, table));
         throw new Unevaluable(
-          `table \`${table}\` is not being watched, so nothing can be asserted about it`,
+          ctx.changes.scope.allTables
+            ? `there is no table \`${table}\` in this database` +
+              (near ? ` — did you mean \`${near}\`?` : ` (tables: ${known.join(', ') || 'none'})`)
+            : `table \`${table}\` is not being watched, so nothing can be asserted about it` +
+              (near ? ` — did you mean \`${near}\`?` : ''),
         );
       }
       let rows = ctx.changes.changes.filter((c) => !table || c.table === table);
@@ -286,8 +292,71 @@ function evaluate(expr: Expr, ctx: EvalContext): Eval {
   throw new Unevaluable('unsupported expression');
 }
 
+/**
+ * Whether a name in an expression is a table this run actually observed.
+ *
+ * Membership is checked even when the scope covers every table, because
+ * `allTables` says the *scope* was not narrowed — it says nothing about whether
+ * the name in the assertion is real. Short-circuiting on it meant a typo passed
+ * straight through: `count(inserted(paymnets)) == 0` selected from a table that
+ * does not exist, found nothing, and reported a green. A misspelled table name
+ * silently satisfying an assertion is the exact failure this product is for.
+ *
+ * `scope.tables` is populated with every table in either mode, so the check
+ * costs nothing; `allTables` now only decides which of the two errors to raise.
+ */
 function inScope(changes: ChangeSet, table: string): boolean {
-  return changes.scope.allTables || changes.scope.tables.some((t) => t.table === table);
+  return changes.scope.tables.some((t) => t.table === table);
+}
+
+/**
+ * Within one Damerau edit of each other, ignoring case — enough to name a typo.
+ *
+ * Damerau rather than plain Levenshtein because a transposition is the most
+ * common typing mistake there is, and `paymnets` for `payments` costs two
+ * substitutions under Levenshtein: exactly the case the suggester exists for
+ * would be the one it missed.
+ *
+ * Rejecting the name is what keeps the run honest; naming the intended one is
+ * what turns the refusal into a fix.
+ */
+function close(a: string, b: string): boolean {
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  if (x === y) return true;
+
+  if (x.length === y.length) {
+    const differing: number[] = [];
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] !== y[i]) {
+        differing.push(i);
+        if (differing.length > 2) return false;
+      }
+    }
+    if (differing.length === 1) return true; // one substitution
+    // Two differences adjacent and mirrored is one transposition.
+    const [i, j] = differing as [number, number];
+    return j === i + 1 && x[i] === y[j] && x[j] === y[i];
+  }
+
+  if (Math.abs(x.length - y.length) !== 1) return false;
+  const [shorter, longer] = x.length < y.length ? [x, y] : [y, x];
+  let i = 0;
+  let skipped = false;
+  for (let j = 0; j < longer.length; j++) {
+    if (shorter[i] === longer[j]) {
+      i++;
+      continue;
+    }
+    if (skipped) return false;
+    skipped = true; // one insertion in the longer string
+  }
+  return i === shorter.length;
+}
+
+/** The tables this run could have said anything about, for an error message. */
+function knownTables(changes: ChangeSet): string[] {
+  return changes.scope.tables.map((t) => t.table).sort();
 }
 
 function asSelection(value: Eval, what: string): ReadonlyArray<RowChange> {

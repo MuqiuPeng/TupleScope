@@ -27,9 +27,20 @@ export interface Run {
   status: RunStatus;
 
   /**
-   * Result of the idle observation taken before the first step. Present
-   * whenever it found anything: it means something other than this scenario
-   * writes to the database, so some rows below may not be ours.
+   * Whether the idle observation ran, and for how long.
+   *
+   * Required, and separate from `baselineNoise`, because "the probe found
+   * nothing" and "the probe never ran" are opposite facts that an absent field
+   * conflates. Only the first is evidence of a quiet database; the second means
+   * concurrent writes would not have been detected at all, and a verdict has to
+   * say so.
+   */
+  baseline: { probed: boolean; windowMs: number };
+
+  /**
+   * What the idle observation saw. Present whenever the probe ran and found
+   * something: it means something other than this scenario writes to the
+   * database, so some rows below may not be ours.
    */
   baselineNoise?: ChangeSet;
 
