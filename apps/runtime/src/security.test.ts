@@ -188,7 +188,10 @@ describe('createGuard', () => {
     const api = await call({ url: '/api/runs' });
     assert.equal(api.status, 401);
     assert.equal(api.contentType, undefined);
-    assert.match(api.body?.message ?? '', /localruntime logs|runtime printed/);
+    // The message must point at something that is right whoever started the
+    // process. Reading a supervisor's log is not: it happily reports the token
+    // of an instance that has already exited.
+    assert.match(api.body?.message ?? '', /statescope url/);
   });
 });
 

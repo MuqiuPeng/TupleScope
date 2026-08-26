@@ -35,11 +35,13 @@ export function unauthorisedPage(port: number): string {
   <p>StateScope minted one when it started. It is printed with the URL, and it changes
      every time the runtime restarts.</p>
 
-  <p>Look in the terminal running the runtime, or ask Local Runtime for it:</p>
-  <pre>localruntime logs statescope runtime | grep 'token='</pre>
+  <p>Ask this instance for it — the answer is right whoever started it, and a
+     dead instance is never reported as live:</p>
+  <pre>open "$(statescope url)"</pre>
 
-  <p>Then open the whole URL, token and all:</p>
-  <pre>http://127.0.0.1:${port}/?token=&lt;the token&gt;</pre>
+  <p>Or read the URL and open it yourself:</p>
+  <pre>statescope url
+http://127.0.0.1:${port}/?token=&lt;the token&gt;</pre>
 
   <div class="note">
     Why the token: this process holds write credentials for your development

@@ -137,8 +137,8 @@ export function createGuard(options: GuardOptions) {
       await reply.status(401).send({
         error: 'UNAUTHORISED',
         message:
-          'Missing or wrong access token. Open the URL the runtime printed at startup, ' +
-          'or run `localruntime logs statescope runtime | grep token=` to recover it.',
+          'Missing or wrong access token. Run `statescope url` for the URL of this ' +
+          'instance, token and all.',
       });
       return;
     }

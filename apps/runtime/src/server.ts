@@ -197,7 +197,7 @@ async function main(): Promise<void> {
   Workspace ${config.name}  ->  ${config.baseUrl}
   Capture   ${adapter.captureMethod} (${adapter.detection} detection)
   Scenarios ${scenarios.length} loaded from ${config.scenariosDir}
-${sessionFile ? `  Lost it?  pnpm url        (reads ${sessionFile})` : ''}
+${sessionFile ? `  Lost it?  statescope url  (reads ${sessionFile})` : ''}
 `);
 
   const shutdown = async (): Promise<void> => {
