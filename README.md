@@ -48,8 +48,15 @@ open "$(statescope url)"       # right whoever started the runtime
 ### In CI
 
 ```yaml
+- run: statescope check                          # before anything runs
 - run: statescope run --junit results.xml
 ```
+
+`check` resolves every assertion's table names against the live schema without
+sending a request, so a misspelled table is caught before the pipeline rather
+than by it. Sharded? `statescope report shard-*.json --junit merged.xml` folds
+them into one verdict, keeping the worst — a shard's problem cannot be washed
+out by another shard's green.
 
 | exit | meaning |
 |---|---|
@@ -196,6 +203,20 @@ writes it into the scenario file:
 
 ```
 Run  →  see the diff  →  [Keep]  →  a real assertion  →  next run catches the regression
+```
+
+In the terminal that is `statescope keep`, which reads a stored run rather than
+only the one still in memory — promoting should not require you to have noticed
+in the same breath as the run:
+
+```bash
+$ statescope keep refund/happy refund
+   1  response.status == 200  (already kept)
+   6  single(updated(payments, id = {{payment_id}})).after.status == "REFUNDED"
+      payments.status becomes REFUNDED (was COMPLETED)
+
+$ statescope keep refund/happy refund 6
+  kept  single(updated(payments, id = {{payment_id}})).after.status == "REFUNDED"
 ```
 
 Generated ids are never baked in: a candidate whose value matches something the

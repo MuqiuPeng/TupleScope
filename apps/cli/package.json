@@ -3,13 +3,24 @@
   "version": "0.2.0",
   "license": "MIT",
   "type": "module",
-  "bin": { "statescope": "./dist/main.js" },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b", "typecheck": "tsc -b", "test": "node --import tsx --test \"src/**/*.test.ts\"" },
+  "bin": {
+    "statescope": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
   "dependencies": {
     "@statescope/core": "workspace:*",
     "@statescope/report": "workspace:*",
-    "@statescope/workspace": "workspace:*"
+    "@statescope/workspace": "workspace:*",
+    "@statescope/scenario-engine": "workspace:*"
   },
-  "devDependencies": { "tsx": "^4.19.2" }
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
 }

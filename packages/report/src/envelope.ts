@@ -14,6 +14,7 @@
  */
 
 import type {
+  AssertionCandidate,
   AssertionResult,
   CaptureMethod,
   ChangeSet,
@@ -86,6 +87,14 @@ export interface StepReport {
   assertions: ReadonlyArray<AssertionReport>;
   changes?: ChangeSummary;
   error?: ExecutionError;
+  /**
+   * Assertions this step's own changes imply, ready to be kept.
+   *
+   * Carried in the envelope so `statescope keep` can work on a run that already
+   * finished. Promoting only what is still in memory would mean the loop only
+   * closes if you noticed in the same breath as the run.
+   */
+  candidates?: ReadonlyArray<AssertionCandidate>;
   durationMs: number;
 }
 
@@ -305,6 +314,7 @@ export function buildEnvelope(
           ? { changes: summariseChanges(step.changes, options.includeRows ?? false) }
           : {}),
         ...(step.error !== undefined ? { error: step.error } : {}),
+        ...(step.candidates?.length ? { candidates: step.candidates } : {}),
         durationMs: stepDuration(step),
       })),
     })),

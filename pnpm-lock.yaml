@@ -26,6 +26,9 @@ importers:
       '@statescope/report':
         specifier: workspace:*
         version: link:../../packages/report
+      '@statescope/scenario-engine':
+        specifier: workspace:*
+        version: link:../../packages/scenario-engine
       '@statescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace

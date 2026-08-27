@@ -28,8 +28,9 @@ import {
   type RunVerdict,
   type VerdictPolicy,
 } from '@statescope/core';
-import { buildEnvelope, toJUnit } from '@statescope/report';
+import { buildEnvelope, toJUnit, type Envelope } from '@statescope/report';
 import { loadWorkspaceConfig, openWorkspace, WorkspaceConfigError, WorkspaceError } from '@statescope/workspace';
+import { addAssertion } from '@statescope/scenario-engine';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
 
@@ -70,6 +71,10 @@ const HELP = `statescope — run backend scenarios, see exactly what changed
   statescope check [target]    what this suite can and cannot prove, without running it
   statescope runs [n]          stored runs, newest first
   statescope runs show <id>    re-render a stored run (an id, or 'last')
+  statescope keep <sel> <step> [n…]
+                               turn what a run observed into assertions in the
+                               scenario file. With no numbers, lists them.
+  statescope report <file…>    re-render stored envelopes as text or JUnit
   statescope status            what this workspace points at, and whether it answers
   statescope url               the URL of a running runtime, token and all
 
@@ -145,6 +150,10 @@ async function main(argv: string[]): Promise<number> {
       return commandCheck(positionals.slice(1), values);
     case 'runs':
       return commandRuns(positionals.slice(1), values);
+    case 'keep':
+      return commandKeep(positionals.slice(1), values);
+    case 'report':
+      return commandReport(positionals.slice(1), values);
     case 'status':
       return commandStatus(values);
     default:
@@ -460,6 +469,205 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
     return 0;
   });
   return typeof result === 'number' ? result : 0;
+}
+
+// ─── keep ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Turns what a run observed into assertions in the scenario file.
+ *
+ * This is the loop the product exists for. The honest answer to "why not write
+ * pytest and a few SQL assertions" is that a hand-written test is more precise
+ * — its only weakness is that you have to know the answer before you write it.
+ * Running first and keeping what you saw is the part a test file cannot do.
+ *
+ * It reads a *stored* run rather than only the one still in memory: promoting
+ * would otherwise only work if you noticed in the same breath as the run.
+ */
+async function commandKeep(args: string[], values: Values): Promise<number> {
+  const [selector, stepId, ...picked] = args;
+  if (!selector || !stepId) {
+    process.stderr.write('keep needs a target and a step: statescope keep refund/happy create_payment\n');
+    return EXIT_USAGE;
+  }
+  const [scenarioId, datasetId] = selector.split('/');
+
+  const result = await withWorkspace(values, async (session) => {
+    if (!session.history) {
+      process.stderr.write('Run history is off, so there is no run to keep anything from.\n');
+      return EXIT_USAGE;
+    }
+    const source = values['continue-from'] ?? 'last';
+    const stored =
+      source === 'last'
+        ? await session.history.latest({
+            ...(scenarioId ? { scenarioId } : {}),
+            ...(datasetId ? { datasetId } : {}),
+          })
+        : await session.history.get(source);
+    if (!stored) {
+      process.stderr.write(
+        `No stored run for \`${selector}\`. Run it once, then keep what it showed you.\n`,
+      );
+      return EXIT_USAGE;
+    }
+
+    const steps = (stored['steps'] ?? []) as Array<{
+      id: string;
+      candidates?: Array<{ expression: string; description: string; caveat?: { message: string } }>;
+    }>;
+    const step = steps.find((entry) => entry.id === stepId);
+    if (!step) {
+      process.stderr.write(
+        `Run \`${stored.run.id}\` has no step \`${stepId}\`. It has: ${steps.map((x) => x.id).join(', ')}.\n`,
+      );
+      return EXIT_USAGE;
+    }
+    const candidates = step.candidates ?? [];
+    if (candidates.length === 0) {
+      process.stdout.write(`Step \`${stepId}\` changed nothing that suggests an assertion.\n`);
+      return 0;
+    }
+
+    const loaded = await session.scenarios();
+    const found = loaded.find((entry) => entry.scenario.id === (scenarioId ?? stored.run.scenarioId));
+    if (!found) {
+      process.stderr.write(`No scenario \`${scenarioId}\` on disk any more.\n`);
+      return EXIT_USAGE;
+    }
+    const targetDataset = datasetId ?? String(stored.run.datasetId);
+    const existing = new Set(
+      found.scenario.datasets
+        .find((d) => d.id === targetDataset)
+        ?.steps.find((x) => x.id === stepId)?.assert ?? [],
+    );
+
+    if (picked.length === 0) {
+      const out = candidates.map((candidate, index) => {
+        const kept = existing.has(candidate.expression) ? '  (already kept)' : '';
+        return (
+          `  ${String(index + 1).padStart(2)}  ${candidate.expression}${kept}\n` +
+          `      ${candidate.description}` +
+          (candidate.caveat ? `\n      caveat: ${candidate.caveat.message}` : '')
+        );
+      });
+      process.stdout.write(
+        `${found.scenario.id}/${targetDataset}/${stepId}  ·  from run ${stored.run.id}\n\n` +
+          `${out.join('\n')}\n\n` +
+          `  statescope keep ${selector} ${stepId} 1 2   keeps those two\n`,
+      );
+      return 0;
+    }
+
+    let added = 0;
+    for (const raw of picked) {
+      const index = Number(raw);
+      const candidate = candidates[index - 1];
+      if (!Number.isInteger(index) || !candidate) {
+        process.stderr.write(`\`${raw}\` is not one of the 1–${candidates.length} listed.\n`);
+        return EXIT_USAGE;
+      }
+      try {
+        const result = await addAssertion({
+          file: found.file,
+          datasetId: targetDataset,
+          stepId,
+          expression: candidate.expression,
+        });
+        process.stdout.write(
+          `  ${result.added ? 'kept' : 'already there'}  ${candidate.expression}\n`,
+        );
+        if (result.added) added++;
+      } catch (error) {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        return EXIT_USAGE;
+      }
+    }
+    if (added > 0) {
+      process.stdout.write(`\n  ${found.file}\n  Run it again and the next regression is caught.\n`);
+    }
+    return 0;
+  });
+  return typeof result === 'number' ? result : 0;
+}
+
+// ─── report ───────────────────────────────────────────────────────────────────
+
+/**
+ * Re-renders stored envelopes without re-running anything.
+ *
+ * The use it exists for: a CI job wrote JSON, and somebody wants the JUnit it
+ * did not ask for, or wants several shards merged into one verdict — neither
+ * of which should mean touching the database again.
+ */
+async function commandReport(files: string[], values: Values): Promise<number> {
+  if (files.length === 0) {
+    process.stderr.write('report needs at least one stored envelope: statescope report run.json\n');
+    return EXIT_USAGE;
+  }
+  const { readFile } = await import('node:fs/promises');
+  const envelopes: Envelope[] = [];
+  for (const file of files) {
+    try {
+      const parsed = JSON.parse(await readFile(file, 'utf8')) as Envelope;
+      if (typeof parsed.schema !== 'string' || !parsed.schema.startsWith('statescope.run-report/')) {
+        process.stderr.write(`${file}: not a StateScope run report.\n`);
+        return EXIT_USAGE;
+      }
+      const major = Number(parsed.schema.split('/')[1]);
+      if (major > 1) {
+        // A newer producer. Refusing beats guessing: the rule everywhere else
+        // is that an unknown value degrades to undecided, and silently reading
+        // a format we do not know would be the opposite of that.
+        process.stderr.write(
+          `${file}: written by a newer StateScope (${parsed.schema}); this build reads version 1.\n`,
+        );
+        return EXIT_USAGE;
+      }
+      envelopes.push(parsed);
+    } catch (error) {
+      process.stderr.write(`${file}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return EXIT_USAGE;
+    }
+  }
+
+  const merged: Envelope = {
+    ...envelopes[0]!,
+    runs: envelopes.flatMap((e) => e.runs),
+    // The worst outcome across every file, by the same precedence a suite uses.
+    outcome: (['errored', 'failed', 'undecided', 'clean'] as const).find((outcome) =>
+      envelopes.some((e) => e.outcome === outcome),
+    )!,
+    exitCode: Math.max(...envelopes.map((e) => e.exitCode)),
+    proves: envelopes.some((e) => e.proves === 'bounded') ? 'bounded' : 'full',
+    boundedBy: [...new Set(envelopes.flatMap((e) => e.boundedBy))],
+  };
+
+  if (values.junit !== undefined) {
+    const xml = toJUnit(merged);
+    if (values.junit === '-') process.stdout.write(xml);
+    else writeFileSync(values.junit, xml, 'utf8');
+  }
+  if (values.json) process.stdout.write(`${JSON.stringify(merged, null, 2)}\n`);
+  if (!values.json && values.junit === undefined) {
+    const lines = [
+      `${merged.runs.length} run(s) from ${files.length} file(s)`,
+      `  outcome  ${merged.outcome}`,
+      `  exit     ${merged.exitCode}`,
+    ];
+    for (const report of merged.runs) {
+      lines.push(
+        `  ${report.selector.padEnd(28)} ${report.verdict.outcome.padEnd(10)} ` +
+          `${report.verdict.assertions.passed}/${report.verdict.assertions.total} passed`,
+      );
+    }
+    if (merged.proves === 'bounded') {
+      lines.push('', '  bounded by:');
+      for (const bound of merged.boundedBy) lines.push(`    · ${bound}`);
+    }
+    process.stdout.write(`${lines.join('\n')}\n`);
+  }
+  return merged.exitCode;
 }
 
 // ─── run ──────────────────────────────────────────────────────────────────────
