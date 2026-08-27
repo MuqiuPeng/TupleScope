@@ -296,6 +296,7 @@ packages/
   report/            the JSON envelope and the JUnit writer
 apps/
   cli/               statescope(1) — drives the engine in-process
+  mcp/               the agent surface, over stdio
   runtime/           local HTTP API + static UI, 127.0.0.1 only
   web/               three-column UI, no bundler
 ```
@@ -349,15 +350,38 @@ The token is also written to `~/.statescope/sessions/<port>.json`, mode 0600, so
 clean shutdown, and a stale one left by a crash is discarded on read rather than
 handed back as a dead URL.
 
+## For agents
+
+```json
+{ "mcpServers": { "statescope": { "command": "statescope-mcp" } } }
+```
+
+Twelve tools over the same engine everything else uses: describe the workspace,
+list the tables, write a scenario, check it, run it, read what changed, keep the
+assertions that run implies, run it again.
+
+One thing shapes the whole surface. A run carries both `engineStatus` — whether
+the steps executed — and a verdict, and they disagree: a run whose every
+assertion was undecided has `engineStatus: "passed"`. An agent reads until it
+finds something that looks like an answer, so every result leads with the
+verdict in prose, and an undecided run opens with *this is NOT a pass and NOT a
+failure*. The handshake instructions say the same thing before the first call,
+and there are tests asserting they still do.
+
+No shell, no process control, no arbitrary SQL. Scenario files are the only
+thing writable, they are validated before they land, and keeping an assertion
+appends one line.
+
 ## Status
 
-Pre-v0.1, working end to end: capture, the expression language, scenarios,
-run / run-from-here / run-one-step, observe-and-promote, the UI.
+Working end to end: capture, the expression language, scenarios, run /
+run-from-here / run-one-step, observe-and-promote, run history, the CLI with
+JSON and JUnit, the UI, and MCP.
 
-Not yet built: run history, the CLI, WhoDB integration, dashboard plugins, MCP.
-The capture engine is `mvcc-xmin` only — `snapshot-diff` and `wal` are declared
-in the ChangeSet contract but not yet implemented, which is the point of having
-the contract.
+Not yet built: WhoDB integration, dashboard plugins, a secret store. The capture
+engine is `mvcc-xmin` only — `snapshot-diff` and `wal` are declared in the
+ChangeSet contract but not implemented, which is the point of having the
+contract: adding one must not change what any consumer reads.
 
 ## Licence
 

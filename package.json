@@ -6,7 +6,7 @@
   "packageManager": "pnpm@9.15.2",
   "type": "module",
   "scripts": {
-    "build": "tsc -b packages/core packages/expr packages/http-runner packages/db-postgres packages/scenario-engine packages/report packages/workspace apps/runtime apps/cli",
+    "build": "tsc -b packages/core packages/expr packages/http-runner packages/db-postgres packages/scenario-engine packages/report packages/workspace apps/runtime apps/cli apps/mcp",
     "typecheck": "pnpm build",
     "start": "pnpm --filter @statescope/runtime start",
     "test": "pnpm -r --no-bail run test",
