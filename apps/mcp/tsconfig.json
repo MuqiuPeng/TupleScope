@@ -1,12 +1,32 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist", "module": "NodeNext", "moduleResolution": "NodeNext" },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"],
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ],
   "references": [
-    { "path": "../../packages/core" },
-    { "path": "../../packages/report" },
-    { "path": "../../packages/scenario-engine" },
-    { "path": "../../packages/workspace" }
+    {
+      "path": "../../packages/core"
+    },
+    {
+      "path": "../../packages/report"
+    },
+    {
+      "path": "../../packages/scenario-engine"
+    },
+    {
+      "path": "../../packages/workspace"
+    },
+    {
+      "path": "../../packages/expr"
+    }
   ]
 }

@@ -345,6 +345,16 @@ export function parse(source: string): Expr {
       expect(')');
       return { node: 'isEmpty', source: inner };
     }
+    if (name.text === 'atomic') {
+      const inner = parseOr();
+      expect(')');
+      return { node: 'atomic', source: inner };
+    }
+    if (name.text === 'writeCount') {
+      const inner = parseOr();
+      expect(')');
+      return { node: 'writeCount', source: inner };
+    }
 
     throw new ExprSyntaxError(`unknown function \`${name.text}\``, source, name.pos);
   }

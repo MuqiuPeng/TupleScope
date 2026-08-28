@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { AssertionResult, ChangeSet, Run, StepResult, VerdictPolicy } from '@statescope/core';
-import { DEFAULT_POLICY, exitCodeOf, mergeVerdicts, verdictOf } from '@statescope/core';
+import { DEFAULT_POLICY, exitCodeOf, mergeVerdicts, verdictOf, visible } from '@statescope/core';
 import { buildEnvelope, readAssertionOutcome, readStepOutcome, summariseChanges } from './envelope.js';
 import { mapAssertion, outcomeFromCases, toJUnit } from './junit.js';
 
@@ -24,8 +24,11 @@ function changes(warnings: ChangeSet['warnings'] = []): ChangeSet {
   return {
     captureMethod: 'mvcc-xmin',
     detection: 'write',
-    scope: { allTables: true, tables: [] },
+    fidelity: 'net',
+    scope: { schema: 'public', database: 'test', allTables: true, tables: [] },
     changes: [],
+    // Required, so a ChangeSet cannot exist without saying how its text was printed.
+    rendering: { DateStyle: 'ISO, MDY', TimeZone: 'UTC', bytea_output: 'hex', IntervalStyle: 'iso_8601', extra_float_digits: '1' },
     warnings,
     durationMs: 1,
   };
@@ -81,7 +84,7 @@ function envelopeFor(steps: StepResult[], policy: VerdictPolicy = DEFAULT_POLICY
         configPath: '/repo/statescope.yaml',
         baseUrl: 'http://127.0.0.1:7421',
         scenariosDir: '/repo/scenarios',
-        capture: { method: 'mvcc-xmin', detection: 'write' },
+        capture: { method: 'mvcc-xmin', detection: 'write', fidelity: 'net' },
         tableCount: 11,
       },
       invocation: {
@@ -312,8 +315,8 @@ describe('summariseChanges', () => {
           table: 'refunds',
           key: null,
           kind: 'update',
-          before: { id: { pgType: 'text', text: 'r1' } },
-          after: { id: { pgType: 'text', text: 'r1' } },
+          before: { id: visible('text', 'r1') },
+          after: { id: visible('text', 'r1') },
           changedColumns: [],
           visibleColumns: [],
           hasWrite: true,
@@ -334,7 +337,7 @@ describe('summariseChanges', () => {
           key: null,
           kind: 'insert',
           before: null,
-          after: { id: { pgType: 'text', text: '1' } },
+          after: { id: visible('text', '1') },
           changedColumns: ['id'],
           visibleColumns: ['id'],
           hasWrite: true,

@@ -68,11 +68,34 @@ that will resolve. Do not guess a table or column name; look.
 An assertion must say which side of a change it means. \`payments.status\` alone
 is ambiguous — which row, before or after? — so the language makes you state it:
 
-  after(payments[id = {{payment_id}}]).status == "REFUNDED"
+  after(single(rows(payments, id = {{payment_id}})).status) == "REFUNDED"
   count(inserted(ledger_entries).where(type = "REVERSAL")) == 2
   delta(single(rows(wallets, id = "wal_alice")).balance) == "100.00"
   sum(delta(wallets.balance)) == "0.00"
   hasWrite(changes(*)) == false
+
+Two more exist only when the run's engine watched the write-ahead log, and come
+back **unevaluable** otherwise — not false:
+
+  atomic(changes(*)) == true
+  writeCount(changes(wallets)) == 1
+
+\`atomic\` answers "did my API do this in one transaction", which nothing else
+here can ask; a scenario that writes the payment and the ledger entry through
+separate transactions is one crash away from a half-written state.
+\`writeCount\` counts writes rather than changed rows: a balance moved
+\`100 → 80 → 100\` inside one request is one changed row and two writes, and only
+the second number shows the retry. Do not reach for these unless a run's result
+says the ordering was captured — otherwise you are writing a check that cannot
+run.
+
+\`rows(...)\` is the one selector that is not about the change: it matches rows
+whether or not this step wrote them, and reads the database to find out. A row
+it finds that nothing wrote has the same value on both sides, so a \`delta\` over
+it is \`0.00\`. Where the rows cannot be read it comes back unevaluable rather
+than answering from the change set — which would make it a synonym for
+\`changes(...)\` and let \`count(rows(t, id = "x")) == 0\` pass over a row that
+is there.
 
 The last one is the one worth understanding. \`hasWrite\` is true when a row was
 written even if no value changed, which is exactly what a retry that should have

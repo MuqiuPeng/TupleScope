@@ -12,6 +12,7 @@ import {
   glyph,
   renderAssertion,
   renderDiff,
+  renderWriteOrder,
   renderWarning,
   stepGlyph,
   type Style,
@@ -95,6 +96,13 @@ export function renderRun(
           maxTables: mode === 'all' ? Number.MAX_SAFE_INTEGER : 6,
           interesting,
           indent: '      ',
+        }),
+      );
+      out.push(
+        ...renderWriteOrder(step.changes, {
+          style,
+          indent: '      ',
+          maxRows: mode === 'all' ? Number.MAX_SAFE_INTEGER : 8,
         }),
       );
       if (step.changes.changes.length === 0 && step.assertions.length > 0) {

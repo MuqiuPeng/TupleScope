@@ -5,5 +5,6 @@
  * assembly. Nothing here knows about HTTP serving, terminals or MCP.
  */
 export * from './config.js';
+export * from './credentials.js';
 export * from './session.js';
 export * from './history.js';

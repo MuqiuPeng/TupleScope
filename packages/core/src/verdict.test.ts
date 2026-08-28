@@ -38,8 +38,11 @@ function changes(warnings: CaptureWarning[] = []): ChangeSet {
   return {
     captureMethod: 'mvcc-xmin',
     detection: 'write',
-    scope: { allTables: true, tables: [] },
+    fidelity: 'net',
+    scope: { schema: 'public', database: 'test', allTables: true, tables: [] },
     changes: [],
+    // Required, so a ChangeSet cannot exist without saying how its text was printed.
+    rendering: { DateStyle: 'ISO, MDY', TimeZone: 'UTC', bytea_output: 'hex', IntervalStyle: 'iso_8601', extra_float_digits: '1' },
     warnings,
     durationMs: 1,
   };

@@ -18,7 +18,8 @@
     "@statescope/scenario-engine": "workspace:*",
     "fastify": "^5.2.0",
     "yaml": "^2.6.1",
-    "@statescope/workspace": "workspace:*"
+    "@statescope/workspace": "workspace:*",
+    "@statescope/handoff": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

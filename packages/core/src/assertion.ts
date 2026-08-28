@@ -79,6 +79,19 @@ export type Expr =
    */
   | { node: 'hasWrite'; source: Expr }
   | { node: 'isEmpty'; source: Expr }
+  /**
+   * True when every write to the selected rows happened inside one database
+   * transaction — the question "did my API do this atomically?", which nothing
+   * else here can ask. Needs an engine that kept the grouping; against one that
+   * did not it is `unevaluable`, never `false`.
+   */
+  | { node: 'atomic'; source: Expr }
+  /**
+   * How many times the selected rows were written, which is not how many rows
+   * changed. A balance moved `100 → 80 → 100` inside one request is one changed
+   * row and two writes, and only the second number shows the retry.
+   */
+  | { node: 'writeCount'; source: Expr }
   | { node: 'compare'; op: CompareOp; left: Expr; right: Expr }
   | { node: 'logical'; op: 'and' | 'or'; left: Expr; right: Expr }
   | { node: 'not'; operand: Expr };

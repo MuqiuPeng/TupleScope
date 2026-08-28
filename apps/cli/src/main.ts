@@ -28,17 +28,39 @@ import {
   type RunVerdict,
   type VerdictPolicy,
 } from '@statescope/core';
-import { buildEnvelope, toJUnit, type Envelope } from '@statescope/report';
-import { loadWorkspaceConfig, openWorkspace, WorkspaceConfigError, WorkspaceError } from '@statescope/workspace';
+import { RUN_REPORT_SCHEMA, buildEnvelope, toJUnit, type Envelope } from '@statescope/report';
+import {
+  StaleRunError,
+  WorkspaceConfigError,
+  WorkspaceError,
+  loadWorkspaceConfig,
+  namespaceOf,
+  openWorkspace,
+  resolveWorkspaceSecrets,
+  secretsReferencedBy,
+} from '@statescope/workspace';
 import { addAssertion } from '@statescope/scenario-engine';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
+import {
+  DEFAULT_CONTEXT,
+  SecretNotConfigured,
+  secretIdFor,
+  SecretStoreUnavailable,
+  tryOpenSecretStore,
+} from '@statescope/secrets';
+import { commandHandoff } from './handoff.js';
+import { commandSecret } from './secrets.js';
+
+/** One place, so `--version` and the envelope's `producer` cannot drift apart. */
+const VERSION = '0.3.0';
 
 /** Codes a run can produce come from core. These are the CLI's own. */
 const EXIT_USAGE = 4;
 const EXIT_NOTHING_SELECTED = 5;
 
 const OPTIONS = {
+  show: { type: 'boolean' },
   config: { type: 'string' },
   json: { type: 'boolean' },
   junit: { type: 'string' },
@@ -61,6 +83,14 @@ const OPTIONS = {
   quiet: { type: 'boolean', short: 'q' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean' },
+  // handoff
+  as: { type: 'string' },
+  origin: { type: 'string' },
+  server: { type: 'string' },
+  username: { type: 'string' },
+  service: { type: 'string' },
+  everywhere: { type: 'boolean' },
+  'i-know-this-is-not-local': { type: 'boolean' },
 } as const;
 
 const HELP = `statescope — run backend scenarios, see exactly what changed
@@ -75,6 +105,8 @@ const HELP = `statescope — run backend scenarios, see exactly what changed
                                turn what a run observed into assertions in the
                                scenario file. With no numbers, lists them.
   statescope report <file…>    re-render stored envelopes as text or JUnit
+  statescope secret <cmd>      credentials a workspace refers to but does not contain
+  statescope handoff <cmd>     open an observed row in a database tool of yours
   statescope status            what this workspace points at, and whether it answers
   statescope url               the URL of a running runtime, token and all
 
@@ -109,7 +141,7 @@ Exit codes
   2  a step could not be executed
   3  undecided — it ran, nothing failed, but something was never checked
   4  bad invocation, or a workspace that will not load
-  5  the target matched no dataset
+  5  this workspace has no scenarios to run
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -128,7 +160,10 @@ async function main(argv: string[]): Promise<number> {
 
   const { values, positionals } = parsed;
   if (values.version) {
-    process.stdout.write('statescope 0.2.0 (schema statescope.run-report/1)\n');
+    // Imported, not typed out. This line said `/1` for as long as the constant
+    // did, and would have gone on saying it after the bump — TypeScript cannot
+    // object to a string that happens to be wrong.
+    process.stdout.write(`statescope ${VERSION} (schema ${RUN_REPORT_SCHEMA})\n`);
     return 0;
   }
   const command = positionals[0] ?? (values.help ? 'help' : undefined);
@@ -156,6 +191,13 @@ async function main(argv: string[]): Promise<number> {
       return commandReport(positionals.slice(1), values);
     case 'status':
       return commandStatus(values);
+    case 'secret':
+      return commandSecret(positionals.slice(1), values);
+    case 'handoff':
+      // `values` carries `--config`, so the grant is recorded against the
+      // workspace the config names rather than whatever directory the shell
+      // happens to be in.
+      return commandHandoff(positionals.slice(1), values);
     default:
       process.stderr.write(`Unknown command \`${command}\`.\n\n${HELP}`);
       return EXIT_USAGE;
@@ -168,7 +210,7 @@ function commandUrl(args: string[]): number {
   const sessions = listSessions();
   if (sessions.length === 0) {
     process.stderr.write(
-      'No StateScope runtime is running.\nStart one with `statescope serve`; it prints its URL and records it for next time.\n',
+      'No StateScope runtime is running.\nStart one with `pnpm start`; it prints its URL and records it for next time.\n',
     );
     return 1;
   }
@@ -207,6 +249,20 @@ function policyFrom(values: Values): VerdictPolicy | string {
   };
 }
 
+/**
+ * Removes resolved credentials from text this process did not format.
+ *
+ * A PostgreSQL driver reports an authentication failure with the whole
+ * connection string in the message, password included, and that message goes
+ * to stderr. Wrapping the value in a `Secret` cannot help there — the string
+ * was built by someone else. This is the backstop.
+ */
+let scrubber: (text: string) => string = (text) => text;
+
+export function scrubSecrets(text: string): string {
+  return scrubber(text);
+}
+
 async function withWorkspace<T>(
   values: Values,
   body: (session: Awaited<ReturnType<typeof open>>) => Promise<T>,
@@ -216,6 +272,10 @@ async function withWorkspace<T>(
     session = await open(values);
   } catch (error) {
     if (error instanceof WorkspaceConfigError) {
+      process.stderr.write(`${scrubSecrets(error.message)}\n`);
+      return EXIT_USAGE;
+    }
+    if (error instanceof SecretStoreUnavailable || error instanceof SecretNotConfigured) {
       process.stderr.write(`${error.message}\n`);
       return EXIT_USAGE;
     }
@@ -223,6 +283,25 @@ async function withWorkspace<T>(
   }
   try {
     return await body(session);
+  } catch (error) {
+    // A stored run this build cannot read is an ordinary, actionable outcome —
+    // not a crash. It reached the top as a stack trace *and exited 0*, which
+    // in a tool whose exit codes are the contract is the worse half.
+    if (error instanceof StaleRunError) {
+      process.stderr.write(`${error.message}\n`);
+      return EXIT_USAGE;
+    }
+    // A workspace that is misconfigured is an ordinary outcome with a remedy,
+    // not a crash. `statescope status` had always rendered its own properly;
+    // every other command answered a missing `scenariosDir` with a Node stack
+    // trace — on the second command in the README, on a machine that had done
+    // nothing wrong.
+    if (error instanceof WorkspaceError) {
+      process.stderr.write(`${error.message}\n`);
+      if (error.remedy) process.stderr.write(`${error.remedy}\n`);
+      return EXIT_USAGE;
+    }
+    throw error;
   } finally {
     // Racing the close is what stops Ctrl-C mid-request from waiting out the
     // HTTP timeout: the observer client is held across the step.
@@ -231,9 +310,25 @@ async function withWorkspace<T>(
 }
 
 async function open(values: Values) {
-  const config = await loadWorkspaceConfig({
+  const loaded = await loadWorkspaceConfig({
     ...(values.config !== undefined ? { configPath: values.config } : {}),
   });
+
+  // The workspace names credentials; this is where they become values. The
+  // store is only opened when something actually refers to one, so a workspace
+  // with no secrets never touches the keychain and never prompts.
+  const needed = secretsReferencedBy(loaded);
+  const opened =
+    needed.length > 0
+      ? await tryOpenSecretStore({ namespace: namespaceOf(loaded) })
+      : { store: undefined, reason: '' };
+  const { config, scrub } = await resolveWorkspaceSecrets(loaded, {
+    ...('store' in opened && opened.store ? { store: opened.store } : {}),
+    ...('reason' in opened && opened.reason ? { storeUnavailable: opened.reason } : {}),
+  });
+  // Anything formatted from here on can have the values taken back out.
+  scrubber = scrub;
+
   const baseline = values.baseline;
   return openWorkspace(config, {
     ...(baseline !== undefined
@@ -245,7 +340,19 @@ async function open(values: Values) {
   });
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * `unref`'d, so a timer that lost its race cannot keep the process alive.
+ *
+ * It is used as the losing half of `Promise.race([close(), sleep(2000)])`, and
+ * a `setTimeout` holds the event loop open until it fires whether or not
+ * anybody is still waiting on it. Measured: `statescope ls` finished its work
+ * in 16ms and the process then sat for another 2,250ms — every invocation of
+ * every command paying two seconds for a deadline that had already been beaten.
+ */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
 
 // ─── ls / status ──────────────────────────────────────────────────────────────
 
@@ -269,10 +376,72 @@ async function commandList(values: Values): Promise<number> {
   return typeof result === 'number' ? result : 0;
 }
 
+/**
+ * Whether every secret a workspace refers to is configured — without reading a
+ * single value.
+ *
+ * `status` and `check` are the commands run *because* something is wrong, so
+ * they have to survive a missing credential and report it, rather than failing
+ * on the way to finding out. Asking the store whether an id exists is the whole
+ * check; the value never leaves the keychain.
+ */
+async function reportSecrets(values: Values): Promise<{ lines: string[]; allConfigured: boolean }> {
+  const config = await loadWorkspaceConfig({
+    ...(values.config !== undefined ? { configPath: values.config } : {}),
+  });
+  const names = secretsReferencedBy(config);
+  if (names.length === 0) return { lines: [], allConfigured: true };
+
+  const opened = await tryOpenSecretStore({ namespace: namespaceOf(config) });
+  if (!opened.store) {
+    return {
+      lines: [
+        `  secrets   ${names.length} referenced, and no secret store is available`,
+        `            ${opened.reason}`,
+      ],
+      allConfigured: false,
+    };
+  }
+  const lines: string[] = [];
+  let allConfigured = true;
+  for (const name of names) {
+    const id = secretIdFor(name, DEFAULT_CONTEXT);
+    // `has`, not `get`: reading the value is what raises the macOS permission
+    // dialog and what blocks on a locked keychain, and this command's whole
+    // job is to work when something is wrong.
+    const present = await opened.store.has(id);
+    if (!present) allConfigured = false;
+    lines.push(
+      `  ${lines.length === 0 ? 'secrets ' : '        '}  ${present ? '\u2713' : '\u2717'} ${name}` +
+        (present ? '' : ` \u2014 not configured; \`statescope secret set ${id}\``),
+    );
+  }
+  return { lines, allConfigured };
+}
+
 async function commandStatus(values: Values): Promise<number> {
+  // Before the workspace opens, because opening it resolves secrets and a
+  // missing one would abort the very report that explains why.
+  let secretsOk = true;
+  let secretLines: string[] = [];
+  try {
+    const report = await reportSecrets(values);
+    secretLines = report.lines;
+    secretsOk = report.allConfigured;
+  } catch (error) {
+    if (!(error instanceof WorkspaceConfigError)) throw error;
+  }
+  if (!secretsOk) {
+    // The workspace cannot open without them, so this is the whole report.
+    process.stdout.write('statescope\n');
+    for (const line of secretLines) process.stdout.write(`${line}\n`);
+    return 2;
+  }
+
   const result = await withWorkspace(values, async (session) => {
     const style = styleFor(values);
     process.stdout.write(`${renderWorkspaceLine(style, session.config)}\n`);
+    for (const line of secretLines) process.stdout.write(`${line}\n`);
     try {
       const { tables } = await session.preflight();
       process.stdout.write(`  database  reachable · ${tables.length} tables\n`);
@@ -615,12 +784,28 @@ async function commandReport(files: string[], values: Values): Promise<number> {
         return EXIT_USAGE;
       }
       const major = Number(parsed.schema.split('/')[1]);
-      if (major > 1) {
+      const supported = Number(RUN_REPORT_SCHEMA.split('/')[1]);
+      if (!Number.isInteger(major)) {
+        process.stderr.write(`${file}: unreadable schema version \`${parsed.schema}\`.\n`);
+        return EXIT_USAGE;
+      }
+      if (major > supported) {
         // A newer producer. Refusing beats guessing: the rule everywhere else
         // is that an unknown value degrades to undecided, and silently reading
         // a format we do not know would be the opposite of that.
         process.stderr.write(
-          `${file}: written by a newer StateScope (${parsed.schema}); this build reads version 1.\n`,
+          `${file}: written by a newer StateScope (${parsed.schema}); this build reads version ${supported}.\n`,
+        );
+        return EXIT_USAGE;
+      }
+      if (major < supported) {
+        // The gate only ever looked upwards, so an *older* file sailed through
+        // and was rendered as though its fields meant what they mean now. A
+        // /1 file's column values carry `text` with no `state`, which reads as
+        // neither visible nor masked — every value would print as unknown.
+        process.stderr.write(
+          `${file}: written by an older StateScope (${parsed.schema}); this build reads version ${supported}. ` +
+            `Re-run the scenario to produce a current report.\n`,
         );
         return EXIT_USAGE;
       }
@@ -802,13 +987,17 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
     const exitCode = values['exit-zero'] && (natural === 1 || natural === 3) ? 0 : natural;
 
     const envelope = buildEnvelope(reports, suite, {
-      producer: { tool: 'statescope', version: '0.2.0', surface: 'cli' },
+      producer: { tool: 'statescope', version: VERSION, surface: 'cli' },
       workspace: {
         name: session.config.name,
         configPath: session.config.configFile,
         baseUrl: session.config.baseUrl,
         scenariosDir: session.config.scenariosDir,
-        capture: { method: session.adapter.captureMethod, detection: session.adapter.detection },
+        capture: {
+          method: session.adapter.captureMethod,
+          detection: session.adapter.detection,
+          fidelity: session.adapter.fidelity,
+        },
         tableCount: (await session.adapter.listTables()).length,
       },
       invocation: {

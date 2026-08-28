@@ -22,6 +22,7 @@
  */
 
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { schemaReadable } from '@statescope/core';
 import { join } from 'node:path';
 
 /** The stored artifact: whatever the report layer produced for a single run. */
@@ -78,13 +79,21 @@ export function openStore(dir: string, options: StoreOptions = {}): RunStore {
   };
 
   const read = async (id: string): Promise<StoredRun | undefined> => {
+    let parsed: StoredRun;
     try {
-      return JSON.parse(await readFile(join(dir, `${id}.json`), 'utf8')) as StoredRun;
+      parsed = JSON.parse(await readFile(join(dir, `${id}.json`), 'utf8')) as StoredRun;
     } catch {
       // A truncated or hand-edited file is not worth failing a run over; it is
       // history, and the run that matters is the one happening now.
       return undefined;
     }
+    // A file this build cannot read is *not* the same as no such file, and
+    // returning `undefined` for both is what made a schema mismatch surface as
+    // "No stored run `x`" — and made `latest()` quietly skip it and hand back
+    // an older run, which `--from last` then treated as current.
+    const why = schemaReadable(parsed['schema']);
+    if (why !== true) throw new StaleRunError(id, why);
+    return parsed;
   };
 
   const store: RunStore = {
@@ -123,7 +132,17 @@ export function openStore(dir: string, options: StoreOptions = {}): RunStore {
       const out: StoredRunSummary[] = [];
       for (const id of await ids()) {
         if (out.length >= limit) break;
-        const stored = await read(id);
+        let stored;
+        try {
+          stored = await read(id);
+        } catch (error) {
+          // A listing that dies because one old file is on disk is worse than
+          // the problem. `get` and `latest` still refuse: asking for a specific
+          // run, or for the newest one, must not quietly hand back something
+          // else.
+          if (error instanceof StaleRunError) continue;
+          throw error;
+        }
         if (!stored) continue;
         const verdict = (stored['verdict'] ?? {}) as { outcome?: string };
         out.push({
@@ -147,4 +166,23 @@ export function openStore(dir: string, options: StoreOptions = {}): RunStore {
   };
 
   return store;
+}
+
+/**
+ * A stored run this build cannot read.
+ *
+ * Thrown rather than returned as `undefined`, because the two are different
+ * facts with different fixes and the caller used to see one message for both:
+ * `runs show x` said "No stored run `x`" for a file sitting right there, and
+ * `latest()` skipped it and returned an older run that `--from last` then
+ * treated as current.
+ */
+export class StaleRunError extends Error {
+  override readonly name = 'StaleRunError';
+  constructor(
+    readonly runId: string,
+    readonly why: string,
+  ) {
+    super(`Stored run \`${runId}\` cannot be read: ${why}. Re-run the scenario.`);
+  }
 }

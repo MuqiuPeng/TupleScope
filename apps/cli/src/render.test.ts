@@ -6,10 +6,19 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { ChangeSet, RowChange, Value } from '@statescope/core';
-import { jsonLeaves, renderDiff, renderKey, renderValue, widthOf, type Style } from './render.js';
+import { visible } from '@statescope/core';
+import {
+  jsonLeaves,
+  renderDiff,
+  renderKey,
+  renderValue,
+  renderWriteOrder,
+  widthOf,
+  type Style,
+} from './render.js';
 
 const style: Style = { color: false, ascii: false, width: 100 };
-const v = (text: string | null, pgType = 'text'): Value => ({ pgType, text });
+const v = (text: string | null, pgType = 'text'): Value => visible(pgType, text);
 
 function change(partial: Partial<RowChange> & Pick<RowChange, 'table' | 'kind'>): RowChange {
   return {
@@ -24,14 +33,17 @@ function change(partial: Partial<RowChange> & Pick<RowChange, 'table' | 'kind'>)
 }
 
 function keyed(column: string, value: string): RowChange['key'] {
-  return { columns: [{ column, value: v(value) }], serialized: `${column}=${value}` };
+  return { columns: [{ column, value: v(value) }], token: `${column}=${value}` };
 }
 
 const set = (changes: RowChange[]): ChangeSet => ({
   captureMethod: 'mvcc-xmin',
   detection: 'write',
-  scope: { allTables: true, tables: [] },
+  fidelity: 'net',
+  scope: { schema: 'public', database: 'test', allTables: true, tables: [] },
   changes,
+  // Required, so a ChangeSet cannot exist without saying how its text was printed.
+  rendering: { DateStyle: 'ISO, MDY', TimeZone: 'UTC', bytea_output: 'hex', IntervalStyle: 'iso_8601', extra_float_digits: '1' },
   warnings: [],
   durationMs: 1,
 });
@@ -271,5 +283,119 @@ describe('colour', () => {
 
   it('measures width without counting escape sequences', () => {
     assert.equal(widthOf('[32mok[0m'), 2);
+  });
+});
+
+describe('the write order', () => {
+  const mutation = (
+    sequence: number,
+    table: string,
+    operation: 'insert' | 'update' | 'delete',
+    id: string | null,
+    transactionId: string | null = '900',
+  ) => ({
+    sequence,
+    transactionId,
+    table,
+    operation,
+    key: id === null ? null : { columns: [{ column: 'id', value: v(id) }], token: `["${id}"]` },
+  });
+
+  const withOrder = (changes: RowChange[], mutations: ReturnType<typeof mutation>[]): ChangeSet => ({
+    ...set(changes),
+    captureMethod: 'wal',
+    fidelity: 'transactional',
+    mutations,
+  });
+
+  const changed = (table: string, id: string): RowChange =>
+    change({
+      table,
+      kind: 'update',
+      key: { columns: [{ column: 'id', value: v(id) }], token: `["${id}"]` },
+    });
+
+  const opts = { style, indent: '', maxRows: 8 };
+
+  it('says nothing at all when the engine did not record an order', () => {
+    // Not a missing feature — the honest output for an engine that does not
+    // know. Inventing a sequence would be worse than silence.
+    assert.deepEqual(renderDiff(set([changed('t', 'a')]), options).length > 0, true);
+    assert.deepEqual(renderWriteOrder(set([changed('t', 'a')]), opts), []);
+  });
+
+  it('reports one clean transaction in a single line', () => {
+    // Worth saying: "these were atomic" is not visible anywhere else.
+    const lines = renderWriteOrder(
+      withOrder(
+        [changed('payments', 'p1'), changed('wallets', 'w1')],
+        [mutation(0, 'payments', 'update', 'p1'), mutation(1, 'wallets', 'update', 'w1')],
+      ),
+      opts,
+    );
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /2 writes, one transaction/);
+  });
+
+  it('expands and names the reason when the step was not atomic', () => {
+    const lines = renderWriteOrder(
+      withOrder(
+        [changed('payments', 'p1'), changed('wallets', 'w1')],
+        [
+          mutation(0, 'payments', 'update', 'p1', '900'),
+          mutation(1, 'wallets', 'update', 'w1', '901'),
+        ],
+      ),
+      opts,
+    );
+    assert.match(lines[0]!, /2 transactions/);
+    assert.match(lines[1]!, /payments\s+update/);
+    assert.match(lines[1]!, /txn 1/);
+    assert.match(lines[2]!, /txn 2/);
+  });
+
+  it('shows a row written twice, which the diff above shows once', () => {
+    const lines = renderWriteOrder(
+      withOrder(
+        [changed('wallets', 'w1')],
+        [mutation(0, 'wallets', 'update', 'w1'), mutation(1, 'wallets', 'update', 'w1')],
+      ),
+      opts,
+    );
+    assert.match(lines[0]!, /a row written more than once/);
+    assert.equal(lines.length, 3);
+  });
+
+  it('marks a row that never reached the diff', () => {
+    // Inserted and deleted inside one transaction: not a net change, so it is
+    // correctly absent above, and this is the only place it can be seen.
+    const lines = renderWriteOrder(
+      withOrder(
+        [],
+        [mutation(0, 'entries', 'insert', 'ghost'), mutation(1, 'entries', 'delete', 'ghost')],
+      ),
+      opts,
+    );
+    assert.match(lines[0]!, /2 written then removed/);
+    assert.match(lines[1]!, /not in the diff above/);
+  });
+
+  it('caps the list and says how many it hid', () => {
+    const many = Array.from({ length: 20 }, (_, i) =>
+      mutation(i, 't', 'insert', `r${i}`, i < 10 ? '900' : '901'),
+    );
+    const lines = renderWriteOrder(withOrder([], many), opts);
+    assert.ok(lines.some((l) => /\(\+12 more · --diff all\)/.test(l)));
+  });
+
+  it('carries every distinction without colour', () => {
+    const built = withOrder(
+      [changed('wallets', 'w1')],
+      [mutation(0, 'wallets', 'update', 'w1', '900'), mutation(1, 'wallets', 'update', 'w1', '901')],
+    );
+    const plain = renderWriteOrder(built, opts).join('\n');
+    const coloured = renderWriteOrder(built, { ...opts, style: { ...style, color: true } }).join('\n');
+    // eslint-disable-next-line no-control-regex
+    assert.equal(coloured.replace(/\u001b\[[0-9;]*m/g, ''), plain);
   });
 });

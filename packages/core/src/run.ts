@@ -68,6 +68,15 @@ export interface StepResult {
    * reason to reach for this tool over a hand-written integration test.
    */
   candidates?: ReadonlyArray<AssertionCandidate>;
+  /**
+   * Candidates promotion declined to offer, as `table.column`.
+   *
+   * A run whose interesting columns are masked produces few candidates or none,
+   * and a short list on its own reads as "there was nothing worth asserting"
+   * rather than "this run cannot see the values" — the same mistake as an empty
+   * ChangeSet with no warning. Absent when nothing was withheld.
+   */
+  withheldCandidates?: ReadonlyArray<string>;
 }
 
 /**

@@ -89,6 +89,11 @@ export const WARNING_SEVERITY: Readonly<Record<CaptureWarning['code'], 'error' |
   // The observation is complete and correct; something else also writes here.
   // Outbox pollers and session sweepers are ordinary on a running dev machine.
   'concurrent-writes-detected': 'warn',
+  // The values came back from this connection and every assertion over them is
+  // decided; the text is simply not portable to a second tool. Reddening a run
+  // whose assertions all held, over a property no assertion depends on, is the
+  // kind of noise that gets a suite `|| true`'d.
+  'rendering-not-pinned': 'warn',
 };
 
 /** Unknown codes escalate: a warning from a newer producer is not one to guess about. */

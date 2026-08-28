@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { RUN_REPORT_SCHEMA } from '@statescope/core';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { openStore, type StoredRun } from './history.js';
+import { openStore, StaleRunError, type StoredRun } from './history.js';
 
 let dir: string;
 before(async () => {
@@ -26,6 +27,9 @@ function stored(id: string, extra: Partial<StoredRun['run']> = {}, outcome = 'cl
     },
     verdict: { outcome },
     variables: { run: id.slice(-6), payment_id: `pay_${id}` },
+    // Every stored run declares its wire format. A file without one cannot be
+    // version-gated retroactively, however good the gate becomes.
+    schema: RUN_REPORT_SCHEMA,
   } as StoredRun;
 }
 
@@ -124,6 +128,55 @@ describe('the run store', () => {
     const store = openStore(join(dir, 'i'));
     await store.save(stored('run_t0000001'));
     const back = await store.get('run_t0000001');
-    assert.equal((back as { variables: Record<string, string> }).variables['payment_id'], 'pay_run_t0000001');
+    assert.ok(back, 'the run should still be there');
+    // StoredRun keeps everything but `run` opaque on purpose, so narrowing
+    // the one field this test is about is the honest move.
+    const variables = back.variables as Record<string, string>;
+    assert.equal(variables['payment_id'], 'pay_run_t0000001');
+  });
+});
+
+describe('a stored run this build cannot read', () => {
+  it('refuses rather than reading as "no such run"', async () => {
+    // The two are different facts with different fixes, and the caller used to
+    // get one message for both: `runs show x` said "No stored run `x`" about a
+    // file sitting right there.
+    const store = await openStore(dir);
+    await store.save(stored('run_stale001'));
+    const path = join(dir, 'run_stale001.json');
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    await writeFile(path, JSON.stringify({ ...parsed, schema: 'statescope.run-report/1' }));
+
+    await assert.rejects(() => store.get('run_stale001'), StaleRunError);
+    await assert.rejects(
+      () => store.get('run_stale001'),
+      /older StateScope \(statescope\.run-report\/1\)/,
+    );
+  });
+
+  it('does not let `latest` skip past it and hand back an older run', async () => {
+    // The silent-skip was the dangerous half: `--from last` then carried the
+    // variables of a run that was not the last one.
+    const store = await openStore(dir);
+    await store.save(stored('run_stale100'));
+    await store.save(stored('run_stale200'));
+    const path = join(dir, 'run_stale200.json');
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    await writeFile(path, JSON.stringify({ ...parsed, schema: 'statescope.run-report/99' }));
+
+    await assert.rejects(() => store.latest(), StaleRunError);
+  });
+
+  it('still lists, because one old file must not take down the listing', async () => {
+    const store = await openStore(dir);
+    await store.save(stored('run_stale300'));
+    await store.save(stored('run_stale400'));
+    const path = join(dir, 'run_stale400.json');
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    await writeFile(path, JSON.stringify({ ...parsed, schema: 'statescope.run-report/1' }));
+
+    const listed = await store.list(50);
+    assert.ok(listed.some((entry) => entry.id === 'run_stale300'));
+    assert.ok(!listed.some((entry) => entry.id === 'run_stale400'));
   });
 });

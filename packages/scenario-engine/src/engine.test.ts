@@ -20,6 +20,8 @@ import { ScenarioEngine, template } from './index.js';
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
 const SCOPE: CaptureScope = {
+  schema: 'public',
+  database: 'test',
   allTables: true,
   tables: [
     { table: 'payments', ignoreColumns: [], maskedColumns: [], keyStrategy: 'primary-key' },
@@ -31,8 +33,11 @@ function emptyChanges(detection: Detection = 'write', changes: RowChange[] = [])
   return {
     captureMethod: 'mvcc-xmin',
     detection,
+    fidelity: 'net',
     scope: SCOPE,
     changes,
+    // Required, so a ChangeSet cannot exist without saying how its text was printed.
+    rendering: { DateStyle: 'ISO, MDY', TimeZone: 'UTC', bytea_output: 'hex', IntervalStyle: 'iso_8601', extra_float_digits: '1' },
     warnings: [],
     durationMs: 1,
   };
@@ -86,6 +91,7 @@ function fakes(options: {
   const adapter: DatabaseAdapter = {
     captureMethod: 'mvcc-xmin',
     detection: 'write',
+    fidelity: 'net',
     async capture(_scope, body) {
       const result = await body();
       const changes = options.changes?.[index] ?? emptyChanges();
@@ -470,5 +476,54 @@ describe('ScenarioEngine', () => {
     assert.equal(run.status, 'errored');
     assert.equal(run.steps[0]!.error!.kind, 'request');
     assert.match(run.steps[0]!.error!.remedy!, /backend is running/);
+  });
+});
+
+describe('a secret reference written into a scenario', () => {
+  it('is refused rather than sent as those characters', async () => {
+    // Scenario files are not resolved — `${secret:…}` is a workspace thing,
+    // because `identities` is where authentication is declared once. Left
+    // alone it would go out verbatim and come back as a puzzling 401.
+    const f = fakes({ responses: [{ status: 201, body: {} }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([
+        {
+          id: 'create',
+          name: 'create',
+          request: {
+            method: 'POST',
+            path: '/payments',
+            headers: { authorization: 'Bearer ${secret:alice_token}' },
+          },
+        },
+      ]),
+      'd',
+      SCOPE,
+    );
+    assert.equal(run.status, 'errored');
+    const message = run.steps[0]?.error?.message ?? '';
+    assert.match(message, /do not resolve secret references/);
+    assert.match(message, /Put the credential in `identities`/);
+    // ...and the reference is named, so the fix is obvious rather than a hunt.
+    assert.match(message, /alice_token/);
+    assert.equal(f.calls.length, 0, 'nothing should have been sent');
+  });
+
+  it('lets an ordinary header through untouched', async () => {
+    const f = fakes({ responses: [{ status: 201, body: {} }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([
+        {
+          id: 'create',
+          name: 'create',
+          request: { method: 'POST', path: '/payments', headers: { 'x-trace': 'abc' } },
+        },
+      ]),
+      'd',
+      SCOPE,
+    );
+    assert.notEqual(run.status, 'errored');
   });
 });

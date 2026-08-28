@@ -18,7 +18,7 @@ const PORT = 7420;
 
 interface Captured {
   status?: number;
-  body?: { error?: string; message?: string };
+  body?: { error?: string; message?: string } | undefined;
   headers: Record<string, string>;
   contentType?: string;
 }

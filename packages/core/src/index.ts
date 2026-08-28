@@ -7,8 +7,12 @@
  * to a database-neutral value model it cannot honestly provide — a document
  * store will be a new ChangeSet variant, not this one wearing a disguise.
  */
+export * from './schema.js';
 export * from './value.js';
+export * from './sql.js';
 export * from './changeset.js';
+export * from './locator.js';
+export * from './handoff.js';
 export * from './scenario.js';
 export * from './assertion.js';
 export * from './run.js';

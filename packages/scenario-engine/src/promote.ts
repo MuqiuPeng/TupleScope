@@ -14,7 +14,8 @@
  * becomes `{{payment_id}}`.
  */
 
-import type { AssertionCandidate, ChangeSet, RowChange, Value } from '@statescope/core';
+import type { AssertionCandidate, ChangeSet, RowChange, Value, VisibleValue } from '@statescope/core';
+import { displayText, isVisible } from '@statescope/core';
 import { Decimal } from '@statescope/expr';
 
 /** Columns that are never worth asserting on: they differ every run by design. */
@@ -28,8 +29,17 @@ const NUMERIC = new Set(['numeric', 'decimal', 'int2', 'int4', 'int8', 'float4',
  * Reversed lookup rather than forward substitution: we have the literal and
  * want to know whether the run already has a name for it.
  */
-function literalOf(value: Value | undefined, variables: Readonly<Record<string, string>>): string {
-  if (!value || value.text === null) return 'null';
+function literalOf(
+  value: Value | undefined,
+  variables: Readonly<Record<string, string>>,
+): string | null {
+  // `null`, not a placeholder. Every caller drops the candidate rather than
+  // writing something down, which is the only honest option: an assertion whose
+  // expected literal is the redaction passes forever and establishes nothing.
+  // Measured before this returned null: `single(updated(cards, id = "c1"))
+  // .after.card_number == "••••••••"` was offered as a candidate.
+  if (!isVisible(value)) return null;
+  if (value.text === null) return 'null';
   for (const [name, captured] of Object.entries(variables)) {
     // `run` and `now` are built-ins that happen to be strings; matching against
     // them would produce nonsense like `id == {{now}}`.
@@ -46,14 +56,20 @@ function predicateOf(
   variables: Readonly<Record<string, string>>,
 ): string | null {
   if (!change.key || change.key.columns.length === 0) return null;
-  return change.key.columns
-    .map(({ column, value }) => `${column} = ${literalOf(value, variables)}`)
-    .join(' and ');
+  const parts: string[] = [];
+  for (const { column, value } of change.key.columns) {
+    const literal = literalOf(value, variables);
+    // One unwritable key column makes the whole predicate unwritable. A
+    // predicate over the rest would name more rows than the one observed.
+    if (literal === null) return null;
+    parts.push(`${column} = ${literal}`);
+  }
+  return parts.join(' and ');
 }
 
 function describeKey(change: RowChange): string {
   if (!change.key) return `a row in ${change.table}`;
-  return change.key.columns.map((c) => `${c.column} ${c.value.text ?? 'null'}`).join(', ');
+  return change.key.columns.map((c) => `${c.column} ${displayText(c.value)}`).join(', ');
 }
 
 /**
@@ -86,6 +102,7 @@ function countCaveat(
  * candidate at all.
  */
 function countCandidates(
+  withheld: string[],
   changes: ChangeSet,
   variables: Readonly<Record<string, string>>,
 ): AssertionCandidate[] {
@@ -124,12 +141,25 @@ function countCandidates(
         }
       }
       for (const column of columns) {
-        const values = new Set(rows.map((r) => r.after?.[column]?.text).filter((t) => t != null));
+        // One row without a readable value disqualifies the column: the count
+        // would be over the rows that happened to be readable, presented as a
+        // count over all of them.
+        if (rows.some((r) => !isVisible(r.after?.[column]))) {
+          withheld.push(`${table}.${column}`);
+          continue;
+        }
+        const textOf = (r: RowChange): string | null => {
+          const value = r.after?.[column];
+          return isVisible(value) ? value.text : null;
+        };
+        const values = new Set(rows.map(textOf).filter((t): t is string => t != null));
         for (const value of values) {
-          const n = rows.filter((r) => r.after?.[column]?.text === value).length;
-          const sample = rows.find((r) => r.after?.[column]?.text === value)!.after![column]!;
+          const n = rows.filter((r) => textOf(r) === value).length;
+          const sample = rows.find((r) => textOf(r) === value)!.after![column]!;
+          const literal = literalOf(sample, variables);
+          if (literal === null) continue;
           out.push({
-            expression: `count(inserted(${table}).where(${column} = ${literalOf(sample, variables)})) == ${n}`,
+            expression: `count(inserted(${table}).where(${column} = ${literal})) == ${n}`,
             description: `${n} ${table} row${n === 1 ? '' : 's'} with ${column} ${value}`,
             changeIndex: index,
             ...(caveat ? { caveat } : {}),
@@ -142,13 +172,28 @@ function countCandidates(
 }
 
 function forChange(
+  withheld: string[],
   change: RowChange,
   index: number,
   variables: Readonly<Record<string, string>>,
   detection: ChangeSet['detection'],
 ): AssertionCandidate[] {
   const out: AssertionCandidate[] = [];
+  // A row keyed by a masked column cannot be named, so none of the per-row
+  // candidates below can be written. Dropping them is the only honest option:
+  // without the predicate, `single(updated(users))` is not a weaker version of
+  // the same claim — it asserts that exactly one row changed, which is a
+  // different and probably false thing.
+  //
+  // This is the second place in this file that had to learn about masking. The
+  // first guard covered the cross-row column candidates, and this path went on
+  // emitting `email = "••••••••"` regardless — which is what an optional
+  // boolean on a value costs.
   const predicate = predicateOf(change, variables);
+  if (change.key && change.key.columns.length > 0 && predicate === null) {
+    withheld.push(`${change.table} (key)`);
+    return out;
+  }
   const scoped = predicate ? `${change.table}, ${predicate}` : change.table;
 
   // Inserts and deletes are counted per table, not per row — see
@@ -162,10 +207,23 @@ function forChange(
     const before = change.before?.[column];
     const after = change.after?.[column];
     if (!after) continue;
+    // The hole this closes: the key guard above covered the *predicate*, and
+    // this loop went on turning the column's own value into a literal. An
+    // update to a masked column offered
+    // `single(updated(cards, id = "c1")).after.card_number == "••••••••"` —
+    // an assertion that is written into the scenario file, passes on every
+    // later run whatever the real card number becomes, and proves nothing.
+    const literal = literalOf(after, variables);
+    if (literal === null) {
+      withheld.push(`${change.table}.${column}`);
+      continue;
+    }
 
     if (
       NUMERIC.has(after.pgType) &&
-      before?.text != null &&
+      isVisible(before) &&
+      isVisible(after) &&
+      before.text != null &&
       after.text != null &&
       Decimal.isDecimal(before.text) &&
       Decimal.isDecimal(after.text)
@@ -180,12 +238,13 @@ function forChange(
       });
     }
 
+    const shownAfter = displayText(after);
     out.push({
-      expression: `single(updated(${scoped})).after.${column} == ${literalOf(after, variables)}`,
+      expression: `single(updated(${scoped})).after.${column} == ${literal}`,
       description:
-        before?.text != null
-          ? `${change.table}.${column} becomes ${after.text} (was ${before.text})`
-          : `${change.table}.${column} becomes ${after.text}`,
+        isVisible(before) && before.text != null
+          ? `${change.table}.${column} becomes ${shownAfter} (was ${displayText(before)})`
+          : `${change.table}.${column} becomes ${shownAfter}`,
       changeIndex: index,
     });
   }
@@ -209,12 +268,27 @@ function forChange(
  * often the most valuable assertion in a suite, because "the retry did nothing"
  * is exactly what an idempotency test is for.
  */
+/**
+ * What promotion produced, and what it declined to produce.
+ *
+ * `withheld` is not decoration. A run whose interesting columns are all masked
+ * yields few candidates or none, and an empty list on its own reads as "there
+ * was nothing worth asserting" rather than "this run cannot see the values".
+ * That is the same mistake as an empty ChangeSet with no warning.
+ */
+export interface PromotedCandidates {
+  readonly candidates: ReadonlyArray<AssertionCandidate>;
+  /** `table.column` for each candidate not offered because the value is not available. */
+  readonly withheld: ReadonlyArray<string>;
+}
+
 export function promoteCandidates(
   changes: ChangeSet,
   variables: Readonly<Record<string, string>>,
   responseStatus?: number,
-): AssertionCandidate[] {
+): PromotedCandidates {
   const out: AssertionCandidate[] = [];
+  const withheld: string[] = [];
 
   if (responseStatus !== undefined) {
     out.push({
@@ -243,12 +317,12 @@ export function promoteCandidates(
             },
           }),
     });
-    return out;
+    return { candidates: out, withheld };
   }
 
-  out.push(...countCandidates(changes, variables));
+  out.push(...countCandidates(withheld, changes, variables));
   changes.changes.forEach((change, index) => {
-    out.push(...forChange(change, index, variables, changes.detection));
+    out.push(...forChange(withheld, change, index, variables, changes.detection));
   });
 
   // Cross-row invariants are worth offering wherever a table's numeric column
@@ -268,9 +342,16 @@ export function promoteCandidates(
     const rows = changes.changes.filter((c) => c.table === table && c.kind === 'update');
     if (rows.length < 2) continue;
     for (const column of columns) {
+      // All or nothing. A total summed over the rows that happened to be
+      // readable, offered as a total over all of them, is the "books balance"
+      // claim made about a subset — which is worse than not offering it.
+      if (rows.some((c) => !isVisible(c.before?.[column]) || !isVisible(c.after?.[column]))) {
+        withheld.push(`${table}.${column}`);
+        continue;
+      }
       const total = rows.reduce((acc, change) => {
-        const before = change.before?.[column]?.text;
-        const after = change.after?.[column]?.text;
+        const before = (change.before?.[column] as VisibleValue | undefined)?.text;
+        const after = (change.after?.[column] as VisibleValue | undefined)?.text;
         if (before == null || after == null || !Decimal.isDecimal(before) || !Decimal.isDecimal(after)) {
           return acc;
         }
@@ -290,9 +371,12 @@ export function promoteCandidates(
   // Last line of defence: two paths can arrive at the same expression, and an
   // offer list with repeats reads as a bug.
   const seen = new Set<string>();
-  return out.filter((candidate) => {
-    if (seen.has(candidate.expression)) return false;
-    seen.add(candidate.expression);
-    return true;
-  });
+  return {
+    candidates: out.filter((candidate) => {
+      if (seen.has(candidate.expression)) return false;
+      seen.add(candidate.expression);
+      return true;
+    }),
+    withheld: [...new Set(withheld)].sort(),
+  };
 }

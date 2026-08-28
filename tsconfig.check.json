@@ -1,0 +1,16 @@
+{
+  // Typechecks everything the build excludes — test files above all.
+  //
+  // The build emits, so it excludes tests; the runner is tsx, which strips
+  // types without checking them. Between the two, a test file could carry any
+  // type error at all and nothing would say so — which is how a fixture came to
+  // be missing a required ChangeSet field while its suite reported green.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"]
+}

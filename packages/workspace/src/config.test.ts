@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { ENGINE_NAMES } from '@statescope/db-postgres';
+import { secretsReferencedBy } from './credentials.js';
 import {
   findWorkspaceConfig,
   interpolate,
@@ -151,6 +153,83 @@ describe('parseWorkspaceConfig', () => {
 
   it('rejects a negative baseline window', () => {
     rejects(VALID.replace('baselineWindowMs: 400', 'baselineWindowMs: -1'), /non-negative/);
+  });
+
+  it('accepts a named engine and defaults to none', () => {
+    assert.equal(parse(VALID).engine, undefined);
+    assert.equal(parse(`${VALID}\nengine: snapshot-diff`).engine, 'snapshot-diff');
+    assert.equal(parse(`${VALID}\nengine: mvcc-xmin`).engine, 'mvcc-xmin');
+  });
+
+  it('accepts every engine the registry offers, without this file listing them', () => {
+    // The list comes from the engine registry, so a new engine becomes
+    // configurable by being registered. `wal` was rejected here until the day
+    // it existed, and became valid without an edit to config.ts.
+    for (const name of ENGINE_NAMES) {
+      assert.equal(parse(`${VALID}\nengine: ${name}`).engine, name);
+    }
+    assert.ok(ENGINE_NAMES.length >= 3, `only ${ENGINE_NAMES.length} engines registered`);
+  });
+
+  it('rejects an engine nobody implements, and lists the ones that exist', () => {
+    // A typo would otherwise fall through to the default and run a different
+    // engine than the file asked for, silently.
+    rejects(`${VALID}\nengine: mvcc`, /must be one of .*mvcc-xmin.*not `mvcc`/);
+  });
+
+  it('leaves a marker for the run to resolve, not the original text', () => {
+    // It cannot be resolved here — reading a credential store means talking to
+    // another process, and this runs before the config is even validated. What
+    // it leaves is a marker rather than `${secret:…}`, because this output is
+    // read again and re-reading its own syntax is how the `$${` escape and the
+    // environment namespace were both breached.
+    const config = parse(VALID.replace('"Bearer a"', '"Bearer ${secret:alice_token}"'));
+    const value = config.identities?.[0]?.header?.value ?? '';
+    assert.doesNotMatch(value, /\$\{secret:/, 'the re-parseable form must not survive');
+    assert.deepEqual(secretsReferencedBy(config), ['alice_token']);
+  });
+
+  it('does not resolve a reference the escape was protecting', () => {
+    // `$${secret:x}` says "these characters". Emitting them for a later pass to
+    // re-read turned that into a credential — verified before this changed.
+    // A function replacement, because `String.replace` reads `$$` in a literal
+    // replacement as an escape for `$` and would eat the very thing under test.
+    const config = parse(VALID.replace('"Bearer a"', () => '"Bearer $${secret:alice_token}"'));
+    assert.equal(config.identities?.[0]?.header?.value, 'Bearer ${secret:alice_token}');
+    assert.deepEqual(secretsReferencedBy(config), [], 'the escaped text is not a reference');
+  });
+
+  it('does not let an environment variable become a secret reference', () => {
+    // The namespace crossing the grammar forbids, arriving by the back door:
+    // `${VAR}` whose value happens to look like a reference.
+    const config = parse(VALID.replace('"Bearer a"', '"Bearer ${SNEAKY}"'), {
+      SNEAKY: '${secret:stolen}',
+    });
+    assert.equal(config.identities?.[0]?.header?.value, 'Bearer ${secret:stolen}');
+    assert.deepEqual(secretsReferencedBy(config), [], 'the environment cannot name a secret');
+  });
+
+  it('refuses a placeholder it does not recognise, rather than passing it through', () => {
+    // The one that mattered: `${secret:x}` matched no pattern here, so it
+    // survived as literal text and would have been sent to the API as those
+    // characters. Anything `${…}`-shaped is now recognised or refused.
+    rejects(VALID.replace('Bearer a', '${SECRET:alice_token}'), /not a secret reference/);
+    rejects(VALID.replace('Bearer a', '${not a var}'), /not a reference this understands/);
+  });
+
+  it('refuses a default on a secret, because that would be the credential', () => {
+    rejects(
+      VALID.replace('Bearer a', '${secret:alice_token:-fallback}'),
+      /default would be a credential written into/,
+    );
+  });
+
+  it('still expands an environment variable beside a secret reference', () => {
+    const config = parse(
+      `${VALID}\nresetUrl: "http://\${HOST:-127.0.0.1}:7421/r?t=\${secret:reset_token}"`,
+    );
+    assert.match(config.resetUrl ?? '', /^http:\/\/127\.0\.0\.1:7421\/r\?t=/);
+    assert.deepEqual(secretsReferencedBy(config), ['reset_token']);
   });
 
   it('names the file in every error', () => {

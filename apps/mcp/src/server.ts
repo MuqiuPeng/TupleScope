@@ -178,7 +178,11 @@ server.registerTool(
           `api         ${s.config.baseUrl}`,
           `config      ${s.config.configFile}`,
           `scenarios   ${s.config.scenariosDir} (${scenarios.length} file(s))`,
-          `capture     ${s.adapter.captureMethod}, ${s.adapter.detection} detection`,
+          `capture     ${s.adapter.captureMethod}, ${s.adapter.detection} detection, ` +
+            `${s.adapter.fidelity} fidelity` +
+            (s.adapter.fidelity === 'transactional'
+              ? ' — atomic() and writeCount() will resolve here'
+              : ' — atomic() and writeCount() would come back undecided'),
           `identities  ${s.config.identities?.map((i) => i.id).join(', ') || '(none configured)'}`,
           `ignored     ${s.config.ignoreColumns?.join(', ') || '(none)'}`,
           `baseline    ${s.config.baselineWindowMs ? `${s.config.baselineWindowMs} ms idle probe` : 'not probed — concurrent writes would not be detected'}`,
@@ -354,7 +358,11 @@ server.registerTool(
           configPath: s.config.configFile,
           baseUrl: s.config.baseUrl,
           scenariosDir: s.config.scenariosDir,
-          capture: { method: s.adapter.captureMethod, detection: s.adapter.detection },
+          capture: {
+            method: s.adapter.captureMethod,
+            detection: s.adapter.detection,
+            fidelity: s.adapter.fidelity,
+          },
           tableCount: (await s.adapter.listTables()).length,
         },
         invocation: {
@@ -374,9 +382,17 @@ server.registerTool(
       });
 
       for (const single of envelope.runs) {
+        // The same four fields the CLI attaches. Without them a run recorded
+        // through MCP has no `schema` key at all, so it can never be
+        // version-gated retroactively however good the gate becomes — a
+        // permanent hole, in the surface where the writer is a model.
         await s.history?.save({
           ...single,
           run: { ...single.run, scenarioId: single.scenario.id, datasetId: single.dataset.id },
+          schema: envelope.schema,
+          producer: envelope.producer,
+          workspace: envelope.workspace,
+          policy: envelope.policy,
         } as never);
       }
 
@@ -460,7 +476,7 @@ server.registerTool(
         );
       }
       const { changes } = await s.adapter.capture(
-        { allTables: false, tables: [entry] },
+        { schema: scope.schema, database: scope.database, allTables: false, tables: [entry] },
         async () => undefined,
       );
       return ok(
@@ -473,7 +489,8 @@ server.registerTool(
           }`,
           `  ignored       ${entry.ignoreColumns.join(', ') || '(none)'}`,
           `  masked        ${entry.maskedColumns.join(', ') || '(none)'}`,
-          `  capture       ${changes.captureMethod}, ${changes.detection} detection`,
+          `  capture       ${changes.captureMethod}, ${changes.detection} detection, ` +
+            `${changes.fidelity} fidelity`,
         ].join('\n'),
       );
     }),
@@ -596,7 +613,13 @@ async function shutdown(): Promise<void> {
   // The pools hold libuv handles; without this the process outlives its client.
   await Promise.race([
     session?.close().catch(() => {}) ?? Promise.resolve(),
-    new Promise((r) => setTimeout(r, 2000)),
+    // `unref`'d: a deadline that loses its race must not then hold the process
+    // open until it fires. Harmless today because `process.exit` follows, and a
+    // trap for whoever removes that line thinking Node can now exit on its own
+    // — the identical shape in the CLI cost every command a flat two seconds.
+    new Promise((r) => {
+      setTimeout(r, 2000).unref();
+    }),
   ]);
   process.exit(0);
 }
