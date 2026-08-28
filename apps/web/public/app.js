@@ -82,16 +82,14 @@ function rememberRun(run, snapshots) {
 }
 
 function viewedRunFor(context = state.selected) {
-  const history = historyFor(context);
-  const viewed = state.viewedRunIds.get(contextKey(context));
-  const chosen = history.find((run) => run.id === viewed);
-  if (chosen) return chosen;
-  // No explicit choice, and the baseline has been restored since: fall back to
-  // nothing rather than to the newest run. Those rows were true of a database
-  // that has been wiped, and defaulting to them is what makes a page that has
-  // run nothing look like a page that has just run.
-  if (state.resetSince.has(contextKey(context))) return null;
-  return history[0] ?? null;
+  // The rule itself lives in runs.js, with its own tests. It was wrong here for
+  // as long as it was only here.
+  return chooseViewedRun({
+    history: historyFor(context),
+    viewedId: state.viewedRunIds.get(contextKey(context)),
+    ranThisSession: state.ranThisSession,
+    resetHere: state.resetSince.has(contextKey(context)),
+  });
 }
 
 function selectDataset(scenarioId, datasetId) {
@@ -247,6 +245,15 @@ function renderProgress() {
   if (history.length) {
     const picker = el('select', 'run-history-picker');
     picker.setAttribute('aria-label', 'Viewed run');
+    if (!state.run) {
+      // A `select` with nothing selected shows its first option, so without
+      // this the control read `Latest · clean` over an empty evidence panel —
+      // the same claim the panel had just stopped making.
+      const none = el('option', null, `Open an earlier run… (${history.length})`);
+      none.value = '';
+      none.selected = true;
+      picker.appendChild(none);
+    }
     history.forEach((run, index) => {
       const time = new Date(run.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const verdict = run.status === 'running' ? 'running' : runVerdict(run);
@@ -256,6 +263,7 @@ function renderProgress() {
       picker.appendChild(option);
     });
     picker.onchange = () => {
+      if (!picker.value) return;
       state.viewedRunIds.set(contextKey(), picker.value);
       // Choosing one explicitly is a decision to look at it, reset or no reset.
       state.resetSince.delete(contextKey());
@@ -771,7 +779,12 @@ function renderStory() {
     // (a chip, a sentence, and a metric) and `6 tables` twice. Fidelity and the
     // reset mode are covered too — by the refusal an assertion gives when it
     // needs write detection, and by "reset isolated" in the left column.
-    summary.append(el('span', 'status-dot ready'), el('strong', null, 'Nothing has run yet'));
+    // `yet` is wrong when four runs sit in the picker. Which of the two it is
+    // decides whether the reader goes looking for them.
+    summary.append(
+      el('span', 'status-dot ready'),
+      el('strong', null, historyFor().length ? 'Nothing has run in this session' : 'Nothing has run yet'),
+    );
     return;
   }
   const verdict = state.running ? 'running' : runVerdict(state.run);
