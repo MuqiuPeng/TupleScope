@@ -89,8 +89,14 @@ code, pre { font-family: var(--mono); }
 .primary-action:hover:not(:disabled) { filter: brightness(1.08); }
 .run-strip { display: block !important; margin: 12px 0; }
 .run-strip:empty { display: none !important; }
-.run-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
-.run-strip #runSummary { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; min-height: 24px; color: var(--muted); font: 10px/1.4 var(--mono); }
+/* Wraps, because in a 414px column the two buttons and the picker need 405 of
+   it. `flex: 1` alone left `flex-basis: 0`, so the status took the 9px that
+   were left, rendered at zero width, and its text spilled out of the box and
+   under the buttons — `failed · 1/1 steps · partial evidence` in five stacked
+   fragments. A 200px basis is wider than the leftover, so the controls take a
+   row of their own instead and the status gets the full width above them. */
+.run-toolbar { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
+.run-strip #runSummary { display: flex; flex: 1 1 200px; min-width: 0; align-items: center; gap: 8px; min-height: 24px; color: var(--muted); font: 10px/1.4 var(--mono); }
 .run-error { margin: 0; padding: 7px 0 9px; border-top: 1px solid var(--rule); color: var(--errored); font: 10px/1.5 var(--mono); }
 .run-strip #runSummary strong { font-weight: 500; }
 .run-history-picker { width: auto; max-width: 168px; height: 27px; flex: none; border: 1px solid var(--rule); border-radius: 4px; padding: 0 25px 0 7px; color: var(--muted); background: var(--panel-soft); font: 9px/1 var(--mono); }
