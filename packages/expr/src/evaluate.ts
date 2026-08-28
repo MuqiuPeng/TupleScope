@@ -851,3 +851,91 @@ export function rowsSelectorsIn(expr: Expr, into: Selector[] = []): Selector[] {
   }
   return into;
 }
+
+/**
+ * Every `table.column` a predicate names, for `check` to resolve before a run.
+ *
+ * The column names in `.where(...)` and in `rows(t, ...)` are read at
+ * evaluation time by `matchesPredicate`, and only when there is a row to read
+ * them against. `Array.prototype.filter` never calls its callback on an empty
+ * list, so a step that wrote nothing never resolves them at all:
+ *
+ *     count(inserted(widgets).where(nmae = "x")) == 0     → green, always
+ *
+ * The value is not wrong — nothing was inserted, so nothing matched. It is
+ * unfalsifiable, and it is unfalsifiable in exactly the shape of a "this must
+ * not write twice" guard, which is the assertion this tool exists to make. A
+ * typo there is a permanent pass on the thing being tested.
+ *
+ * Runtime cannot decide it: the answer really is zero, and refusing would turn
+ * every correct no-write assertion undecided. `check` can, because it holds a
+ * connection and the schema. Same family as the misspelled *table* it already
+ * catches, and the same reason: finding nothing is not proof.
+ *
+ * Returns pairs, because a column is only meaningful against its table.
+ * Predicates on a table-less selector (`changes(*)`) are skipped — there is no
+ * one table to resolve them against.
+ */
+export function predicateColumnsIn(expr: Expr): Array<{ table: string; column: string }> {
+  const found: Array<{ table: string; column: string }> = [];
+
+  /** The nearest table underneath a `.where(...)`, or undefined for `changes(*)`. */
+  const tableOf = (node: Expr): string | undefined => {
+    switch (node.node) {
+      case 'select':
+        return node.selector.table;
+      case 'predicate':
+      case 'column':
+      case 'aggregate':
+      case 'hasWrite':
+      case 'isEmpty':
+      case 'atomic':
+      case 'writeCount':
+        return tableOf(node.source);
+      default:
+        return undefined;
+    }
+  };
+
+  const columnsOf = (predicate: string): string[] =>
+    splitClauses(predicate)
+      .map((clause) => /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(clause)?.[1])
+      .filter((name): name is string => name !== undefined);
+
+  const walk = (node: Expr): void => {
+    switch (node.node) {
+      case 'select': {
+        const { table, predicate } = node.selector;
+        if (table && predicate) for (const column of columnsOf(predicate)) found.push({ table, column });
+        return;
+      }
+      case 'predicate': {
+        const table = tableOf(node.source);
+        if (table) for (const column of columnsOf(node.predicate)) found.push({ table, column });
+        walk(node.source);
+        return;
+      }
+      case 'column':
+      case 'aggregate':
+      case 'hasWrite':
+      case 'isEmpty':
+      case 'atomic':
+      case 'writeCount':
+        walk(node.source);
+        return;
+      case 'compare':
+      case 'logical':
+        walk(node.left);
+        walk(node.right);
+        return;
+      case 'not':
+        walk(node.operand);
+        return;
+      default:
+        return;
+    }
+  };
+
+  walk(expr);
+  return found;
+}

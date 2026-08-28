@@ -129,6 +129,43 @@ export async function listBaseTables(client: PoolClient): Promise<string[]> {
 }
 
 /**
+ * Every base table's column names, in one query.
+ *
+ * For `check`, which resolves the names an assertion uses against the database
+ * before anything runs. Table names it already resolved; column names it did
+ * not, and a misspelled one inside `.where(...)` is invisible in the one place
+ * it matters most. `Array.prototype.filter` never calls its callback on an
+ * empty list, so on a step that wrote nothing the predicate is never read, and
+ * `count(inserted(t).where(nmae = "x")) == 0` comes back green — precisely the
+ * shape of a "this must not write twice" guard, which is the assertion this
+ * tool exists to make.
+ *
+ * Same `current_schema()` and same `relkind = 'r'` filter as `listBaseTables`,
+ * so the two answers describe the same set of tables.
+ */
+export async function listColumnsByTable(client: PoolClient): Promise<Map<string, Set<string>>> {
+  const { rows } = await client.query<{ table_name: string; column_name: string }>(
+    `SELECT c.relname::text AS table_name, a.attname::text AS column_name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_attribute a ON a.attrelid = c.oid
+      WHERE n.nspname = current_schema()
+        AND c.relkind = 'r'
+        AND c.relname NOT LIKE '\\_%'
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+      ORDER BY c.relname, a.attnum`,
+  );
+  const byTable = new Map<string, Set<string>>();
+  for (const row of rows) {
+    let columns = byTable.get(row.table_name);
+    if (!columns) byTable.set(row.table_name, (columns = new Set()));
+    columns.add(row.column_name);
+  }
+  return byTable;
+}
+
+/**
  * Where a connection actually resolves unqualified names, and to which database.
  *
  * Captured once when a scope is built, because nothing downstream can recover

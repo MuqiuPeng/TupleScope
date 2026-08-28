@@ -60,7 +60,7 @@ export interface WorkspaceSession {
   /** The capture scope a scenario asks for, resolved against the live schema. */
   scopeFor(scenario: Scenario): Promise<CaptureScope>;
   /** Touches the database once so an unreachable one is reported, not thrown at. */
-  preflight(): Promise<{ tables: string[] }>;
+  preflight(): Promise<{ tables: string[]; columns: Map<string, Set<string>> }>;
   /**
    * Puts the database back to its declared baseline, and nothing else.
    *
@@ -248,7 +248,11 @@ export function openWorkspace(
         );
       }
       try {
-        return { tables: [...(await adapter.listTables())] };
+        // Both in one trip. `check` needs the columns to resolve a predicate,
+        // and asking for them separately would be a second connection for a
+        // question the same catalogue already answered.
+        const [tables, columns] = await Promise.all([adapter.listTables(), adapter.listColumns()]);
+        return { tables: [...tables], columns };
       } catch (error) {
         throw new WorkspaceError(
           'DATABASE_UNREACHABLE',

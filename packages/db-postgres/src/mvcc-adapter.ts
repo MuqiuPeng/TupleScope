@@ -44,7 +44,7 @@ import type {
   TableScope,
   } from '@statescope/core';
 import {
-  listBaseTables,
+  listBaseTables, listColumnsByTable,
   readLocation,
   readTableIdentities,
   type TableIdentity,
@@ -106,6 +106,16 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
     const client = await this.metaPool.connect();
     try {
       return await listBaseTables(client);
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Every base table's columns, for `check` to resolve a predicate against. */
+  async listColumns(): Promise<Map<string, Set<string>>> {
+    const client = await this.metaPool.connect();
+    try {
+      return await listColumnsByTable(client);
     } finally {
       client.release();
     }

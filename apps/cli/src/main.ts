@@ -40,6 +40,7 @@ import {
   secretsReferencedBy,
 } from '@statescope/workspace';
 import { addAssertion } from '@statescope/scenario-engine';
+import { parse, predicateColumnsIn } from '@statescope/expr';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
 import {
@@ -530,8 +531,9 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
       return EXIT_USAGE;
     }
     let tables: string[];
+    let columns: Map<string, Set<string>>;
     try {
-      tables = (await session.preflight()).tables;
+      ({ tables, columns } = await session.preflight());
     } catch (error) {
       const workspaceError = error instanceof WorkspaceError ? error : undefined;
       process.stderr.write(`${workspaceError?.message ?? String(error)}\n`);
@@ -564,6 +566,29 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
           for (const table of missing) {
             problems.push(
               `  ${scenario.id}/${dataset.id}/${step.id}  names table \`${table}\`, which is not in this database`,
+            );
+          }
+          // The columns inside a predicate, which the evaluator resolves only
+          // when it has a row to resolve them against. On a step that writes
+          // nothing it never gets one, so `count(inserted(t).where(nmae = "x"))
+          // == 0` is green for as long as the typo lives — and that is the
+          // shape of a "must not write twice" guard, the assertion this tool
+          // exists to make. Here is the one place with a connection and no
+          // rows to depend on.
+          let named: Array<{ table: string; column: string }>;
+          try {
+            named = predicateColumnsIn(parse(assertion));
+          } catch {
+            // Unparseable: `run` will say so in its own words, with position.
+            named = [];
+          }
+          for (const { table, column } of named) {
+            const have = columns.get(table);
+            // An unknown table is already reported above; do not say it twice.
+            if (!have || have.has(column)) continue;
+            problems.push(
+              `  ${scenario.id}/${dataset.id}/${step.id}  matches on \`${table}.${column}\`, ` +
+                `which is not a column of \`${table}\``,
             );
           }
         }

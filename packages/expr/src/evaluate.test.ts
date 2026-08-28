@@ -5,6 +5,7 @@ import { parse } from './parse.js';
 import {
   Unevaluable,
   evaluateAssertion,
+  predicateColumnsIn,
   valuesEqual,
 } from './evaluate.js';
 import { textIfVisible, visible } from '@statescope/core';
@@ -679,5 +680,61 @@ describe('a read that stopped at its limit', () => {
     // Narrowing does not complete it: the rows that were never read might have
     // matched too, so the count is still a lower bound.
     assert.match(ask('count(rows(events).where(id = "0")) == 1', false), /needs the whole set/);
+  });
+});
+
+describe('predicateColumnsIn', () => {
+  /**
+   * The names `check` has to resolve before a run, because the evaluator only
+   * resolves them when there is a row to resolve them against — and the case
+   * that matters most is the one where there is not.
+   */
+  const at = (source: string): string[] =>
+    predicateColumnsIn(parse(source))
+      .map((p) => `${p.table}.${p.column}`)
+      .sort();
+
+  it('finds the column in a `.where()`', () => {
+    assert.deepEqual(at('count(inserted(widgets).where(nmae = "x")) == 0'), ['widgets.nmae']);
+  });
+
+  it("finds the column in `rows()`'s second argument", () => {
+    assert.deepEqual(at('count(rows(widgets, sku = "A")) == 1'), ['widgets.sku']);
+  });
+
+  it('finds both halves of a composite key', () => {
+    // The comma-splitting this shares with `matchesPredicate` is the reason
+    // that function has the comment it has.
+    assert.deepEqual(at('count(rows(holds, account_id = "a", ref = "h")) == 1'), [
+      'holds.account_id',
+      'holds.ref',
+    ]);
+  });
+
+  it('walks both sides of a logical operator', () => {
+    assert.deepEqual(
+      at('count(inserted(a).where(x = "1")) == 0 and count(inserted(b).where(y = "2")) == 0'),
+      ['a.x', 'b.y'],
+    );
+  });
+
+  it('walks through a negation', () => {
+    assert.deepEqual(at('not (count(inserted(t).where(c = "1")) == 0)'), ['t.c']);
+  });
+
+  it('carries the table down through a column selection', () => {
+    assert.deepEqual(at('single(updated(wallets).where(id = "w")).after.balance == "1"'), [
+      'wallets.id',
+    ]);
+  });
+
+  it('skips a predicate with no one table to resolve it against', () => {
+    // `changes(*)` is every table in scope; a column named there could belong
+    // to any of them, and guessing is worse than saying nothing.
+    assert.deepEqual(at('hasWrite(changes(*)) == false'), []);
+  });
+
+  it('finds nothing where there is no predicate', () => {
+    assert.deepEqual(at('count(inserted(widgets)) == 0'), []);
   });
 });

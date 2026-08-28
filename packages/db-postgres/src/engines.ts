@@ -27,6 +27,8 @@ export interface EngineOptions {
  */
 export type PostgresAdapter = DatabaseAdapter & {
   fullScope(overrides?: Partial<TableScope>): Promise<CaptureScope>;
+  /** Every base table's columns, so `check` can resolve a predicate's names. */
+  listColumns(): Promise<Map<string, Set<string>>>;
 };
 
 export const ENGINES = {

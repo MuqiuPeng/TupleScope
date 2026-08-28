@@ -29,6 +29,9 @@ importers:
       '@statescope/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@statescope/expr':
+        specifier: workspace:*
+        version: link:../../packages/expr
       '@statescope/handoff':
         specifier: workspace:*
         version: link:../../packages/handoff

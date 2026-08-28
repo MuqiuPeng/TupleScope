@@ -17,11 +17,12 @@
   },
   "dependencies": {
     "@statescope/core": "workspace:*",
+    "@statescope/expr": "workspace:*",
+    "@statescope/handoff": "workspace:*",
     "@statescope/report": "workspace:*",
     "@statescope/scenario-engine": "workspace:*",
     "@statescope/secrets": "workspace:*",
-    "@statescope/workspace": "workspace:*",
-    "@statescope/handoff": "workspace:*"
+    "@statescope/workspace": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

@@ -113,9 +113,14 @@ open "$(pnpm -s url)"          # in another terminal: the running instance, toke
 - run: pnpm exec statescope run --junit results.xml
 ```
 
-`check` resolves every assertion's table names against the live schema without
-sending a request, so a misspelled table is caught before the pipeline rather
-than by it. Sharded? `statescope report shard-*.json --junit merged.xml` folds
+`check` resolves every name an assertion uses — tables, and the columns inside
+`.where(...)` and `rows(...)` — against the live schema, without sending a
+request. The columns matter more than they look. A predicate is only read when
+there is a row to read it against, so on a step that correctly writes nothing
+`count(inserted(refunds).where(nmae = "x")) == 0` is *true*, and stays green for
+as long as the typo lives. That is the shape of a "must not write twice" guard,
+which is the assertion this tool exists to make; `check` is where it is caught,
+because `check` holds a connection and depends on no rows. Sharded? `statescope report shard-*.json --junit merged.xml` folds
 them into one verdict, keeping the worst — a shard's problem cannot be washed
 out by another shard's green.
 
