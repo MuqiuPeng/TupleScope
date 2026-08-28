@@ -1,0 +1,131 @@
+# Demo Bank — refund lifecycle.
+#
+# Fictional bank, fictional customers. Two datasets: the refund working, and
+# the refund being asked for twice. The second one is the reason this tool
+# exists — its expectation is that nothing happens, which is exactly the
+# assertion a value-comparing diff cannot make honestly.
+
+version: 1
+id: refund
+title: Refund lifecycle
+why: >
+  A refund must reverse the money exactly once and leave an audit trail.
+  Asking twice must not move money twice.
+
+# No `watch:` — observe every table. Narrow it once you know what you care
+# about; a hand-picked list quietly hides whatever it forgot.
+
+ignoreColumns: [updated_at]
+maskColumns: [card_number, provider_token]
+
+datasets:
+  - id: happy
+    label: "A. Full refund of 100.00"
+    note: "Payment settles, then reverses. Alice ends where she started."
+    resetFirst: true
+    steps:
+      - id: create_payment
+        name: Alice pays 100.00
+        request:
+          method: POST
+          path: /payments
+          as: alice
+          idempotencyKey: "pay-{{run}}"
+          body: { amount: "100.00", currency: USD, merchant: mer_bookshop }
+        capture:
+          payment_id: response.body.id
+        expect: Payment COMPLETED, money leaves the wallet, one ledger entry.
+        assert:
+          - response.status == 201
+          - single(inserted(payments)).after.status == "COMPLETED"
+          # Double-entry: one leg per wallet, so two rows per movement.
+          - count(inserted(ledger_entries)) == 2
+          - delta(single(rows(wallets, id = "wal_alice")).balance) == "-100.00"
+          - count(inserted(ledger_entries).where(type = "PAYMENT")) == 2
+
+      - id: refund
+        name: Merchant refunds it in full
+        request:
+          method: POST
+          path: /payments/{{payment_id}}/refund
+          as: mer_bookshop
+          idempotencyKey: "ref-{{run}}"
+          body: { amount: "100.00", reason: CUSTOMER_REQUEST }
+        expect: Payment REFUNDED, a REVERSAL entry, Alice made whole.
+        assert:
+          - response.status == 200
+          - single(updated(payments)).before.status == "COMPLETED"
+          - single(updated(payments)).after.status == "REFUNDED"
+          - count(inserted(refunds)) == 1
+          - count(inserted(ledger_entries).where(type = "REVERSAL")) == 2
+          - delta(single(rows(wallets, id = "wal_alice")).balance) == "100.00"
+          # The books must balance: every entry this step wrote sums to zero.
+          - sum(delta(wallets.balance)) == "0.00"
+          - count(inserted(ledger_entries)) == 2
+          - delta(single(rows(wallets, id = "wal_bookshop")).balance) == "-100.00"
+          - count(inserted(refunds).where(reason = "CUSTOMER_REQUEST")) == 1
+
+  - id: duplicate
+    label: "B. The same refund asked for twice"
+    note: "Second call is answered, but must not write anything."
+    resetFirst: true
+    steps:
+      - id: create_payment
+        name: Alice pays 100.00
+        request:
+          method: POST
+          path: /payments
+          as: alice
+          idempotencyKey: "pay2-{{run}}"
+          body: { amount: "100.00", currency: USD, merchant: mer_bookshop }
+        capture:
+          payment_id: response.body.id
+        assert:
+          - response.status == 201
+
+      - id: refund_once
+        name: First refund
+        request:
+          method: POST
+          path: /payments/{{payment_id}}/refund
+          as: mer_bookshop
+          idempotencyKey: "dup-{{run}}"
+          body: { amount: "100.00", reason: CUSTOMER_REQUEST }
+        capture:
+          refund_id: response.body.id
+        assert:
+          - response.status == 200
+          - count(inserted(refunds)) == 1
+
+      - id: refund_again
+        name: Same key, same body, sent again
+        request:
+          method: POST
+          path: /payments/{{payment_id}}/refund
+          as: mer_bookshop
+          idempotencyKey: "dup-{{run}}"
+          body: { amount: "100.00", reason: CUSTOMER_REQUEST }
+        expect: Same refund id comes back, and the database is untouched.
+        assert:
+          - response.status == 200
+          - response.body.id == {{refund_id}}
+          # hasWrite, not isEmpty. `updated_at` is in ignoreColumns, so a
+          # visible-change check would call a second write "no change" and pass
+          # the exact bug this dataset is looking for. Requires write detection;
+          # under a value-comparing engine this assertion refuses to run rather
+          # than reporting a green it cannot justify.
+          - hasWrite(changes(*)) == false
+
+      - id: over_refund
+        name: Refund it a third time with a fresh key
+        request:
+          method: POST
+          path: /payments/{{payment_id}}/refund
+          as: mer_bookshop
+          idempotencyKey: "over-{{run}}"
+          body: { amount: "100.00", reason: CUSTOMER_REQUEST }
+        expectStatus: 422
+        expect: 422 ALREADY_REFUNDED — a new key is not permission to pay twice.
+        assert:
+          - response.status == 422
+          - hasWrite(changes(*)) == false

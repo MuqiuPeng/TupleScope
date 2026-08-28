@@ -1,0 +1,280 @@
+# Shopfront — the order lifecycle.
+#
+# Nothing here is a balance. Inventory is a counter that must not go negative,
+# an order is a state machine, and the invariant worth checking is that a
+# reservation is either converted or released — never silently dropped.
+#
+# The point of this file: it uses the same engine and the same expression
+# language as the banking example, and neither knows about the other.
+
+version: 1
+id: checkout
+title: Cart, checkout, pay
+why: >
+  Stock must be reserved when an order is placed, converted when it is paid,
+  and released when it is cancelled. It must never be sold twice.
+
+ignoreColumns: [updated_at]
+
+datasets:
+  - id: happy
+    label: "A. Buy a desk and a lamp"
+    note: "Reserve at checkout, deplete at payment. Available stock never changes twice."
+    resetFirst: true
+    steps:
+      - id: open_cart
+        name: Open a cart
+        request:
+          method: POST
+          path: /carts
+          as: dana
+        capture:
+          cart_id: response.body.id
+        assert:
+          - response.status == 201
+          - count(inserted(carts)) == 1
+          - single(inserted(carts)).after.status == "OPEN"
+
+      - id: add_desk
+        name: Add a standing desk
+        request:
+          method: POST
+          path: /carts/{{cart_id}}/items
+          as: dana
+          body: { sku: SKU-DESK, quantity: 1 }
+        expect: A cart line appears. Stock is untouched — nothing is reserved yet.
+        assert:
+          - response.status == 201
+          - count(inserted(cart_items)) == 1
+          # Browsing must not move inventory. If this ever fails, an abandoned
+          # cart is holding stock hostage.
+          - hasWrite(changes(products)) == false
+
+      - id: add_lamp
+        name: Add two task lamps
+        request:
+          method: POST
+          path: /carts/{{cart_id}}/items
+          as: dana
+          body: { sku: SKU-LAMP, quantity: 2 }
+        assert:
+          - response.status == 201
+          - hasWrite(changes(products)) == false
+
+      - id: checkout
+        name: Check out
+        request:
+          method: POST
+          path: /carts/{{cart_id}}/checkout
+          as: dana
+        capture:
+          order_id: response.body.id
+        expect: Order AWAITING_PAYMENT, stock reserved, cart closed.
+        assert:
+          - response.status == 201
+          - single(inserted(orders)).after.status == "AWAITING_PAYMENT"
+          - single(inserted(orders)).after.total == "828.00"
+          - count(inserted(order_lines)) == 2
+          - single(updated(carts, id = {{cart_id}})).after.status == "CHECKED_OUT"
+          # Reserved goes up; on_hand does not move until the money does.
+          - delta(single(rows(products, sku = "SKU-DESK")).reserved) == "1"
+          - delta(single(rows(products, sku = "SKU-DESK")).on_hand) == "0"
+          - count(inserted(stock_movements).where(reason = "RESERVED")) == 2
+
+      - id: pay
+        name: Pay for it
+        request:
+          method: POST
+          path: /orders/{{order_id}}/pay
+          as: dana
+        expect: Reservation converts to depletion. Sellable stock is unchanged by this step.
+        assert:
+          - response.status == 200
+          - single(updated(orders, id = {{order_id}})).after.status == "PAID"
+          - delta(single(rows(products, sku = "SKU-DESK")).on_hand) == "-1"
+          - delta(single(rows(products, sku = "SKU-DESK")).reserved) == "-1"
+          # The whole invariant in one line: converting a reservation must not
+          # change what is sellable, only what is on the shelf.
+          - sum(delta(products.on_hand)) == "-3"
+          - sum(delta(products.reserved)) == "-3"
+          - count(inserted(stock_movements).where(reason = "SHIPPED")) == 2
+
+  - id: oversell
+    label: "B. Two carts, one chair (422)"
+    note: "There is exactly one chair. The second checkout must be refused, and must write nothing."
+    resetFirst: true
+    steps:
+      - id: cart_one
+        name: Dana opens a cart
+        request: { method: POST, path: /carts, as: dana }
+        capture: { cart_a: response.body.id }
+        assert:
+          - response.status == 201
+
+      - id: cart_two
+        name: Eli opens a cart
+        request: { method: POST, path: /carts, as: eli }
+        capture: { cart_b: response.body.id }
+        assert:
+          - response.status == 201
+
+      - id: both_want_the_chair
+        name: Both add the last chair
+        request:
+          method: POST
+          path: /carts/{{cart_a}}/items
+          as: dana
+          body: { sku: SKU-CHAIR, quantity: 1 }
+        assert:
+          - response.status == 201
+
+      - id: eli_adds_it_too
+        name: Eli adds it too
+        request:
+          method: POST
+          path: /carts/{{cart_b}}/items
+          as: eli
+          body: { sku: SKU-CHAIR, quantity: 1 }
+        expect: Allowed — a cart line is not a claim on stock.
+        assert:
+          - response.status == 201
+          - hasWrite(changes(products)) == false
+
+      - id: dana_checks_out
+        name: Dana checks out first
+        request: { method: POST, path: "/carts/{{cart_a}}/checkout", as: dana }
+        assert:
+          - response.status == 201
+          - delta(single(rows(products, sku = "SKU-CHAIR")).reserved) == "1"
+
+      - id: eli_cannot
+        name: Eli checks out second
+        request: { method: POST, path: "/carts/{{cart_b}}/checkout", as: eli }
+        expectStatus: 422
+        expect: 422 INSUFFICIENT_STOCK. The transaction rolls back completely.
+        assert:
+          - response.status == 422
+          # The real test is not the status code — it is that a half-finished
+          # checkout left no order, no lines and no phantom reservation behind.
+          - hasWrite(changes(*)) == false
+
+  - id: cancel
+    label: "C. Cancel releases the reservation"
+    note: "A cancelled order must give the stock back, exactly once."
+    resetFirst: true
+    steps:
+      - id: open_cart
+        name: Open a cart
+        request: { method: POST, path: /carts, as: dana }
+        capture: { cart_id: response.body.id }
+        assert:
+          - response.status == 201
+
+      - id: add_chair
+        name: Add the chair
+        request:
+          method: POST
+          path: /carts/{{cart_id}}/items
+          as: dana
+          body: { sku: SKU-CHAIR, quantity: 1 }
+        assert:
+          - response.status == 201
+
+      - id: checkout
+        name: Check out
+        request: { method: POST, path: "/carts/{{cart_id}}/checkout", as: dana }
+        capture: { order_id: response.body.id }
+        assert:
+          - response.status == 201
+          - delta(single(rows(products, sku = "SKU-CHAIR")).reserved) == "1"
+
+      - id: cancel
+        name: Cancel it
+        request: { method: POST, path: "/orders/{{order_id}}/cancel", as: dana }
+        expect: Reservation released, order CANCELLED, on_hand never moved at all.
+        assert:
+          - response.status == 200
+          - single(updated(orders, id = {{order_id}})).after.status == "CANCELLED"
+          - delta(single(rows(products, sku = "SKU-CHAIR")).reserved) == "-1"
+          - count(inserted(stock_movements).where(reason = "RELEASED")) == 1
+
+      - id: cancel_again
+        name: Cancel it again
+        request: { method: POST, path: "/orders/{{order_id}}/cancel", as: dana }
+        expectStatus: 422
+        expect: 422 ALREADY_CANCELLED — releasing twice would invent stock.
+        assert:
+          - response.status == 422
+          - hasWrite(changes(*)) == false
+
+  # ── The one that does not pass, and is supposed to not pass. ───────────────
+  #
+  # Every other dataset here is green, which makes this file a poor advertisement
+  # for the tool: a run that has never shown a failure has never shown the thing
+  # the tool is for. This one fails, and it fails on a real defect rather than a
+  # deliberately wrong assertion.
+  #
+  # `POST /carts/:id/items` never looks at the cart. Not at its status, not at
+  # whose it is. So an item can be added to a cart that was checked out minutes
+  # ago — and the API answers **201**, with a body that looks exactly like a
+  # successful add. Nothing in the response says otherwise. The only place the
+  # problem is visible is in what was written, which is the whole argument for
+  # watching the database instead of the status code.
+  - id: after_checkout
+    label: "D. Adding to a cart that is already checked out"
+    note: "The API says 201. The row it wrote belongs to no order and nobody paid for it."
+    resetFirst: true
+    steps:
+      - id: open_cart
+        name: Open a cart
+        request: { method: POST, path: /carts, as: dana }
+        capture: { cart_id: response.body.id }
+        assert:
+          - response.status == 201
+
+      - id: add_desk
+        name: Add a standing desk
+        request:
+          method: POST
+          path: /carts/{{cart_id}}/items
+          as: dana
+          body: { sku: SKU-DESK, quantity: 1 }
+        assert:
+          - response.status == 201
+
+      - id: checkout
+        name: Check out
+        request: { method: POST, path: "/carts/{{cart_id}}/checkout", as: dana }
+        capture: { order_id: response.body.id }
+        expect: The cart is now CHECKED_OUT and the order owns one line.
+        assert:
+          - response.status == 201
+          - single(updated(carts, id = {{cart_id}})).after.status == "CHECKED_OUT"
+          - count(inserted(order_lines)) == 1
+
+      - id: add_after_checkout
+        name: Add a lamp to the closed cart
+        request:
+          method: POST
+          path: /carts/{{cart_id}}/items
+          as: dana
+          body: { sku: SKU-LAMP, quantity: 3 }
+        expect: >
+          Nothing should be written: this cart was checked out. The endpoint does
+          not check, so a row lands in cart_items that no order line covers, no
+          reservation holds and no payment will ever cover.
+        assert:
+          # Passes. The API is perfectly happy, which is the point.
+          - response.status == 201
+          # Fails. This is the finding: a row was written to a closed cart.
+          - hasWrite(changes(cart_items)) == false
+          # Passes, and makes the shape of the defect legible — the order was
+          # not amended, the stock was not reserved. The lamp exists in the cart
+          # and nowhere else.
+          - isEmpty(changes(orders)) == true
+          - isEmpty(changes(products)) == true
+          - count(inserted(stock_movements)) == 0
+          # Undecided, and honestly so. Counting *how many times* a row was
+          # written needs an engine that observed the order of writes;
+          # mvcc-xmin reports the net effect and says so rather than guessing.
+          - writeCount(changes(cart_items)) == 1

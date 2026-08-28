@@ -3,16 +3,28 @@
   "version": "0.3.0",
   "license": "MIT",
   "type": "module",
-  "bin": { "statescope-mcp": "./dist/server.js" },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -b", "typecheck": "tsc -b", "test": "node --import tsx --test \"src/**/*.test.ts\"" },
+  "bin": {
+    "statescope-mcp": "./bin/statescope-mcp.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@statescope/core": "workspace:*",
+    "@statescope/expr": "workspace:*",
     "@statescope/report": "workspace:*",
     "@statescope/scenario-engine": "workspace:*",
     "@statescope/workspace": "workspace:*",
     "zod": "^3.24.1"
   },
-  "devDependencies": { "tsx": "^4.19.2" }
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
 }

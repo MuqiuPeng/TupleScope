@@ -1,0 +1,46 @@
+# Workspace: Demo Bank — the example this repository ships with.
+#
+# There is no credential in this file, and there is not meant to be one. The
+# demo cluster is loopback-only and trust-authenticated, so there is no password
+# to write down anywhere. `${VAR:-default}` reads the environment and only the
+# environment; the default here is a location, never a secret.
+#
+# Two terminals from the repository root, then a third for StateScope:
+#
+#   pnpm demo:db     the database — embedded PostgreSQL, no Docker, no install
+#   pnpm demo:api    the API under test, on :7421
+#
+#   cd examples/demo-bank && statescope run
+
+name: Demo Bank
+baseUrl: ${DEMO_BANK_BASE_URL:-http://127.0.0.1:7421}
+resetUrl: ${DEMO_BANK_BASE_URL:-http://127.0.0.1:7421}/debug/reset
+
+database:
+  connectionString: ${DEMO_BANK_DATABASE_URL:-postgresql://postgres@127.0.0.1:7432/demobank}
+
+scenariosDir: scenarios
+
+# Demo Bank authenticates with a bare customer id, which is what makes it a
+# demo. A real workspace puts a `${secret:…}` reference here.
+identities:
+  - id: alice
+    header: { name: authorization, value: "Bearer cus_alice" }
+  - id: bob
+    header: { name: authorization, value: "Bearer cus_bob" }
+  - id: mer_bookshop
+    header: { name: authorization, value: "Bearer mer_bookshop" }
+
+# Hidden from the diff, never from `hasWrite`. An idempotency assertion still
+# sees a redundant write that only touched a timestamp.
+ignoreColumns:
+  - updated_at
+
+# Redacted at capture, before the value is ever stored or serialised.
+maskColumns:
+  - card_number
+  - provider_token
+
+# Watch an idle window before each run. Anything that writes during it is not
+# the scenario, and the report says so instead of blaming the API.
+baselineWindowMs: 400

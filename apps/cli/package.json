@@ -1,12 +1,13 @@
 {
   "name": "@statescope/cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "statescope": "./dist/main.js"
+    "statescope": "./bin/statescope.js"
   },
   "files": [
+    "bin",
     "dist"
   ],
   "scripts": {
@@ -17,8 +18,10 @@
   "dependencies": {
     "@statescope/core": "workspace:*",
     "@statescope/report": "workspace:*",
+    "@statescope/scenario-engine": "workspace:*",
+    "@statescope/secrets": "workspace:*",
     "@statescope/workspace": "workspace:*",
-    "@statescope/scenario-engine": "workspace:*"
+    "@statescope/handoff": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

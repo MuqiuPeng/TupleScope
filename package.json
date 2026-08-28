@@ -6,13 +6,18 @@
   "packageManager": "pnpm@9.15.2",
   "type": "module",
   "scripts": {
-    "build": "tsc -b packages/core packages/expr packages/http-runner packages/db-postgres packages/scenario-engine packages/report packages/workspace apps/runtime apps/cli apps/mcp",
-    "typecheck": "pnpm build",
+    "build": "tsc -b packages/core packages/secrets packages/handoff packages/expr packages/http-runner packages/db-postgres packages/scenario-engine packages/report packages/conformance packages/workspace apps/runtime apps/cli apps/mcp",
+    "typecheck": "pnpm build && tsc -p tsconfig.check.json",
     "start": "pnpm --filter @statescope/runtime start",
-    "test": "pnpm -r --no-bail run test",
+    "demo:db": "pnpm --filter @statescope/example-demo-bank db",
+    "demo:api": "pnpm --filter @statescope/example-demo-bank api",
+    "demo:shop": "pnpm --filter @statescope/example-shopfront api",
+    "test": "pnpm typecheck && pnpm -r --no-bail run test",
     "url": "pnpm --filter @statescope/runtime url"
   },
   "devDependencies": {
+    "@statescope/cli": "workspace:*",
+    "@statescope/mcp": "workspace:*",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@statescope/cli':
+        specifier: workspace:*
+        version: link:apps/cli
+      '@statescope/mcp':
+        specifier: workspace:*
+        version: link:apps/mcp
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
@@ -23,12 +29,18 @@ importers:
       '@statescope/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@statescope/handoff':
+        specifier: workspace:*
+        version: link:../../packages/handoff
       '@statescope/report':
         specifier: workspace:*
         version: link:../../packages/report
       '@statescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
+      '@statescope/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@statescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
@@ -45,6 +57,9 @@ importers:
       '@statescope/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@statescope/expr':
+        specifier: workspace:*
+        version: link:../../packages/expr
       '@statescope/report':
         specifier: workspace:*
         version: link:../../packages/report
@@ -73,6 +88,9 @@ importers:
       '@statescope/db-postgres':
         specifier: workspace:*
         version: link:../../packages/db-postgres
+      '@statescope/handoff':
+        specifier: workspace:*
+        version: link:../../packages/handoff
       '@statescope/http-runner':
         specifier: workspace:*
         version: link:../../packages/http-runner
@@ -130,6 +148,34 @@ importers:
         specifier: ^4.19.2
         version: 4.23.12
 
+  packages/conformance:
+    dependencies:
+      '@statescope/core':
+        specifier: workspace:*
+        version: link:../core
+      '@statescope/db-postgres':
+        specifier: workspace:*
+        version: link:../db-postgres
+      '@statescope/expr':
+        specifier: workspace:*
+        version: link:../expr
+      '@statescope/report':
+        specifier: workspace:*
+        version: link:../report
+      pg:
+        specifier: ^8.13.1
+        version: 8.23.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.23.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/core:
     devDependencies:
       tsx:
@@ -161,6 +207,19 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
+
+  packages/handoff:
+    dependencies:
+      '@statescope/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/http-runner:
     dependencies:
@@ -197,6 +256,15 @@ importers:
         specifier: ^4.19.2
         version: 4.23.12
 
+  packages/secrets:
+    devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/workspace:
     dependencies:
       '@statescope/core':
@@ -211,6 +279,9 @@ importers:
       '@statescope/scenario-engine':
         specifier: workspace:*
         version: link:../scenario-engine
+      '@statescope/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       yaml:
         specifier: ^2.6.1
         version: 2.9.0

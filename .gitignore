@@ -7,14 +7,15 @@ dist/
 .DS_Store
 .pgdata/
 
-# Kept local, not published.
-#   The two records below reference private work and an unpublished plan.
-#   The examples and the workspace they configure are for local development;
-#   statescope.example.yaml is the published template.
+# Kept local, not published. Both reference private work and an unpublished plan.
 docs/prototype-carryover.md
 docs/technical-review.md
-examples/
-statescope.yaml
+
+# The root workspace file points at your backend and your development database,
+# so it is yours, not the project's. The leading slash is load-bearing: without
+# it this pattern matches at every depth and silently swallows
+# examples/*/statescope.yaml, which are part of the published demo.
+/statescope.yaml
 
 # Stored runs. Values are masked at capture, but this is still a record of
 # what your development database contained.
