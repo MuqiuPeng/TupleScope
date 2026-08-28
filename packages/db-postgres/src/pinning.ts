@@ -115,3 +115,26 @@ export async function verifyRendering(
   }
   return rendering;
 }
+
+/**
+ * Keep a dead idle connection from taking the process with it.
+ *
+ * `pg` emits `error` on the *pool* when a pooled client's socket dies while
+ * idle — a database restart, a pgbouncer recycle, a laptop waking, a blip in
+ * CI. That event is outside every promise chain, so an unhandled one is a hard
+ * crash: 257 lines of driver internals and **exit 1**, which this CLI's own
+ * table defines as "a check failed — the system under test is wrong". A
+ * network hiccup reported to a team as a bug in their backend. In the runtime
+ * it is worse: the whole server dies, taking every UI session and all
+ * in-memory run history, and leaving a stale session file behind because the
+ * shutdown path never runs.
+ *
+ * Recording it rather than rethrowing. The next query fails on its own and
+ * reports through the normal path, with the workspace's own remedy attached;
+ * throwing from here would only reproduce the crash with a nicer message.
+ */
+export function absorbIdleErrors(pool: pg.Pool, note?: (error: Error) => void): void {
+  pool.on('error', (error: Error) => {
+    note?.(error);
+  });
+}

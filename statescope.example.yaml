@@ -11,7 +11,14 @@ baseUrl: http://127.0.0.1:8000
 database:
   # A development database. StateScope holds a real connection to it and reads
   # what your API writes, so never point this at anything you care about.
-  connectionString: postgresql://user:password@127.0.0.1:5432/myapp_dev
+  #
+  # The password is a `${secret:…}` reference, not a value. This file is meant
+  # to be committed, and a template that spells a password inline teaches the
+  # one pattern the rest of this document argues against. Set it once with
+  # `statescope secret set db_password`; it goes to your OS keychain and never
+  # to disk here. `${PGPASSWORD}` or a plain `${VAR}` works too — anything but
+  # a literal.
+  connectionString: postgresql://user:${secret:db_password}@127.0.0.1:5432/myapp_dev
 
 # Where your scenario files live, relative to this file.
 scenariosDir: scenarios

@@ -575,15 +575,28 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
       `  selected   ${selected.length} dataset(s), ${assertions} assertion(s)`,
       `  database   ${tables.length} tables`,
     ];
-    if (problems.length === 0) {
-      out.push('', '  Nothing here would fail for a reason other than the system under test.');
-    } else {
+    if (problems.length > 0) {
       out.push('', ...problems);
+    } else if (assertions === 0) {
+      // Nothing to be right about. This command is what the README puts in
+      // front of the pipeline, and its clean sentence is an unconditional
+      // assurance — so a workspace that asserts nothing must not receive it.
+      // `run` already refuses the same shape; `check` said the words and
+      // exited 0, on a suite where the answer had not been looked for.
+      out.push(
+        '',
+        selected.length === 0
+          ? '  Nothing was selected, so nothing was checked.'
+          : `  ${selected.length} dataset(s) selected, and not one assertion between them.`,
+        '  A green `check` over nothing asserted is the failure this command exists to prevent.',
+      );
+    } else {
+      out.push('', '  Nothing here would fail for a reason other than the system under test.');
     }
     process.stdout.write(`${out.join('\n')}\n`);
     // Exit 3: the suite is not wrong, it just does not establish what it looks
     // like it does — the same meaning the code has everywhere else.
-    return problems.length > 0 ? 3 : 0;
+    return problems.length > 0 || assertions === 0 ? 3 : 0;
   });
   return typeof result === 'number' ? result : 0;
 }

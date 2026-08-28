@@ -24,10 +24,10 @@ Local-first. Your database credentials never leave your machine.
 
 ## Quick start
 
-Node 20 or newer and pnpm 9. You do **not** need PostgreSQL installed — the
+Node 22 or newer and pnpm 9. You do **not** need PostgreSQL installed — the
 example brings its own, as a platform binary pnpm fetches (about 51 MB over the
-wire, 136 MB unpacked). Point StateScope at your own database and none of that
-is used.
+wire on macOS, 23 MB on Linux). Point StateScope at your own database and none
+of that is used.
 
 ```bash
 pnpm install && pnpm build
@@ -47,10 +47,10 @@ pnpm demo:api                  # the API under test, on :7421
 ```bash
 cd examples/demo-bank
 
-statescope status              does this workspace point at something that answers?
-statescope ls                  every scenario and dataset
-statescope run                 all of them
-statescope run refund/happy    one dataset
+statescope status              # does this workspace point at something that answers?
+statescope ls                  # every scenario and dataset
+statescope run                 # all of them
+statescope run refund/happy    # one dataset
 ```
 
 `statescope show <target>` prints a scenario in detail before you run it,
@@ -61,7 +61,14 @@ the full surface; `--config <path>` picks a workspace file directly.
 
 There is a second example, `examples/shopfront`, which exists to prove the same
 runtime and engine serve a different schema. It has no database of its own —
-`pnpm demo:db` creates both — so start that first, then `pnpm demo:shop`.
+`pnpm demo:db` creates both — so start that first, then:
+
+```bash
+pnpm demo:shop                 # the second API, on :7423
+
+cd examples/shopfront
+statescope run
+```
 
 **It fails on purpose, and that is the demonstration.** Its `after_checkout`
 dataset adds an item to a cart that is already checked out. The API answers
@@ -73,13 +80,22 @@ there. Guessing would have been the easy answer and the wrong one.
 
 ### Point it at your own backend
 
+From the repository root — the two commands above left you in an example:
+
 ```bash
+cd ../..                                     # back to the root, if you ran the example
 cp statescope.example.yaml statescope.yaml   # your API and your dev database
 mkdir scenarios                              # where your own scenarios go
 ```
 
 `scenariosDir` starts empty: there is nothing to `run` until you write a
 scenario, and the section below is where that starts.
+
+Every port above is a default, not a requirement. `DEMO_BANK_DB_PORT`,
+`DEMO_BANK_PORT`, `SHOPFRONT_PORT` and `STATESCOPE_PORT` move the services;
+`DEMO_BANK_BASE_URL`, `DEMO_BANK_DATABASE_URL` and the `SHOPFRONT_` pair move
+what StateScope points at. Set both halves — a service on a new port that
+nothing is looking at is the confusing half of the job.
 
 ### The UI
 
@@ -348,12 +364,9 @@ every addressable row grows an **Open in…** control. The binding lives in
 reached this way connects as its own role and is not bound by `maskColumns`,
 which is a decision only the person at the keyboard can make.
 
-Of the browsers surveyed, only Adminer can address a table and a row from a URL.
-WhoDB and pgweb both keep the selection in front-end state, so a link lands on
-whatever the reader last looked at — worse than no link.
-
 For anything else, paste that `SELECT` into whatever client you already have
 open.
+
 Of the browsers surveyed, only Adminer can address a table and a row from a URL
 — WhoDB and pgweb both keep the selection in front-end state, so a link lands
 on whatever the reader last looked at, which is worse than no link.

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
 import type { CaptureWarning } from '@statescope/core';
-import { PINNED_SETTINGS, readRendering, renderingDrift, verifyRendering } from './pinning.js';
+import { absorbIdleErrors, PINNED_SETTINGS, readRendering, renderingDrift, verifyRendering } from './pinning.js';
 import { MvccPostgresAdapter } from './mvcc-adapter.js';
 import { textIfVisible } from '@statescope/core';
 
@@ -127,5 +127,63 @@ describe('rendering settings', () => {
     } finally {
       await adapter.close();
     }
+  });
+});
+
+describe('an idle connection that dies', () => {
+  /**
+   * `pg` raises this on the pool, outside every promise chain. Unhandled, it is
+   * a hard crash and **exit 1** — which this CLI's own table defines as "the
+   * system under test is wrong". A database restart, a pgbouncer recycle or a
+   * blip in CI would be reported to a team as a bug in their backend.
+   */
+  it('does not take the process with it', async (t) => {
+    if (!available) return t.skip('no database');
+    const pool = new pg.Pool({ connectionString: BASE_URL, max: 2 });
+    absorbIdleErrors(pool);
+
+    const client = await pool.connect();
+    const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+    const pid = rows[0]!.pid;
+    client.release(); // now idle in the pool, which is the case that crashes
+
+    const killer = new pg.Pool({ connectionString: BASE_URL, max: 1 });
+    absorbIdleErrors(killer);
+    try {
+      await killer.query('SELECT pg_terminate_backend($1)', [pid]);
+    } finally {
+      await killer.end();
+    }
+
+    // The error arrives asynchronously; reaching the next line at all is the
+    // assertion. Without the handler this test file exits before it.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.ok(true, 'still running');
+
+    // And the pool is still usable: the dead client was discarded, not kept.
+    const after = await pool.query<{ ok: number }>('SELECT 1 AS ok');
+    assert.equal(after.rows[0]!.ok, 1);
+    await pool.end();
+  });
+
+  it('hands the error to a caller that wants to see it', async (t) => {
+    if (!available) return t.skip('no database');
+    const seen: Error[] = [];
+    const pool = new pg.Pool({ connectionString: BASE_URL, max: 1 });
+    absorbIdleErrors(pool, (error) => seen.push(error));
+
+    const client = await pool.connect();
+    const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+    client.release();
+
+    const killer = new pg.Pool({ connectionString: BASE_URL, max: 1 });
+    absorbIdleErrors(killer);
+    await killer.query('SELECT pg_terminate_backend($1)', [rows[0]!.pid]);
+    await killer.end();
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.equal(seen.length, 1, 'the note should have been called exactly once');
+    assert.match(seen[0]!.message, /terminat|connection/i);
+    await pool.end();
   });
 });

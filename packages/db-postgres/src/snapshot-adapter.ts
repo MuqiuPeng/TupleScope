@@ -47,7 +47,7 @@ import {
 } from './introspect.js';
 import { readCurrentRows } from './images.js';
 import type { RowsRead } from '@statescope/core';
-import { pinPool, verifyRendering } from './pinning.js';
+import { absorbIdleErrors, pinPool, verifyRendering } from './pinning.js';
 import { quoteIdent, RAW_TEXT_TYPES, ROWS_LIMIT, RowReader, serializeKey, valuesLookEqual } from './rows.js';
 
 const { Pool } = pg;
@@ -100,6 +100,9 @@ export class SnapshotPostgresAdapter implements DatabaseAdapter {
     // person to add a query.
     pinPool(this.pool);
     pinPool(this.metaPool);
+    // A socket that dies while idle must not become an uncaught crash.
+    absorbIdleErrors(this.pool);
+    absorbIdleErrors(this.metaPool);
     this.maxRowsPerTable = options.maxRowsPerTable ?? DEFAULT_MAX_ROWS_PER_TABLE;
   }
 

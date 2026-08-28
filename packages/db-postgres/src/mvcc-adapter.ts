@@ -52,7 +52,7 @@ import {
 import { readCurrentRows, readKeySets } from './images.js';
 import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
 import type { RowsRead } from '@statescope/core';
-import { pinPool, verifyRendering, type Rendering } from './pinning.js';
+import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
 import { RAW_TEXT_TYPES, ROWS_LIMIT, RowReader } from './rows.js';
 
 const { Pool } = pg;
@@ -96,6 +96,9 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
     // person to add a query.
     pinPool(this.pool);
     pinPool(this.metaPool);
+    // A socket that dies while idle must not become an uncaught crash.
+    absorbIdleErrors(this.pool);
+    absorbIdleErrors(this.metaPool);
     this.windowTimeoutMs = options.windowTimeoutMs ?? DEFAULT_WINDOW_TIMEOUT_MS;
   }
 

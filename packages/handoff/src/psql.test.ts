@@ -33,16 +33,30 @@ function parseDsn(dsn: string): { host: string; port: string; user: string; pass
   };
 }
 
-const psqlPath = await (async (): Promise<string | undefined> => {
+/**
+ * The path and its realpath, kept apart — because that is what `handoff enable`
+ * records, and collapsing them made this suite test something no user has.
+ *
+ * `runPsql` spawns `executable`; `realpath` is only the integrity check. On
+ * Debian and Ubuntu `/usr/bin/psql` resolves to `pg_wrapper`, a dispatcher that
+ * picks its target from argv[0] — so spawning the *realpath* runs a wrapper
+ * that cannot dispatch, and six of these seven tests fail. Measured in a real
+ * ubuntu:24.04 container: `# pass 1  # fail 6  # skipped 0`. Production was
+ * never affected; it spawns `/usr/bin/psql` and the wrapper sees the name it
+ * needs. On macOS the two happen to be interchangeable, which is why this held
+ * for as long as it did.
+ */
+const psql = await (async (): Promise<{ executable: string; realpath: string } | undefined> => {
   for (const candidate of ['/opt/homebrew/bin/psql', '/usr/local/bin/psql', '/usr/bin/psql']) {
     try {
-      return await realpath(candidate);
+      return { executable: candidate, realpath: await realpath(candidate) };
     } catch {
       /* keep looking */
     }
   }
   return undefined;
 })();
+const psqlPath = psql?.executable;
 
 let home: string;
 let binding: PsqlServiceBinding;
@@ -67,8 +81,8 @@ before(async () => {
   binding = {
     preset: 'psql-service',
     service: 'statescope-test',
-    executable: psqlPath,
-    realpath: psqlPath,
+    executable: psql!.executable,
+    realpath: psql!.realpath,
     grants: [],
   };
 

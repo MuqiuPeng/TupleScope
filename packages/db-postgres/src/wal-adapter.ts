@@ -48,7 +48,7 @@ import { decodeStream, toWireText, type DecodedChange } from './decode.js';
 import { readCurrentRows, readKeySets } from './images.js';
 import { masked as maskedValue, visible } from '@statescope/core';
 import type { RowsRead } from '@statescope/core';
-import { pinPool, verifyRendering, type Rendering } from './pinning.js';
+import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
 import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
 import {
   listBaseTables,
@@ -104,6 +104,9 @@ export class WalPostgresAdapter implements DatabaseAdapter {
     // person to add a query.
     pinPool(this.pool);
     pinPool(this.metaPool);
+    // A socket that dies while idle must not become an uncaught crash.
+    absorbIdleErrors(this.pool);
+    absorbIdleErrors(this.metaPool);
     this.windowTimeoutMs = options.windowTimeoutMs ?? DEFAULT_WINDOW_TIMEOUT_MS;
     this.flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
   }

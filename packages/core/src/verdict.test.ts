@@ -329,6 +329,39 @@ describe('mergeVerdicts', () => {
     assert.equal(empty.datasets.total, 0);
   });
 
+  it('counts the reason across every dataset, not just the deciding one', () => {
+    // The line under it says `checks 23/23`. This one used to say 15 — the
+    // first clean dataset's own total, pasted after a run-wide count. Two
+    // numbers about different things, on adjacent lines, in the output of the
+    // first command the README asks anyone to type.
+    const three = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass(), pass(), pass()] })] }));
+    const two = verdictOf(run({ steps: [step({ stepId: 'b', assertions: [pass(), pass()] })] }));
+    const suite = mergeVerdicts([three, two]);
+    assert.equal(suite.assertions.total, 5);
+    assert.equal(suite.reason, '2 of 2 datasets passed cleanly: 5 assertions evaluated and passed');
+  });
+
+  it('counts the failures across every dataset too', () => {
+    const oneFail = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [fail()] })] }));
+    const twoFail = verdictOf(run({ steps: [step({ stepId: 'b', assertions: [fail(), fail()] })] }));
+    const suite = mergeVerdicts([oneFail, twoFail, clean]);
+    assert.equal(suite.assertions.failed, 3);
+    assert.equal(suite.reason, '2 of 3 datasets failed: 3 assertions failed');
+  });
+
+  it('counts the undecided across every dataset', () => {
+    const a = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [undecided()] })] }));
+    const b = verdictOf(run({ steps: [step({ stepId: 'b', assertions: [undecided(), undecided()] })] }));
+    assert.equal(mergeVerdicts([a, b, clean]).reason, '2 of 3 datasets undecided: 3 assertions could not be evaluated');
+  });
+
+  it('says nothing was asserted rather than reporting zero of them', () => {
+    const bare = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [] })] }));
+    // Two clean datasets that asserted nothing is not "0 assertions evaluated
+    // and passed" — a count of nothing reads as a result.
+    assert.match(mergeVerdicts([bare, bare]).reason, /nothing was asserted$/);
+  });
+
   it('deduplicates the bounds so one cause is stated once', () => {
     const a = verdictOf(run({ baseline: { probed: false, windowMs: 0 }, steps: [step({ stepId: 'a', assertions: [pass()] })] }));
     const b = verdictOf(run({ baseline: { probed: false, windowMs: 0 }, steps: [step({ stepId: 'b', assertions: [pass()] })] }));

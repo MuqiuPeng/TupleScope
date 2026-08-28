@@ -21,7 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: [20, 22]
+        # Node 20 cannot expand the `src/**/*.test.ts` globs the 13 test
+        # scripts pass to `node --test` — it takes them as literal paths, finds
+        # nothing, and exits 1. Glob support arrived in the 22 line, and 20
+        # reached end of life in April 2026.
+        node: [22, 24]
 
     steps:
       - uses: actions/checkout@v4
@@ -74,26 +78,47 @@ jobs:
           echo "wal_level = $level"
           test "$level" = logical
 
-      # Skips are a silent way to test less than you think: the totals stay green
-      # while 22 fewer cases ran. The suite prints its own reason; this turns it
-      # into a failure.
+      # A floor on the number of tests, not a count of skips.
       #
-      # `lines` is checked too, and it is not padding. Every package prints one
-      # `ℹ skipped N`, prefixed by pnpm with the package name — so an anchored
-      # pattern matches nothing, sums to zero and passes forever. That is the
-      # first version of this step, and it is why the count is asserted.
+      # Three things this step got wrong before, each measured:
+      #
+      # `node --test` prints `ℹ skipped N` under the spec reporter and TAP's
+      # `# skipped N` otherwise, and which one you get depends on the Node line
+      # and on whether stdout is a TTY. An ℹ-only pattern matched nothing here.
+      #
+      # `grep -c` exits 1 on no match, and under Actions' default `bash -e` a
+      # failing assignment kills the step before it prints anything — so the
+      # guard against a silent failure failed silently.
+      #
+      # And counting skips does not catch the case it was written for. When a
+      # whole suite bows out — the database unreachable, so `describe` never
+      # runs — the totals read `tests 0 ... skipped 0`. Green, having run
+      # nothing. The total is what moves, so the total is what is asserted.
+      #
+      # The floor is deliberately below today's 593: a real regression halves
+      # it, and this should not need editing every time a test is added. The
+      # skips are printed rather than asserted, because the counts differ per
+      # platform (Linux skips 12 macOS Keychain tests) and this repository can
+      # only measure one of them.
       - name: test
         env:
           STATESCOPE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:7432/postgres
         run: |
           set -o pipefail
           pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"
-          lines=$(grep -c 'ℹ skipped ' "$RUNNER_TEMP/test.log")
-          skipped=$(sed -n 's/.*ℹ skipped //p' "$RUNNER_TEMP/test.log" \
-                    | awk '{s+=$1} END {print s+0}')
-          echo "packages reporting: $lines   skipped: $skipped"
-          test "$lines" -ge 10
-          test "$skipped" -eq 0
+
+          sum() { sed -nE "s/.*(ℹ|#) $1 ([0-9]+).*/\\2/p" "$RUNNER_TEMP/test.log" \
+                  | awk '{s+=$1} END {print s+0}'; }
+          total=$(sum tests); passed=$(sum pass); failed=$(sum fail); skipped=$(sum skipped)
+          echo "total=$total pass=$passed fail=$failed skipped=$skipped"
+
+          if [ "$skipped" -gt 0 ]; then
+            echo "skipped tests (not a failure; here so they are never invisible):"
+            grep -E '(SKIP|﹣)' "$RUNNER_TEMP/test.log" | head -40
+          fi
+
+          test "$total" -ge 560
+          test "$failed" -eq 0
 
       - name: the example runs, end to end
         run: |
