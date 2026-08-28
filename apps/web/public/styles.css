@@ -90,7 +90,8 @@ code, pre { font-family: var(--mono); }
 .run-strip { display: block !important; margin: 12px 0; }
 .run-strip:empty { display: none !important; }
 .run-toolbar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
-.run-strip #runSummary { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: 24px; color: var(--muted); font: 10px/1.4 var(--mono); }
+.run-strip #runSummary { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; min-height: 24px; color: var(--muted); font: 10px/1.4 var(--mono); }
+.run-error { margin: 0; padding: 7px 0 9px; border-top: 1px solid var(--rule); color: var(--errored); font: 10px/1.5 var(--mono); }
 .run-strip #runSummary strong { font-weight: 500; }
 .run-history-picker { width: auto; max-width: 168px; height: 27px; flex: none; border: 1px solid var(--rule); border-radius: 4px; padding: 0 25px 0 7px; color: var(--muted); background: var(--panel-soft); font: 9px/1 var(--mono); }
 .status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--faint); }

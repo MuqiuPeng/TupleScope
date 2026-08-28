@@ -18,7 +18,7 @@ async function api(path, options = {}) {
     headers: { 'content-type': 'application/json', 'x-statescope-token': TOKEN, ...options.headers },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(body.message ?? response.statusText), body);
+  if (!response.ok) throw apiError({ status: response.status, body, path });
   return body;
 }
 
@@ -227,7 +227,7 @@ function renderProgress() {
     : state.running
       ? 'Another dataset is running · this run history remains available.'
     : state.runError
-      ? state.runError.message
+      ? 'Could not run'
       : state.run
         ? `${outcome === 'clean' ? 'Clean' : outcome} · ${complete}/${total} steps${state.run.coverage === 'partial' ? ' · partial evidence' : ''}`
         : 'Review the contract, then run when you are ready.';
@@ -281,7 +281,15 @@ function renderProgress() {
   const bar = el('span', `progress-bar ${outcome}`);
   bar.style.width = `${activeHere && state.run ? Math.round(complete / Math.max(total, 1) * 100) : state.run ? 100 : 0}%`;
   track.appendChild(bar);
-  host.append(toolbar, track);
+  host.appendChild(toolbar);
+  // Its own row, at full width, between the controls and the track. The summary
+  // slot beside the controls is sized for `Clean · 2/2 steps`; a sentence long
+  // enough to say what to do about the failure wrapped to twelve lines in it
+  // and pushed the controls apart. A condition affecting the whole page is not
+  // a status word, so the slot keeps `Could not run` and the sentence gets a
+  // line of its own.
+  if (state.runError) host.appendChild(el('p', 'run-error', state.runError.message));
+  host.appendChild(track);
 }
 
 function renderSteps() {
@@ -1077,6 +1085,11 @@ async function startRun(options) {
     render();
     if (latestRun && sameContext(context, state.selected)) {
       requestAnimationFrame(() => document.querySelector('#requestWorkspace .exchange-panel')?.scrollIntoView({ block: 'start' }));
+    } else if (state.runError && sameContext(context, state.selected)) {
+      // The failure is reported in the run strip at the top of the column, and
+      // `Run this step` sits at the bottom of a long request panel. Pressing it
+      // and being told nothing is how a broken run reads as a dead button.
+      requestAnimationFrame(() => document.querySelector('#runStrip')?.scrollIntoView({ block: 'start' }));
     }
   }
 }
