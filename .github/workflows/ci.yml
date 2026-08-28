@@ -1,0 +1,107 @@
+# Install, build, and run every test — including the ones that need a database.
+#
+# There is no `services: postgres:` block here and there should not be. The
+# example brings its own PostgreSQL as a platform binary, and it initialises the
+# cluster with `wal_level = logical`. A stock service container is `replica`,
+# which makes the 22 `wal`-engine conformance cases skip — quietly, with the
+# suite still green. Starting the example's own database is what makes the run
+# mean what it says.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # --frozen-lockfile is the default in CI; naming it makes the failure
+      # legible when package.json and the lockfile drift apart.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      # The bin must exist before the build, or it was never linked. This is the
+      # exact defect that shipped: pnpm skips a bin whose target is absent at
+      # install time, without a warning, and a later build does not re-link.
+      - name: the CLI is on PATH
+        run: |
+          test -x node_modules/.bin/statescope
+          test -x node_modules/.bin/statescope-mcp
+          node_modules/.bin/statescope --version
+
+      - name: start the example database
+        run: |
+          nohup pnpm demo:db > "$RUNNER_TEMP/db.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            grep -q 'postgres ready' "$RUNNER_TEMP/db.log" && exit 0
+            sleep 2
+          done
+          echo "database did not come up:"; cat "$RUNNER_TEMP/db.log"; exit 1
+
+      # From inside the example, which is where `pg` is a dependency. At the
+      # repository root it does not resolve.
+      - name: it is the server the wal engine needs
+        working-directory: examples/demo-bank
+        run: |
+          level=$(node -e "
+            const {Client} = require('pg');
+            const c = new Client('postgresql://postgres@127.0.0.1:7432/postgres');
+            c.connect()
+             .then(() => c.query('show wal_level'))
+             .then(r => { console.log(r.rows[0].wal_level); return c.end(); });
+          ")
+          echo "wal_level = $level"
+          test "$level" = logical
+
+      # Skips are a silent way to test less than you think: the totals stay green
+      # while 22 fewer cases ran. The suite prints its own reason; this turns it
+      # into a failure.
+      #
+      # `lines` is checked too, and it is not padding. Every package prints one
+      # `ℹ skipped N`, prefixed by pnpm with the package name — so an anchored
+      # pattern matches nothing, sums to zero and passes forever. That is the
+      # first version of this step, and it is why the count is asserted.
+      - name: test
+        env:
+          STATESCOPE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:7432/postgres
+        run: |
+          set -o pipefail
+          pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"
+          lines=$(grep -c 'ℹ skipped ' "$RUNNER_TEMP/test.log")
+          skipped=$(sed -n 's/.*ℹ skipped //p' "$RUNNER_TEMP/test.log" \
+                    | awk '{s+=$1} END {print s+0}')
+          echo "packages reporting: $lines   skipped: $skipped"
+          test "$lines" -ge 10
+          test "$skipped" -eq 0
+
+      - name: the example runs, end to end
+        run: |
+          nohup pnpm demo:api > "$RUNNER_TEMP/api.log" 2>&1 &
+          for _ in $(seq 1 45); do
+            curl -sf http://127.0.0.1:7421/health >/dev/null && break
+            sleep 2
+          done
+          cd examples/demo-bank
+          ../../node_modules/.bin/statescope check
+          ../../node_modules/.bin/statescope run --no-save

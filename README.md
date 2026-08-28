@@ -63,6 +63,14 @@ There is a second example, `examples/shopfront`, which exists to prove the same
 runtime and engine serve a different schema. It has no database of its own —
 `pnpm demo:db` creates both — so start that first, then `pnpm demo:shop`.
 
+**It fails on purpose, and that is the demonstration.** Its `after_checkout`
+dataset adds an item to a cart that is already checked out. The API answers
+`201`, writes the row anyway, and the run exits 1 — `expected false, got true`
+on `hasWrite(changes(cart_items))`. A second check comes back undecided rather
+than green: `writeCount()` needs the order the writes happened in, and the
+default `mvcc-xmin` engine records where each row ended up, not how it got
+there. Guessing would have been the easy answer and the wrong one.
+
 ### Point it at your own backend
 
 ```bash
