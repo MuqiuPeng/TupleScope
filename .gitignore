@@ -7,15 +7,25 @@ dist/
 .DS_Store
 .pgdata/
 
-# Kept local, not published.
-#   The two records below reference private work and an unpublished plan.
-#   The examples and the workspace they configure are for local development;
-#   statescope.example.yaml is the published template.
+# Kept local, not published. Both reference private work and an unpublished plan.
 docs/prototype-carryover.md
 docs/technical-review.md
+
+# The workspace file points at your backend and your development database, so
+# it is yours, not the project's.
+tuplescope.yaml
+
+# Local demo applications. They are not part of what this repository ships —
+# the README teaches pointing TupleScope at your own backend, not running ours
+# — but they are useful to develop against. Deliberately outside the pnpm
+# workspace too, so their dependencies never reach the committed lockfile:
+# install them in place with `cd examples/demo-bank && pnpm install`.
 examples/
-statescope.yaml
 
 # Stored runs. Values are masked at capture, but this is still a record of
 # what your development database contained.
+.tuplescope/
+# The pre-rename name, so a working copy that predates it does not have its
+# stored runs swept into a commit the moment this file stops ignoring them —
+# which is exactly what happened when the rename landed.
 .statescope/

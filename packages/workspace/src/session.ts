@@ -13,10 +13,11 @@
  * instead of it surfacing as a stack trace from the first query.
  */
 
-import { MvccPostgresAdapter } from '@statescope/db-postgres';
-import { HttpRunner } from '@statescope/http-runner';
-import { ScenarioEngine, loadScenario } from '@statescope/scenario-engine';
-import type { CaptureScope, Scenario, TableScope } from '@statescope/core';
+import { createAdapter, type PostgresAdapter } from '@tuplescope/db-postgres';
+import { assertResolved } from './credentials.js';
+import { HttpRunner } from '@tuplescope/http-runner';
+import { ScenarioEngine, loadScenario } from '@tuplescope/scenario-engine';
+import type { CaptureScope, Scenario, TableScope } from '@tuplescope/core';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ResolvedWorkspaceConfig } from './config.js';
@@ -26,6 +27,9 @@ export class WorkspaceError extends Error {
   constructor(
     readonly code:
       | 'DATABASE_UNREACHABLE'
+      | 'NO_SCENARIOS_DIR'
+      /** The database is fine; the chosen capture engine cannot run against it. */
+      | 'ENGINE_UNAVAILABLE'
       | 'RESET_NOT_CONFIGURED'
       | 'RESET_FAILED'
       | 'UNKNOWN_TABLE',
@@ -47,7 +51,7 @@ export interface WorkspaceSession {
    * a later invocation.
    */
   readonly history?: RunStore;
-  readonly adapter: MvccPostgresAdapter;
+  readonly adapter: PostgresAdapter;
   readonly runner: HttpRunner;
   readonly engine: ScenarioEngine;
 
@@ -56,7 +60,19 @@ export interface WorkspaceSession {
   /** The capture scope a scenario asks for, resolved against the live schema. */
   scopeFor(scenario: Scenario): Promise<CaptureScope>;
   /** Touches the database once so an unreachable one is reported, not thrown at. */
-  preflight(): Promise<{ tables: string[] }>;
+  preflight(): Promise<{ tables: string[]; columns: Map<string, Set<string>> }>;
+  /**
+   * Puts the database back to its declared baseline, and nothing else.
+   *
+   * Separate from running, because they are separate intentions. A run resets
+   * so that its evidence means something; a person resets so they can go and
+   * look at a clean database, or set one up by hand. Bundling them meant the
+   * only way to get a known state was to also destroy it with five requests.
+   *
+   * Absent when the workspace declares no `resetUrl` — there is nothing to
+   * call, and pretending otherwise would fail at the worst moment.
+   */
+  reset?(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -73,7 +89,14 @@ export function openWorkspace(
   config: ResolvedWorkspaceConfig,
   options: OpenOptions = {},
 ): WorkspaceSession {
-  const adapter = new MvccPostgresAdapter({
+  // A reference that skipped resolution would be sent to the API as the
+  // literal characters `${secret:…}`, and the failure would read as an
+  // authentication problem rather than a missing step.
+  assertResolved(config);
+
+  // A lookup, not a branch. Past this line nothing knows which engine was
+  // chosen, and the registry is what keeps it that way.
+  const adapter = createAdapter(config.engine, {
     connectionString: config.database.connectionString,
     ...(config.maskColumns ? { maskColumns: config.maskColumns } : {}),
   });
@@ -83,43 +106,49 @@ export function openWorkspace(
     ...(config.identities ? { identities: config.identities } : {}),
   });
 
+  /**
+   * One implementation, used by the engine before a full run and by the session
+   * when someone asks for a reset on its own.
+   *
+   * Two copies of "call the reset endpoint" would be two places to get the
+   * timeout and the failure message wrong, and the second copy is always the
+   * one nobody updates.
+   */
+  const resetBaseline = async (): Promise<void> => {
+    let response: Response;
+    try {
+      response = await fetch(config.resetUrl!, {
+        method: 'POST',
+        signal: AbortSignal.timeout(options.resetTimeoutMs ?? 30_000),
+      });
+    } catch (error) {
+      throw new WorkspaceError(
+        'RESET_FAILED',
+        `Could not reach the reset endpoint at ${config.resetUrl}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'Start the backend, or remove `resetFirst` from the dataset.',
+      );
+    }
+    if (!response.ok) {
+      throw new WorkspaceError(
+        'RESET_FAILED',
+        `The reset endpoint at ${config.resetUrl} answered ${response.status}.`,
+        'Check that it wipes and reseeds, and that it accepts POST.',
+      );
+    }
+  };
+
   const engine = new ScenarioEngine({
     adapter,
     runner,
     baselineWindowMs: options.baselineWindowMs ?? config.baselineWindowMs ?? 0,
-    ...(config.resetUrl
-      ? {
-          reset: async (): Promise<void> => {
-            let response: Response;
-            try {
-              response = await fetch(config.resetUrl!, {
-                method: 'POST',
-                signal: AbortSignal.timeout(options.resetTimeoutMs ?? 30_000),
-              });
-            } catch (error) {
-              throw new WorkspaceError(
-                'RESET_FAILED',
-                `Could not reach the reset endpoint at ${config.resetUrl}: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-                'Start the backend, or remove `resetFirst` from the dataset.',
-              );
-            }
-            if (!response.ok) {
-              throw new WorkspaceError(
-                'RESET_FAILED',
-                `The reset endpoint at ${config.resetUrl} answered ${response.status}.`,
-                'Check that it wipes and reseeds, and that it accepts POST.',
-              );
-            }
-          },
-        }
-      : {}),
+    ...(config.resetUrl ? { reset: resetBaseline } : {}),
   });
 
   const history =
     options.history !== undefined && options.history !== false && options.history.keep > 0
-      ? openStore(resolve(config.configDir, '.statescope', 'runs'), options.history)
+      ? openStore(resolve(config.configDir, '.tuplescope', 'runs'), options.history)
       : undefined;
 
   const session: WorkspaceSession = {
@@ -128,11 +157,30 @@ export function openWorkspace(
     runner,
     engine,
     ...(history ? { history } : {}),
+    ...(config.resetUrl ? { reset: resetBaseline } : {}),
 
     async scenarios() {
       // Re-read every time. The runtime used to serve a copy cached at startup,
       // which meant editing a scenario and pressing Run executed the old one.
-      const names = (await readdir(config.scenariosDir))
+      let entries: string[];
+      try {
+        entries = await readdir(config.scenariosDir);
+      } catch (error) {
+        // The second command in the README used to answer this with a raw
+        // `ENOENT ... scandir` and a Node stack, on a machine that had done
+        // nothing wrong — a freshly copied config names a directory that does
+        // not exist yet. `status` has always handled its equivalent properly;
+        // this is the same courtesy.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new WorkspaceError(
+            'NO_SCENARIOS_DIR',
+            `No scenarios directory at ${config.scenariosDir}.`,
+            `Create it and put a \`.yaml\` scenario in it, or point \`scenariosDir\` somewhere else in ${config.configFile}.`,
+          );
+        }
+        throw error;
+      }
+      const names = entries
         .filter((name) => name.endsWith('.yaml') || name.endsWith('.yml'))
         .sort();
       const out: Array<{ scenario: Scenario; file: string }> = [];
@@ -157,6 +205,12 @@ export function openWorkspace(
       const full = await adapter.fullScope({ ignoreColumns, maskedColumns });
       const byName = new Map(full.tables.map((table) => [table.table, table]));
       return {
+        // Carried through from the full scope: narrowing which tables are
+        // watched does not change where they live, and a narrowed scope that
+        // forgot would produce statements addressing whatever the reader's
+        // search path resolves.
+        schema: full.schema,
+        database: full.database,
         allTables: false,
         tables: scenario.watch.map((spec): TableScope => {
           const base = byName.get(spec.table);
@@ -177,8 +231,28 @@ export function openWorkspace(
     },
 
     async preflight() {
+      // Two failures that look alike and are not. A database nobody can reach
+      // is a connection-string problem; an engine that cannot run against a
+      // perfectly healthy database is a configuration problem, and telling
+      // someone to check whether their running database is running wastes the
+      // one moment they were paying attention.
       try {
-        return { tables: [...(await adapter.listTables())] };
+        await adapter.preflight?.();
+      } catch (error) {
+        throw new WorkspaceError(
+          'ENGINE_UNAVAILABLE',
+          `The \`${adapter.captureMethod}\` capture engine cannot run against this database. ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          `Set a different \`engine\` in ${config.configFile}, or apply the change above.`,
+        );
+      }
+      try {
+        // Both in one trip. `check` needs the columns to resolve a predicate,
+        // and asking for them separately would be a second connection for a
+        // question the same catalogue already answered.
+        const [tables, columns] = await Promise.all([adapter.listTables(), adapter.listColumns()]);
+        return { tables: [...tables], columns };
       } catch (error) {
         throw new WorkspaceError(
           'DATABASE_UNREACHABLE',

@@ -7,20 +7,30 @@
  * logic is a UI the other three can't be built behind.
  */
 
-import { parse as parseExpr, evaluateAssertion, Unevaluable, ExprSyntaxError } from '@statescope/expr';
-import { HttpRunner, HttpRunnerError } from '@statescope/http-runner';
+import {
+  parse as parseExpr,
+  evaluateAssertion,
+  predicateClauses,
+  rowsSelectorsIn,
+  Unevaluable,
+  ExprSyntaxError,
+} from '@tuplescope/expr';
+import { HttpRunner, HttpRunnerError } from '@tuplescope/http-runner';
 import { promoteCandidates } from './promote.js';
+import { ValueUnavailable } from '@tuplescope/core';
 import type {
   AssertionResult,
   CaptureScope,
   ChangeSet,
-  Dataset,
   DatabaseAdapter,
+  Dataset,
+  RowsRead,
   Run,
   Scenario,
+  Selector,
   Step,
   StepResult,
-} from '@statescope/core';
+} from '@tuplescope/core';
 
 export interface EngineOptions {
   adapter: DatabaseAdapter;
@@ -54,6 +64,19 @@ export interface ProgressEvent {
   type: 'run-started' | 'step-started' | 'step-finished' | 'run-finished';
   run: Run;
   step?: StepResult;
+}
+
+/**
+ * The rows a step's selectors asked for, and why any of them was refused.
+ *
+ * Both halves, because a refusal used to become the same generic "could not be
+ * read" whatever caused it. A predicate over a masked column is fixed by
+ * editing `maskColumns`, and a message that does not say so leaves the reader
+ * with nothing to act on.
+ */
+interface CurrentRows {
+  rows: Map<string, RowsRead>;
+  refusals: Map<string, string>;
 }
 
 export class ScenarioEngine {
@@ -161,6 +184,12 @@ export class ScenarioEngine {
       if (missing.length > 0) {
         throw new MissingVariableError(missing, step.id);
       }
+      // Would otherwise go out verbatim and fail as an authentication problem
+      // rather than as the unsupported thing it is.
+      const secrets = secretReferences(request);
+      if (secrets.length > 0) {
+        throw new SecretInScenarioError(secrets, step.id);
+      }
 
       const { result: exchange, changes } = await this.options.adapter.capture(scope, () =>
         this.options.runner.send(request),
@@ -170,8 +199,16 @@ export class ScenarioEngine {
         run.variables = { ...run.variables, ...extract(step.capture, exchange.body, exchange.response.status) };
       }
 
+      // Rows a `rows(...)` selector asks for, read once for the whole step.
+      //
+      // Fetched before evaluation rather than during it because evaluation is
+      // synchronous, and made available only through this map so every value
+      // goes through the adapter — and therefore inherits `maskColumns` — the
+      // same way a captured one does.
+      const current = await this.lookupCurrentRows(step.assert ?? [], run.variables, scope);
+
       const assertions = (step.assert ?? []).map((source) =>
-        this.check(source, changes, exchange, run.variables),
+        this.check(source, changes, exchange, run.variables, current),
       );
 
       // An unstated expectation is not "any status will do". A negative
@@ -203,7 +240,13 @@ export class ScenarioEngine {
         changes,
         // Offered whether or not the step already has assertions: the point is
         // to see what happened and keep the parts that matter.
-        candidates: promoteCandidates(changes, run.variables, exchange.response.status),
+        ...(() => {
+          const promoted = promoteCandidates(changes, run.variables, exchange.response.status);
+          return {
+            candidates: promoted.candidates,
+            ...(promoted.withheld.length > 0 ? { withheldCandidates: promoted.withheld } : {}),
+          };
+        })(),
         assertions: statusMatched
           ? assertions
           : [
@@ -249,11 +292,63 @@ export class ScenarioEngine {
     }
   }
 
+  /**
+   * Reads the rows every `rows(...)` in this step's assertions asks for.
+   *
+   * One pass over the assertion sources, one query per distinct selector, and
+   * the results handed to the evaluator as a lookup. A selector that cannot be
+   * read — no adapter support, an unreadable predicate — is simply absent from
+   * the map, and the evaluator then refuses the assertion rather than
+   * answering it from the change set, which is what made `rows` a synonym for
+   * `changes` and produced passes over rows that were plainly there.
+   */
+  private async lookupCurrentRows(
+    sources: ReadonlyArray<string>,
+    variables: Readonly<Record<string, string>>,
+    scope: CaptureScope,
+  ): Promise<CurrentRows> {
+    const found = new Map<string, RowsRead>();
+    const refusals = new Map<string, string>();
+    const adapter = this.options.adapter;
+    if (!adapter.readRows) return { rows: found, refusals };
+
+    for (const source of sources) {
+      let selectors: ReadonlyArray<Selector>;
+      try {
+        selectors = rowsSelectorsIn(parseExpr(template(source, variables, { quote: true })));
+      } catch {
+        // A source that will not parse fails in `check`, with a better message.
+        continue;
+      }
+      for (const selector of selectors) {
+        if (!selector.table) continue;
+        const key = `${selector.table}\u0000${selector.predicate ?? ''}`;
+        if (found.has(key)) continue;
+        try {
+          const clauses = selector.predicate ? predicateClauses(selector.predicate) : [];
+          found.set(key, await adapter.readRows(selector.table, clauses, scope));
+        } catch (error) {
+          // Left out of the map on purpose: the evaluator refuses a selector it
+          // cannot read, which is the honest answer. But *why* it could not be
+          // read is kept, because the generic message below is useless for the
+          // one case the reader can act on — a predicate over a masked column
+          // is fixed by editing `maskColumns`, and "could not be read" does not
+          // say so.
+          if (error instanceof ValueUnavailable || error instanceof Unevaluable) {
+            refusals.set(key, error.message);
+          }
+        }
+      }
+    }
+    return { rows: found, refusals };
+  }
+
   private check(
     source: string,
     changes: ChangeSet,
     exchange: { response: { status: number; headers: Record<string, string> }; body: unknown },
     variables: Readonly<Record<string, string>>,
+    current: CurrentRows,
   ): AssertionResult {
     const templated = template(source, variables, { quote: true });
     // A surviving `{{name}}` means nothing captured it. Predicates are raw
@@ -282,6 +377,13 @@ export class ScenarioEngine {
           body: exchange.body,
         },
         variables,
+        lookupRows: (table, predicate) => {
+          const key = `${table ?? ''}\u0000${predicate ?? ''}`;
+          const read = current.rows.get(key);
+          if (read) return read;
+          const why = current.refusals.get(key);
+          throw new Unevaluable(why ?? `the rows of \`${table ?? '*'}\` could not be read`);
+        },
       });
       return {
         source,
@@ -460,6 +562,43 @@ function unresolved(request: { path: string; body?: unknown; idempotencyKey?: st
   scan(request.path);
   if (request.idempotencyKey) scan(request.idempotencyKey);
   if (request.body !== undefined) scan(JSON.stringify(request.body) ?? '');
+  return [...found];
+}
+
+/**
+ * A secret reference that reached a request.
+ *
+ * `\${secret:…}` is resolved in the workspace file, which is where credentials
+ * belong: `identities` exists so that authentication is declared once and a
+ * step says `as: alice`. A scenario is not resolved, so a reference written
+ * into one would be sent as those characters and come back as a puzzling 401 —
+ * the same silent passthrough that the workspace grammar closed.
+ *
+ * Refusing is the honest answer while scenarios do not resolve them. It is not
+ * a permanent one: if a scenario genuinely needs a credential that is not
+ * authentication — a webhook signing key in a body — that is the evidence for
+ * resolving them here too, and this error is where that will be noticed.
+ */
+export class SecretInScenarioError extends Error {
+  constructor(
+    readonly names: ReadonlyArray<string>,
+    stepId: string,
+  ) {
+    super(
+      `Step \`${stepId}\` refers to ${names.map((n) => `\`\${secret:${n}}\``).join(', ')}, and ` +
+        `scenario files do not resolve secret references — it would be sent to the API as those ` +
+        `characters. Put the credential in \`identities\` in the workspace file, which does ` +
+        `resolve them, and select it from the step with \`as:\`.`,
+    );
+    this.name = 'SecretInScenarioError';
+  }
+}
+
+function secretReferences(request: unknown): string[] {
+  const found = new Set<string>();
+  for (const match of (JSON.stringify(request) ?? '').matchAll(/\$\{secret:([a-z0-9][a-z0-9_-]*)\}/g)) {
+    found.add(match[1]!);
+  }
   return [...found];
 }
 

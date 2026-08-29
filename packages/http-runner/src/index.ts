@@ -8,7 +8,7 @@
  * particular turns an idempotency test into a coin flip.
  */
 
-import type { HttpRequest, RecordedRequest, RecordedResponse } from '@statescope/core';
+import type { HttpRequest, RecordedRequest, RecordedResponse } from '@tuplescope/core';
 
 /** Header values matching these are recorded redacted. Masking happens before storage. */
 const SENSITIVE_HEADERS = /^(authorization|cookie|set-cookie|x-api-key|proxy-authorization)$/i;

@@ -8,9 +8,18 @@ importers:
 
   .:
     devDependencies:
+      '@tuplescope/cli':
+        specifier: workspace:*
+        version: link:apps/cli
+      '@tuplescope/mcp':
+        specifier: workspace:*
+        version: link:apps/mcp
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      embedded-postgres:
+        specifier: ^17.5.0-beta.15
+        version: 17.5.0-beta.15
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
@@ -20,16 +29,25 @@ importers:
 
   apps/cli:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@statescope/report':
+      '@tuplescope/expr':
+        specifier: workspace:*
+        version: link:../../packages/expr
+      '@tuplescope/handoff':
+        specifier: workspace:*
+        version: link:../../packages/handoff
+      '@tuplescope/report':
         specifier: workspace:*
         version: link:../../packages/report
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
-      '@statescope/workspace':
+      '@tuplescope/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
+      '@tuplescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
     devDependencies:
@@ -42,16 +60,19 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@3.25.76)
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@statescope/report':
+      '@tuplescope/expr':
+        specifier: workspace:*
+        version: link:../../packages/expr
+      '@tuplescope/report':
         specifier: workspace:*
         version: link:../../packages/report
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
-      '@statescope/workspace':
+      '@tuplescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
       zod:
@@ -67,19 +88,22 @@ importers:
       '@fastify/static':
         specifier: ^8.0.3
         version: 8.3.0
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@statescope/db-postgres':
+      '@tuplescope/db-postgres':
         specifier: workspace:*
         version: link:../../packages/db-postgres
-      '@statescope/http-runner':
+      '@tuplescope/handoff':
+        specifier: workspace:*
+        version: link:../../packages/handoff
+      '@tuplescope/http-runner':
         specifier: workspace:*
         version: link:../../packages/http-runner
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
-      '@statescope/workspace':
+      '@tuplescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
       fastify:
@@ -95,14 +119,20 @@ importers:
 
   apps/web: {}
 
-  examples/demo-bank:
+  packages/conformance:
     dependencies:
-      embedded-postgres:
-        specifier: ^17.5.0-beta.15
-        version: 17.5.0-beta.15
-      fastify:
-        specifier: ^5.2.0
-        version: 5.12.1
+      '@tuplescope/core':
+        specifier: workspace:*
+        version: link:../core
+      '@tuplescope/db-postgres':
+        specifier: workspace:*
+        version: link:../db-postgres
+      '@tuplescope/expr':
+        specifier: workspace:*
+        version: link:../expr
+      '@tuplescope/report':
+        specifier: workspace:*
+        version: link:../report
       pg:
         specifier: ^8.13.1
         version: 8.23.0
@@ -113,22 +143,9 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
-
-  examples/shopfront:
-    dependencies:
-      fastify:
-        specifier: ^5.2.0
-        version: 5.12.1
-      pg:
-        specifier: ^8.13.1
-        version: 8.23.0
-    devDependencies:
-      '@types/pg':
-        specifier: ^8.11.10
-        version: 8.23.1
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/core:
     devDependencies:
@@ -138,7 +155,7 @@ importers:
 
   packages/db-postgres:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
       pg:
@@ -154,7 +171,7 @@ importers:
 
   packages/expr:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -162,15 +179,28 @@ importers:
         specifier: ^4.19.2
         version: 4.23.12
 
+  packages/handoff:
+    dependencies:
+      '@tuplescope/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/http-runner:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
 
   packages/report:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -180,13 +210,13 @@ importers:
 
   packages/scenario-engine:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
-      '@statescope/expr':
+      '@tuplescope/expr':
         specifier: workspace:*
         version: link:../expr
-      '@statescope/http-runner':
+      '@tuplescope/http-runner':
         specifier: workspace:*
         version: link:../http-runner
       yaml:
@@ -197,20 +227,32 @@ importers:
         specifier: ^4.19.2
         version: 4.23.12
 
+  packages/secrets:
+    devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/workspace:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
-      '@statescope/db-postgres':
+      '@tuplescope/db-postgres':
         specifier: workspace:*
         version: link:../db-postgres
-      '@statescope/http-runner':
+      '@tuplescope/http-runner':
         specifier: workspace:*
         version: link:../http-runner
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../scenario-engine
+      '@tuplescope/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       yaml:
         specifier: ^2.6.1
         version: 2.9.0

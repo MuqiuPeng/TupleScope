@@ -1,12 +1,13 @@
 {
-  "name": "@statescope/cli",
-  "version": "0.2.0",
+  "name": "@tuplescope/cli",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "statescope": "./dist/main.js"
+    "tuplescope": "./bin/tuplescope.js"
   },
   "files": [
+    "bin",
     "dist"
   ],
   "scripts": {
@@ -15,10 +16,13 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@statescope/core": "workspace:*",
-    "@statescope/report": "workspace:*",
-    "@statescope/workspace": "workspace:*",
-    "@statescope/scenario-engine": "workspace:*"
+    "@tuplescope/core": "workspace:*",
+    "@tuplescope/expr": "workspace:*",
+    "@tuplescope/handoff": "workspace:*",
+    "@tuplescope/report": "workspace:*",
+    "@tuplescope/scenario-engine": "workspace:*",
+    "@tuplescope/secrets": "workspace:*",
+    "@tuplescope/workspace": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

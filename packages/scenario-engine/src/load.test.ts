@@ -14,7 +14,7 @@ import { loadScenario, loadScenarios, ScenarioLoadError } from './load.js';
 let dir: string;
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'statescope-load-'));
+  dir = await mkdtemp(join(tmpdir(), 'tuplescope-load-'));
 });
 after(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -133,7 +133,7 @@ describe('loadScenario', () => {
 
 describe('loadScenarios', () => {
   it('loads every yaml in the directory, in a stable order', async () => {
-    const folder = await mkdtemp(join(tmpdir(), 'statescope-dir-'));
+    const folder = await mkdtemp(join(tmpdir(), 'tuplescope-dir-'));
     try {
       await writeFile(join(folder, 'b.yaml'), VALID.replace('id: refund', 'id: b'), 'utf8');
       await writeFile(join(folder, 'a.yml'), VALID.replace('id: refund', 'id: a'), 'utf8');

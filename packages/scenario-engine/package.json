@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/scenario-engine",
+  "name": "@tuplescope/scenario-engine",
   "version": "0.0.0",
   "license": "MIT",
   "type": "module",
@@ -17,9 +17,9 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@statescope/core": "workspace:*",
-    "@statescope/expr": "workspace:*",
-    "@statescope/http-runner": "workspace:*",
+    "@tuplescope/core": "workspace:*",
+    "@tuplescope/expr": "workspace:*",
+    "@tuplescope/http-runner": "workspace:*",
     "yaml": "^2.6.1"
   },
   "devDependencies": {

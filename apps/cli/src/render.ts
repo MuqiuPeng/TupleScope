@@ -14,6 +14,14 @@
  * reader who cannot distinguish red from green.
  */
 
+import {
+  displayText,
+  isVisible,
+  keyLabel,
+  MASKED_TEXT,
+  UNKNOWN_TEXT,
+  visible,
+} from '@tuplescope/core';
 import type {
   AssertionResult,
   ChangeSet,
@@ -22,7 +30,7 @@ import type {
   RunVerdict,
   StepResult,
   Value,
-} from '@statescope/core';
+} from '@tuplescope/core';
 
 // ─── style ────────────────────────────────────────────────────────────────────
 
@@ -84,12 +92,28 @@ export function glyph(style: Style, kind: 'pass' | 'fail' | 'undecided' | 'refus
 
 const arrow = (style: Style): string => (style.ascii ? '->' : '→');
 
+/** Visible *and* not SQL NULL — the group that actually has something to show. */
+function hasText(value: Value | undefined): boolean {
+  return isVisible(value) && value.text !== null;
+}
+
 // ─── values ───────────────────────────────────────────────────────────────────
 
 const MAX_VALUE_BYTES = 200;
 
 export function renderValue(style: Style, value: Value | undefined, room: number): string {
-  if (!value || value.text === null) return paint(style, 'dim', 'NULL');
+  if (!value) return paint(style, 'dim', 'NULL');
+  // Withheld values are named, not printed as bare glyphs. The terminal used to
+  // print the bullets with nothing to say what they were, while the web page
+  // said "masked at capture" — two surfaces disagreeing because each wrote its
+  // own renderer.
+  if (value.state === 'masked') {
+    return paint(style, 'dim', `${MASKED_TEXT} ${style.ascii ? '(masked)' : '· masked'}`);
+  }
+  if (value.state === 'unknown') {
+    return paint(style, 'yellow', `${UNKNOWN_TEXT} ${value.reason}`);
+  }
+  if (value.text === null) return paint(style, 'dim', 'NULL');
   // Newlines would break the grid; a value that contains one still has to be
   // recognisable, so it collapses rather than disappearing.
   let text = value.text.replace(/\n/g, style.ascii ? '\\n' : '⏎');
@@ -105,7 +129,7 @@ export function renderValue(style: Style, value: Value | undefined, room: number
 /** Keys can be long ids; the middle is the part that carries no information. */
 export function renderKey(change: RowChange, style: Style): string {
   if (!change.key) return paint(style, 'dim', '(unkeyed)');
-  const joined = change.key.columns.map((c) => c.value.text ?? 'NULL').join('·');
+  const joined = change.key.columns.map((c) => displayText(c.value)).join('·');
   if (joined.length <= 14) return joined;
   return `${joined.slice(0, 8)}…${joined.slice(-5)}`;
 }
@@ -188,7 +212,10 @@ function rankColumns(change: RowChange, options: DiffOptions): string[] {
   for (const name of Object.keys(row).sort()) {
     if (options.interesting.has(name)) groups[0]!.push(name);
     else if (keys.has(name)) groups[1]!.push(name);
-    else if (row[name]?.text !== null) groups[2]!.push(name);
+    // `has a value` means visible with text — not merely "not the literal
+    // null". A withheld value carries no text at all, and sorting it into the
+    // populated group would put an empty cell above a real one.
+    else if (hasText(row[name])) groups[2]!.push(name);
     else groups[3]!.push(name);
   }
   return groups.flat();
@@ -221,6 +248,9 @@ export function renderDiff(changes: ChangeSet, options: DiffOptions): string[] {
     for (const row of rows) {
       if (row.kind === 'insert' || row.kind === 'entered-scope') counts.insert++;
       else if (row.kind === 'delete' || row.kind === 'left-scope') counts.delete++;
+      // Named rather than left to the `else`: a row nothing wrote is not an
+      // update, and it must not be counted as one if it ever reaches here.
+      else if (row.kind === 'unchanged') continue;
       else counts.update++;
     }
     const summary = [
@@ -330,7 +360,7 @@ function renderInsertOrDelete(change: RowChange, options: DiffOptions, room: num
 
   const lines = shown.map((column) => {
     const value = row[column];
-    if (JSON_TYPES.has(value?.pgType ?? '') && value?.text) {
+    if (JSON_TYPES.has(value?.pgType ?? '') && isVisible(value) && value.text) {
       return `${pad(column, nameWidth)}  ${paint(style, 'dim', summariseJson(value.text))}`;
     }
     return `${pad(column, nameWidth)}  ${renderValue(style, value, room)}`;
@@ -358,9 +388,11 @@ function summariseJson(text: string): string {
 
 function safeLeaves(before: Value | undefined, after: Value | undefined): Leaf[] {
   try {
+    // Only two values this run has. A JSON leaf diff over a withheld value
+    // would report every leaf as removed.
     return jsonLeaves(
-      before?.text ? JSON.parse(before.text) : undefined,
-      after?.text ? JSON.parse(after.text) : undefined,
+      isVisible(before) && before.text ? JSON.parse(before.text) : undefined,
+      isVisible(after) && after.text ? JSON.parse(after.text) : undefined,
     );
   } catch {
     return [];
@@ -368,6 +400,97 @@ function safeLeaves(before: Value | undefined, after: Value | undefined): Leaf[]
 }
 
 // ─── assertions, steps, the summary ───────────────────────────────────────────
+
+/**
+ * The ordered write list, shown only when it says something the diff above did
+ * not.
+ *
+ * Every step already shows which rows ended up different. Repeating that as a
+ * numbered list on every step would be pure noise, so this stays quiet unless
+ * the ordering carries real information:
+ *
+ *   - more than one transaction, which means the step was not atomic
+ *   - a row written more than once, which the net view shows as one change
+ *   - a write to a row the net view has no entry for at all — inserted and
+ *     deleted inside one transaction, and invisible everywhere else
+ *
+ * When it is one clean transaction it says so in a line, because "these five
+ * writes were atomic" is worth knowing and is not visible anywhere else either.
+ *
+ * Absent `mutations` this renders nothing. That is capability detection, not a
+ * missing feature: an engine reporting `net` fidelity genuinely does not know
+ * the order, and a renderer that invented one would be worse than silent.
+ */
+export function renderWriteOrder(changes: ChangeSet, options: WriteOrderOptions): string[] {
+  const mutations = changes.mutations;
+  if (!mutations || mutations.length === 0) return [];
+
+  const { style, indent, maxRows } = options;
+  const transactions = new Set(mutations.map((m) => m.transactionId));
+  const perRow = new Map<string, number>();
+  for (const m of mutations) {
+    const id = `${m.table}\u0000${m.key?.token ?? ''}`;
+    perRow.set(id, (perRow.get(id) ?? 0) + 1);
+  }
+  const inNetView = new Set(
+    changes.changes.map((c) => `${c.table}\u0000${c.key?.token ?? ''}`),
+  );
+  const ghosts = mutations.filter((m) => !inNetView.has(`${m.table}\u0000${m.key?.token ?? ''}`));
+  const repeated = [...perRow.values()].some((n) => n > 1);
+
+  const label = paint(style, 'dim', 'writes'.padEnd(6));
+  if (transactions.size === 1 && !repeated && ghosts.length === 0) {
+    const one = mutations.length === 1;
+    return [
+      `${indent}${label}  ${mutations.length} ${one ? 'write' : 'writes'}, ` +
+        `${paint(style, 'green', 'one transaction')}`,
+    ];
+  }
+
+  const out: string[] = [];
+  const why: string[] = [];
+  if (transactions.size > 1) why.push(`${transactions.size} transactions`);
+  if (repeated) why.push('a row written more than once');
+  if (ghosts.length > 0) why.push(`${ghosts.length} written then removed`);
+  out.push(
+    `${indent}${label}  ${mutations.length} in order — ` +
+      paint(style, transactions.size > 1 ? 'yellow' : 'dim', why.join(', ')),
+  );
+
+  const shown = mutations.slice(0, maxRows);
+  const txnLabels = new Map<string | null, number>();
+  for (const m of mutations) {
+    if (!txnLabels.has(m.transactionId)) txnLabels.set(m.transactionId, txnLabels.size + 1);
+  }
+  const widest = Math.max(...shown.map((m) => m.table.length));
+  for (const m of shown) {
+    const key = keyLabel(m.key);
+    const txn =
+      transactions.size > 1
+        ? paint(style, 'dim', `  txn ${txnLabels.get(m.transactionId)}`)
+        : '';
+    const gone = inNetView.has(`${m.table}\u0000${m.key?.token ?? ''}`)
+      ? ''
+      : paint(style, 'yellow', '  (not in the diff above)');
+    out.push(
+      `${indent}        ${String(m.sequence + 1).padStart(2)} ` +
+        `${m.table.padEnd(widest)}  ${m.operation.padEnd(6)}  ${renderValue(style, visible('text', key), 24)}` +
+        `${txn}${gone}`,
+    );
+  }
+  if (mutations.length > shown.length) {
+    out.push(
+      `${indent}        ${paint(style, 'dim', `(+${mutations.length - shown.length} more · --diff all)`)}`,
+    );
+  }
+  return out;
+}
+
+export interface WriteOrderOptions {
+  style: Style;
+  indent: string;
+  maxRows: number;
+}
 
 export function renderAssertion(style: Style, assertion: AssertionResult, indent: string): string[] {
   const kind =

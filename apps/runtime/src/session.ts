@@ -4,7 +4,7 @@
  * The access token is minted per start and printed once. That is fine while you
  * are watching the terminal and useless afterwards — detach the process, or let
  * a supervisor own it, and the only way back in is a restart. So each instance
- * also drops a small session file, and `statescope url` reads it.
+ * also drops a small session file, and `tuplescope url` reads it.
  *
  * Jupyter solved this the same way, for the same reason.
  *
@@ -19,7 +19,7 @@ import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const DIR = join(homedir(), '.statescope', 'sessions');
+const DIR = join(homedir(), '.tuplescope', 'sessions');
 
 export interface Session {
   pid: number;

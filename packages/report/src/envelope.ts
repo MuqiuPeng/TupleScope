@@ -13,12 +13,14 @@
  * the change that would otherwise ship a silent green into somebody's CI.
  */
 
+import { keyLabel } from '@tuplescope/core';
 import type {
   AssertionCandidate,
   AssertionResult,
   CaptureMethod,
   ChangeSet,
   Detection,
+  Fidelity,
   ExecutionError,
   LocatedWarning,
   Proves,
@@ -28,15 +30,16 @@ import type {
   StepOutcome,
   SuiteVerdict,
   VerdictPolicy,
-} from '@statescope/core';
+} from '@tuplescope/core';
 
 /** Bumped on removal, rename, or a semantic change. Never on an added field. */
-export const RUN_REPORT_SCHEMA = 'statescope.run-report/1' as const;
+import { RUN_REPORT_SCHEMA } from '@tuplescope/core';
+export { RUN_REPORT_SCHEMA } from '@tuplescope/core';
 
 export type SchemaId = typeof RUN_REPORT_SCHEMA;
 
 export interface Producer {
-  tool: 'statescope';
+  tool: 'tuplescope';
   version: string;
   /** Which consumer produced this. Two surfaces, one shape. */
   surface: 'cli' | 'runtime' | 'mcp';
@@ -47,7 +50,7 @@ export interface WorkspaceSummary {
   configPath: string;
   baseUrl: string;
   scenariosDir: string;
-  capture: { method: CaptureMethod; detection: Detection };
+  capture: { method: CaptureMethod; detection: Detection; fidelity: Fidelity };
   tableCount: number;
 }
 
@@ -90,7 +93,7 @@ export interface StepReport {
   /**
    * Assertions this step's own changes imply, ready to be kept.
    *
-   * Carried in the envelope so `statescope keep` can work on a run that already
+   * Carried in the envelope so `tuplescope keep` can work on a run that already
    * finished. Promoting only what is still in memory would mean the loop only
    * closes if you noticed in the same breath as the run.
    */
@@ -107,7 +110,42 @@ export interface StepReport {
 export interface ChangeSummary {
   method: CaptureMethod;
   detection: Detection;
-  scope: { allTables: boolean; tableCount: number };
+  fidelity: Fidelity;
+  /**
+   * The order writes happened in, present only when the engine kept it.
+   *
+   * Absent is a fact, not a gap: a consumer reading this file learns that the
+   * ordering was never observed, rather than that it happened to be empty. The
+   * counts are the summary a report wants; the full list is under `rows`.
+   */
+  writeOrder?: {
+    total: number;
+    transactions: number;
+    /** Writes to rows that are not in the net view — written, then removed. */
+    withoutNetChange: number;
+    /** `table:operation:key`, in order. Only with full rows. */
+    sequence?: ReadonlyArray<string>;
+  };
+  /**
+   * Where the tables below live, not just how many there are.
+   *
+   * A `RowChange` carries a bare table name, and a bare table name only means
+   * something inside the connection that produced it. Anything reading this
+   * file later — a second tool, a database UI, a person writing a SELECT — has
+   * no other way to know which schema in which database was watched. Measured
+   * on two schemas in one database: a statement generated against `tenant_a`
+   * returned `tenant_b`'s row, different balance, no error.
+   */
+  scope: { schema: string; database: string; allTables: boolean; tableCount: number };
+  /**
+   * The session settings this run's text was rendered under.
+   *
+   * Carried so a consumer building a statement from a stored run can check
+   * rather than trust. A `timestamptz` printed under `DateStyle=SQL,DMY`
+   * addresses a different row than the same value printed under `ISO`, and by
+   * the time a report is on disk there is nothing left to ask.
+   */
+  rendering: Readonly<Record<string, string>>;
   durationMs: number;
   tables: ReadonlyArray<{
     table: string;
@@ -208,6 +246,9 @@ export function summariseChanges(changes: ChangeSet, includeRows = false): Chang
     }
     if (change.kind === 'insert' || change.kind === 'entered-scope') entry.inserted++;
     else if (change.kind === 'delete' || change.kind === 'left-scope') entry.deleted++;
+    // A row nothing wrote is not an update. It cannot reach a ChangeSet today,
+    // and the `else` below would otherwise silently call it one.
+    else if (change.kind === 'unchanged') continue;
     else {
       entry.updated++;
       // The case a value comparison cannot see. Counted separately so it cannot
@@ -219,11 +260,44 @@ export function summariseChanges(changes: ChangeSet, includeRows = false): Chang
   return {
     method: changes.captureMethod,
     detection: changes.detection,
-    scope: { allTables: changes.scope.allTables, tableCount: changes.scope.tables.length },
+    fidelity: changes.fidelity,
+    scope: {
+      schema: changes.scope.schema,
+      database: changes.scope.database,
+      allTables: changes.scope.allTables,
+      tableCount: changes.scope.tables.length,
+    },
+    rendering: changes.rendering,
     durationMs: changes.durationMs,
     tables: [...byTable.values()].sort((a, b) => a.table.localeCompare(b.table)),
     warnings: changes.warnings,
+    ...(changes.mutations ? { writeOrder: summariseWriteOrder(changes, includeRows) } : {}),
     ...(includeRows ? { rows: changes.changes } : {}),
+  };
+}
+
+function summariseWriteOrder(
+  changes: ChangeSet,
+  includeSequence: boolean,
+): NonNullable<ChangeSummary['writeOrder']> {
+  const mutations = changes.mutations ?? [];
+  // On the per-run token, not on the reported key text: under a masked key
+  // column every row of a table shared that text, so every mutation joined
+  // against the first change and `withoutNetChange` came out zero.
+  const inNetView = new Set(changes.changes.map((c) => `${c.table}\u0000${c.key?.token ?? ''}`));
+  const identify = (m: (typeof mutations)[number]) => `${m.table}\u0000${m.key?.token ?? ''}`;
+  return {
+    total: mutations.length,
+    transactions: new Set(mutations.map((m) => m.transactionId)).size,
+    withoutNetChange: mutations.filter((m) => !inNetView.has(identify(m))).length,
+    ...(includeSequence
+      ? {
+          sequence: mutations.map(
+            (m) =>
+              `${m.table}:${m.operation}:${keyLabel(m.key)}`,
+          ),
+        }
+      : {}),
   };
 }
 

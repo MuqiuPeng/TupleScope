@@ -1,118 +1,625 @@
-/* StateScope UI. Dark, dense, and quiet — the diff is the thing to look at. */
 :root {
-  --bg: #0d1413;      --panel: #141d1b;  --panel-2: #182320;
-  --ink: #e3ebe8;     --muted: #869b96;  --rule: #26332f;
-  --accent: #55c4b3;  --added: #63c68a;  --changed: #dcaf55; --removed: #e4906f;
+  color-scheme: dark;
+  --bg: #09100f;
+  --panel: #101918;
+  --panel-raised: #15211f;
+  --panel-soft: #0d1514;
+  --ink: #edf5f1;
+  --muted: #8ca19b;
+  --faint: #5f726d;
+  --rule: #253532;
+  --rule-strong: #344944;
+  --accent: #65ddc3;
+  --accent-ink: #07110f;
+  --clean: #72d997;
+  --failed: #ff8b72;
+  --review: #e4b85e;
+  --running: #63b7ff;
+  /* Its own colour, not a second red. `failed` is exit 1 — the code did
+     something the scenario says it should not. `errored` is exit 2 — the tool
+     never got to find out. Painting them alike asks the reader to fix code
+     that may be fine. */
+  --errored: #b79bf0;
   --mono: "SFMono-Regular", "IBM Plex Mono", ui-monospace, Menlo, monospace;
-  --sans: -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
 }
+
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.6 var(--sans); }
+html, body { height: 100%; min-height: 100%; }
+body { display: grid; grid-template-rows: auto minmax(0, 1fr); margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 var(--sans); }
+button, select { font: inherit; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+code, pre { font-family: var(--mono); }
 
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  padding: 12px 20px; border-bottom: 1px solid var(--rule); background: var(--panel); }
-.brand { display: flex; align-items: baseline; gap: 10px; }
-.brand h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); align-self: center; }
-.tagline, .topbar-meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.topbar {
+  min-height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 0 20px; border-bottom: 1px solid var(--rule); background: rgba(16, 25, 24, .96);
+}
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand > div { display: flex; align-items: baseline; gap: 12px; }
+.brand h1 { margin: 0; font-size: 15px; letter-spacing: -.015em; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(101, 221, 195, .1); }
+.tagline { color: var(--muted); font: 11px/1 var(--mono); }
+.topbar-meta { display: flex; min-width: 0; max-width: 55vw; align-items: center; justify-content: flex-start; gap: 7px; overflow-x: auto; scrollbar-width: thin; }
+.meta-chip, .detail-chip { border: 1px solid var(--rule); color: var(--muted); background: var(--panel-soft); font: 10px/1 var(--mono); padding: 5px 7px; border-radius: 999px; }
+.meta-chip { flex: none; }
+.detail-chip.edited { border-color: rgba(101, 221, 195, .42); color: var(--accent); }
 
-.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1px; background: var(--rule); height: calc(100vh - 49px); }
-.col { background: var(--bg); overflow-y: auto; padding: 14px 16px 40px; }
-.col-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
-  color: var(--muted); margin: 0 0 12px; font-weight: 600; }
-.hint { text-transform: none; letter-spacing: 0; margin-left: 8px; font-family: var(--mono); }
-.muted { color: var(--muted); }
-.panel { display: flex; flex-direction: column; gap: 10px; }
+.layout { min-height: 0; display: grid; grid-template-columns: 330px minmax(430px, .95fr) minmax(440px, 1.05fr); background: var(--rule); gap: 1px; }
+.col { min-width: 0; overflow-y: auto; background: var(--bg); padding: 20px 18px 50px; scrollbar-color: var(--rule-strong) transparent; }
+.col-steps, .col-db { container-type: inline-size; }
+.col-scenarios { background: #0b1312; }
+.col-db { background: #0b1211; }
 
-/* scenarios */
-.scenario { border: 1px solid var(--rule); background: var(--panel); margin-bottom: 14px; }
-.scenario h3 { margin: 0; padding: 11px 13px 4px; font-size: 13.5px; }
-.scenario .why { margin: 0; padding: 0 13px 10px; color: var(--muted); font-size: 12.5px; }
-.dataset { display: block; width: 100%; text-align: left; background: none; color: inherit;
-  border: none; border-top: 1px solid var(--rule); padding: 9px 13px; cursor: pointer; font: inherit; }
-.dataset:hover { background: var(--panel-2); }
-.dataset.active { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
-.dataset-head { display: flex; justify-content: space-between; gap: 8px; }
-.dataset-label { font-size: 13px; }
-.dataset-count { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: none; }
-.dataset-note { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.pane-heading { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 16px; }
+.pane-heading h2 { margin: 3px 0 0; font-size: 18px; line-height: 1.2; letter-spacing: -.025em; }
+.eyebrow { display: block; color: var(--accent); font: 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .14em; }
+.pane-count { color: var(--muted); font: 10px/1.3 var(--mono); }
 
-/* steps */
-.step { border: 1px solid var(--rule); background: var(--panel); padding: 11px 13px; cursor: pointer; }
-.step.selected { box-shadow: inset 2px 0 0 var(--accent); }
-.step.failed, .step.errored { border-color: #5c3128; }
-.step-head { display: flex; align-items: center; gap: 9px; }
-.step-name { flex: 1; font-size: 13.5px; }
-.mark { font-family: var(--mono); width: 14px; flex: none; }
-.mark.passed { color: var(--added); } .mark.failed, .mark.errored { color: var(--removed); }
-.code-pill { font-family: var(--mono); font-size: 11px; color: var(--muted);
-  border: 1px solid var(--rule); padding: 0 6px; border-radius: 2px; }
-.req-line { display: flex; gap: 8px; font-family: var(--mono); font-size: 11.5px;
-  color: var(--muted); margin-top: 5px; overflow-x: auto; }
-.method { color: var(--accent); } .as { margin-left: auto; flex: none; }
-.code { font-family: var(--mono); font-size: 11.5px; background: #0b100f; border: 1px solid var(--rule);
-  padding: 9px 11px; margin: 9px 0 0; max-height: 190px; overflow: auto; white-space: pre-wrap;
-  word-break: break-word; }
-.assert { display: flex; gap: 8px; align-items: baseline; margin-top: 6px; font-size: 12.5px; }
-.assert code { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
-.assert.passed .mark { color: var(--added); }
-.assert.failed .mark, .assert.failed code { color: var(--removed); }
-.assert.unevaluable .mark, .assert.unevaluable code { color: var(--changed); }
-.actual, .reason { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-left: auto;
-  text-align: right; }
+/* Scenario library */
+.scenario-list { display: flex; flex-direction: column; gap: 10px; }
+.scenario-group { border: 1px solid var(--rule); background: var(--panel); border-radius: 7px; overflow: hidden; }
+.scenario-heading { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.scenario-heading:hover { background: var(--panel-raised); }
+.scenario-heading > span:first-child { display: flex; flex-direction: column; min-width: 0; }
+.scenario-heading strong { font-size: 13px; }
+.scenario-heading small { margin-top: 2px; color: var(--muted); font: 10px/1.4 var(--mono); }
+.chevron { color: var(--muted); transition: transform .16s ease; }
+.scenario-group.open .chevron { transform: rotate(180deg); }
+.scenario-body { display: none; padding: 0 10px 10px; }
+.scenario-group.open .scenario-body { display: block; }
+.dataset-picker { width: 100%; height: 34px; border: 1px solid var(--rule); border-radius: 4px; padding: 0 28px 0 9px; color: var(--ink); background: var(--panel-soft); font: 11px/1 var(--mono); }
+.dataset-summary { width: 100%; display: flex; flex-direction: column; gap: 5px; margin-top: 8px; padding: 10px; border: 1px solid var(--rule); border-radius: 4px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.dataset-summary.selected { border-color: rgba(101, 221, 195, .42); background: rgba(101, 221, 195, .05); box-shadow: inset 2px 0 var(--accent); }
+.dataset-summary span { color: var(--ink); font-size: 12px; line-height: 1.5; }
+.dataset-summary small { color: var(--muted); font: 10px/1.4 var(--mono); }
+.scenario-steps { max-height: min(42vh, 360px); margin-top: 8px; border-radius: 4px; }
+.scenario-steps .step-heading { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 7px; padding-inline: 9px; }
+.scenario-steps .step-main strong { font-size: 11.5px; }
+.scenario-steps .step-status { padding-inline: 5px; }
 
-/* diff */
-.diff-table { border: 1px solid var(--rule); background: var(--panel); }
-.diff-table h4 { margin: 0; padding: 9px 12px; font-size: 12px; font-family: var(--mono);
-  border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 8px; }
-.badge { font-size: 10.5px; padding: 1px 6px; border-radius: 2px; font-family: var(--mono); }
-.badge.added { background: #1c3327; color: var(--added); }
-.badge.changed { background: #362d15; color: var(--changed); }
-.badge.removed { background: #3a231b; color: var(--removed); }
-.row-card { padding: 9px 12px; border-top: 1px solid var(--rule); }
-.row-card:first-of-type { border-top: none; }
-.row-key { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 5px; }
-.row-card.insert .row-key { color: var(--added); }
-.row-card.delete .row-key, .row-card.left-scope .row-key { color: var(--removed); }
-.kv { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 2px 14px; margin: 0;
-  font-family: var(--mono); font-size: 11.5px; }
-.kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-word; }
-.was { color: var(--muted); text-decoration: line-through; }
-.arrow { color: var(--muted); margin: 0 6px; }
-.now { color: var(--changed); }
-.no-change { border: 1px solid var(--rule); background: var(--panel); padding: 12px;
-  color: var(--muted); font-size: 12.5px; }
-.diff-scope { color: var(--muted); font-family: var(--mono); font-size: 11px; padding-top: 4px; }
+/* Run plan */
+.dataset-stage { padding-bottom: 17px; border-bottom: 1px solid var(--rule); }
+.dataset-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.dataset-title { min-width: 0; }
+.dataset-title h1 { margin: 5px 0 6px; font-size: clamp(22px, 2vw, 30px); line-height: 1.08; letter-spacing: -.04em; }
+.dataset-title p { max-width: 650px; margin: 0; color: var(--muted); font-size: 12.5px; }
+.primary-action { flex: none; min-height: 38px; padding: 0 15px; border: 0; border-radius: 4px; color: var(--accent-ink); background: var(--accent); font-weight: 750; cursor: pointer; }
+.primary-action:hover:not(:disabled) { filter: brightness(1.08); }
+.run-strip { display: block !important; margin: 12px 0; }
+.run-strip:empty { display: none !important; }
+/* Wraps, because in a 414px column the two buttons and the picker need 405 of
+   it. `flex: 1` alone left `flex-basis: 0`, so the status took the 9px that
+   were left, rendered at zero width, and its text spilled out of the box and
+   under the buttons — `failed · 1/1 steps · partial evidence` in five stacked
+   fragments. A 200px basis is wider than the leftover, so the controls take a
+   row of their own instead and the status gets the full width above them. */
+.run-toolbar { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
+.run-strip #runSummary { display: flex; flex: 1 1 200px; min-width: 0; align-items: center; gap: 8px; min-height: 24px; color: var(--muted); font: 10px/1.4 var(--mono); }
+.run-error { margin: 0; padding: 7px 0 9px; border-top: 1px solid var(--rule); color: var(--errored); font: 10px/1.5 var(--mono); }
+.run-strip #runSummary strong { font-weight: 500; }
+.run-history-picker { width: auto; max-width: 168px; height: 27px; flex: none; border: 1px solid var(--rule); border-radius: 4px; padding: 0 25px 0 7px; color: var(--muted); background: var(--panel-soft); font: 9px/1 var(--mono); }
+.status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--faint); }
+.status-dot.running { background: var(--running); box-shadow: 0 0 0 4px rgba(99, 183, 255, .1); animation: pulse 1s ease-in-out infinite; }
+.status-dot.clean { background: var(--clean); }
+.status-dot.failed { background: var(--failed); }
+.status-dot.errored { background: var(--errored); }
+.status-dot.undecided { background: var(--review); }
+.status-dot.ready { background: var(--accent); }
+.progress-track { height: 2px; overflow: hidden; background: var(--rule); }
+.progress-bar { display: block; height: 100%; background: var(--accent); transition: width .2s ease; }
+.progress-bar.failed { background: var(--failed); }
+.progress-bar.errored { background: var(--errored); }
+.progress-bar.undecided { background: var(--review); }
 
-/* messages */
-.notice { border: 1px solid #4a3d1c; background: #241f10; color: var(--changed);
-  padding: 10px 12px; font-size: 12.5px; }
-.error-box { border: 1px solid #5c3128; background: #23150f; padding: 10px 12px; margin-top: 9px;
-  font-size: 12.5px; }
-.error-title { color: var(--removed); font-family: var(--mono); font-size: 11px;
-  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
-.error-remedy { color: var(--muted); margin-top: 5px; }
-.boot-error { background: #23150f; color: var(--removed); padding: 12px 20px;
-  font-family: var(--mono); font-size: 12px; }
+.step-list { display: flex; max-height: min(34vh, 310px); flex-direction: column; gap: 0; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); scrollbar-color: var(--rule-strong) transparent; }
+.step-card { flex: none; border: 0; border-top: 1px solid var(--rule); border-radius: 0; background: var(--panel); overflow: hidden; transition: border-color .15s ease, background .15s ease; }
+.step-card:first-child { border-top: 0; }
+.step-card.selected { background: var(--panel-raised); box-shadow: inset 3px 0 var(--accent); }
+.step-card.failed, .step-card.errored { border-color: rgba(255, 139, 114, .45); }
+.step-heading { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.step-heading:hover { background: rgba(255,255,255,.02); }
+.step-index { color: var(--faint); font: 10px/1 var(--mono); letter-spacing: .1em; }
+.step-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.step-main strong { font-size: 13px; line-height: 1.3; }
+.step-main code { display: flex; min-width: 0; gap: 5px; color: var(--muted); font-size: 10px; white-space: normal; }
+.step-method { flex: none; color: var(--faint); }
+.step-path { min-width: 0; overflow-wrap: anywhere; }
+.step-status { padding: 4px 7px; border-radius: 999px; color: var(--muted); background: var(--panel-soft); font: 9px/1 var(--mono); text-transform: uppercase; }
+.step-status.running { color: var(--running); }
+.step-status.clean { color: var(--clean); }
+.step-status.failed { color: var(--failed); }
+.step-status.errored { color: var(--errored); }
+.step-status.undecided { color: var(--review); }
+.step-chips { display: flex; gap: 5px; padding: 0 12px 11px 56px; }
+.step-card.compact { position: relative; }
+.step-card.compact .step-heading { grid-template-columns: 30px minmax(0, 1fr) minmax(52px, auto); min-height: 58px; padding: 9px 11px; }
+.step-card.compact .step-main strong { font-size: 12px; }
+.step-card.compact .step-main code { font-size: 9px; }
+.step-card.compact .step-status { padding: 3px 5px; font-size: 8px; }
+.step-edited { position: absolute; right: 11px; bottom: 4px; color: var(--accent); font: 8px/1 var(--mono); }
+.step-details { padding: 14px; border-top: 1px solid var(--rule); background: rgba(9, 16, 15, .5); }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.detail-block { min-width: 0; padding: 10px; border: 1px solid var(--rule); background: var(--panel-soft); }
+.detail-grid > .detail-block { grid-column: 1 / -1; }
+.request-editor { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 9px; }
+.request-editor .section-label { margin-bottom: 0; }
+.request-editor-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 9px; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel-soft); cursor: pointer; list-style: none; }
+.request-editor-summary::-webkit-details-marker { display: none; }
+.request-editor-summary code { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.request-editor-toggle { color: var(--accent); font: 9px/1 var(--mono); }
+.request-editor[open] .request-editor-summary { margin-bottom: 2px; border-color: var(--rule-strong); }
+.editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.editor-reset { padding: 0; border: 0; color: var(--faint); background: transparent; font: 9px/1 var(--mono); cursor: pointer; }
+.editor-reset:hover:not(:disabled) { color: var(--accent); }
+.request-line { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 7px; }
+.request-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.request-field { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.request-field > span { color: var(--faint); font: 9px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .07em; }
+.request-editor input, .request-editor select, .request-editor textarea {
+  width: 100%; min-width: 0; border: 1px solid var(--rule); border-radius: 4px;
+  color: var(--ink); background: var(--bg); font: 10px/1.5 var(--mono);
+}
+.request-editor input, .request-editor select { height: 32px; padding: 0 8px; }
+.request-editor textarea { padding: 8px; resize: vertical; }
+.request-editor input:focus, .request-editor select:focus, .request-editor textarea:focus { border-color: var(--accent); outline: none; }
+.input-validation { color: var(--faint); font: 9px/1.4 var(--mono); text-transform: none !important; letter-spacing: 0 !important; }
+.input-validation.invalid { color: var(--failed); }
+.section-label { margin-bottom: 7px; color: var(--faint); font: 9px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+.contract-line { display: block; overflow-wrap: anywhere; color: var(--ink); font-size: 10.5px; }
+.payload { max-height: 180px; overflow: auto; margin: 9px 0 0; padding: 9px; border: 1px solid var(--rule); color: var(--muted); background: var(--bg); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.assertion-list { margin-bottom: 12px; border: 1px solid var(--rule); }
+/* The status is carried by the row, not only by a 9px label on the right.
+   Twenty assertions used to be a wall of identical white text with a few small
+   tags in it, and the one that failed had to be hunted for. The bar is on every
+   row so nothing shifts when a status changes; only the colour does. */
+.assertion-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 9px; border-top: 1px solid var(--rule); border-left: 2px solid transparent; font-size: 11px; }
+/* Weight goes where attention is needed. A passed row gets a quiet bar and no
+   tint: a screen of green backgrounds is as hard to scan as a screen of white
+   ones, and it is the exceptions that have to jump out. */
+.assertion-row.passed { border-left-color: color-mix(in srgb, var(--clean) 40%, transparent); }
+.assertion-row.failed { border-left-color: var(--failed); background: color-mix(in srgb, var(--failed) 8%, transparent); }
+.assertion-row.unevaluable { border-left-color: var(--review); background: color-mix(in srgb, var(--review) 8%, transparent); }
+.assertion-row:first-child { border-top: 0; }
+.assertion-row span { min-width: 0; overflow-wrap: anywhere; }
+.assertion-row code { flex: none; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.assertion-row.passed code { color: var(--clean); }
+.assertion-row.failed code { color: var(--failed); }
+.assertion-row.unevaluable code { color: var(--review); }
+.response-block { margin-bottom: 12px; }
+.response-status { display: inline-block; margin-bottom: 5px; font: 9px/1 var(--mono); }
+.response-status.good { color: var(--clean); }
+.response-status.bad { color: var(--failed); }
+.response-verdict { grid-column: 1 / -1; font: 9px/1.35 var(--mono); }
+.response-verdict.good { color: var(--clean); }
+.response-verdict.bad { color: var(--failed); }
+.step-actions { display: flex; gap: 7px; }
+.secondary-action, .copy-button, .keep-button { min-height: 30px; padding: 0 9px; border: 1px solid var(--rule-strong); border-radius: 4px; color: var(--muted); background: var(--panel); font: 10px/1 var(--mono); cursor: pointer; }
+.secondary-action:hover:not(:disabled), .copy-button:hover:not(:disabled), .keep-button:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
 
-/* step controls */
-.step-actions { display: flex; gap: 6px; margin-top: 8px; }
-.mini { font: 11px/1 var(--mono); color: var(--muted); background: none; cursor: pointer;
-  border: 1px solid var(--rule); border-radius: 2px; padding: 4px 8px; }
-.mini:hover:not(:disabled) { color: var(--ink); border-color: var(--accent); }
-.mini:disabled { cursor: default; opacity: 0.7; }
-.mini.kept { color: var(--added); border-color: #1c3327; }
+/* Fixed request workspace: choosing a step swaps this surface instead of
+   making the navigation card grow past the primary action. */
+.request-workspace { margin-top: 12px; padding: 14px; border: 1px solid var(--rule); border-radius: 7px; background: var(--panel); }
+.workspace-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 11px; }
+.workspace-heading h2 { margin: 4px 0 0; font-size: 17px; line-height: 1.2; letter-spacing: -.025em; }
+.expectation-badge { flex: none; padding: 5px 7px; border: 1px solid rgba(101,221,195,.35); border-radius: 999px; color: var(--accent); background: rgba(101,221,195,.05); font: 9px/1 var(--mono); }
+.request-workspace .request-editor { padding: 0; border: 0; background: transparent; }
+.request-workspace .request-body { min-height: 118px; max-height: 220px; }
+.request-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 11px; }
+.send-action { min-height: 34px; padding: 0 12px; border: 0; border-radius: 4px; color: var(--accent-ink); background: var(--accent); font-weight: 750; cursor: pointer; }
+.send-action:hover:not(:disabled) { filter: brightness(1.08); }
+.expectation-copy { flex: 1 1 100%; margin: 2px 0 0; color: var(--muted); font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.custom-run-note { display: none; margin-bottom: 9px; padding: 7px 9px; border: 1px solid rgba(228,184,94,.35); color: var(--review); background: rgba(228,184,94,.06); font-size: 10px; }
+.custom-run-note.visible { display: block; }
+.result-context-note { display: none; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 9px 10px; border: 1px solid rgba(228,184,94,.4); border-radius: 4px; color: var(--review); background: rgba(228,184,94,.06); }
+.result-context-note.visible { display: flex; }
+.result-context-note > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.result-context-note strong { color: var(--ink); font-size: 10px; }
+.result-context-note span { font-size: 9px; line-height: 1.45; overflow-wrap: anywhere; }
+.result-context-note button { flex: none; }
+.dependency-strip { display: flex; max-height: 96px; align-items: center; gap: 7px; flex-wrap: wrap; overflow-y: auto; margin-bottom: 9px; padding: 7px 9px; border: 1px solid var(--rule); background: var(--panel-soft); }
+.dependency-strip .section-label { margin: 0 4px 0 0; }
+.dependency { padding: 3px 6px; border-radius: 999px; font: 9px/1 var(--mono); }
+.dependency.available { color: var(--clean); background: rgba(114,217,151,.08); }
+.dependency.missing { color: var(--review); background: rgba(228,184,94,.08); }
+.exchange-panel { margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--rule); scroll-margin-top: 12px; }
+.exchange-empty { color: var(--muted); font-size: 11px; }
+.response-meta { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 7px 9px; min-width: 0; }
+.response-meta code { color: var(--faint); font-size: 9px; }
+.response-meta .actual-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sent-request-panel { margin-top: 8px; border: 1px solid var(--rule); background: var(--panel-soft); }
+.sent-request-panel > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; cursor: pointer; list-style: none; }
+.sent-request-panel > summary::-webkit-details-marker { display: none; }
+.sent-request-panel > summary strong { font-size: 9px; }
+.sent-request-panel > summary span { min-width: 0; overflow: hidden; color: var(--faint); font: 8px/1.3 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.sent-request-payload { max-height: 220px; margin: 0 8px 8px; }
+.response-payload { max-height: 150px; }
+.variables-list { max-height: 190px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--rule); scrollbar-color: var(--rule-strong) transparent; }
+.variable-row { display: grid; grid-template-columns: minmax(90px,.4fr) minmax(0,1fr); gap: 10px; padding: 6px 8px; border-top: 1px solid var(--rule); font: 9px/1.45 var(--mono); }
+.variable-row:first-child { border-top: 0; }
+.variable-row code { color: var(--accent); }
+.variable-row span { overflow-wrap: anywhere; color: var(--muted); }
+.contract-panel { margin-top: 12px; border-top: 1px solid var(--rule); }
+.contract-panel > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0 0; cursor: pointer; list-style: none; }
+.contract-panel > summary::-webkit-details-marker { display: none; }
+.contract-panel > summary strong { font-size: 11px; }
+.contract-panel > summary span { color: var(--faint); font: 9px/1 var(--mono); }
+.contract-expect { margin: 9px 0; color: var(--muted); font-size: 11px; }
+.contract-panel .assertion-list { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; margin-bottom: 0; scrollbar-color: var(--rule-strong) transparent; }
+.table-chip-list { display: flex; max-height: 104px; flex-wrap: wrap; gap: 6px; overflow-y: auto; overscroll-behavior: contain; margin-top: 14px; scrollbar-color: var(--rule-strong) transparent; }
+.table-chip { padding: 5px 7px; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); background: var(--panel); font-size: 9px; }
+.mask-note { margin-top: 12px !important; color: var(--review) !important; font-family: var(--mono); }
 
-/* promote */
-.promote { border: 1px solid var(--rule); background: var(--panel); }
-.promote h4 { margin: 0; padding: 9px 12px; font-size: 12px; font-family: var(--mono);
-  border-bottom: 1px solid var(--rule); display: flex; align-items: baseline; gap: 8px; }
-.promote h4 .hint { margin-left: auto; font-size: 11px; color: var(--muted); }
-.candidate { display: flex; gap: 12px; align-items: flex-start; padding: 9px 12px;
-  border-top: 1px solid var(--rule-soft, #1e2a27); }
-.candidate:first-of-type { border-top: none; }
-.candidate-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.candidate-text code { font: 11.5px/1.45 var(--mono); color: var(--ink); word-break: break-word; }
-.candidate-why { font-size: 11.5px; color: var(--muted); }
-.candidate-caveat { font-size: 11px; color: var(--changed); }
+/* Interpretation and evidence */
+.evidence-heading { margin-bottom: 12px; }
+.story-card { padding: 17px; border: 1px solid var(--rule); border-radius: 7px; background: linear-gradient(145deg, rgba(101,221,195,.08), rgba(16,25,24,.4) 55%); }
+.story-card.failed, .story-card.errored { background: linear-gradient(145deg, rgba(255,139,114,.09), rgba(16,25,24,.4) 55%); }
+.story-card h2 { margin: 6px 0; max-width: 640px; font-size: 20px; line-height: 1.2; letter-spacing: -.03em; }
+.story-card p { margin: 0; color: var(--muted); font-size: 12px; }
+.story-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 1px; margin-top: 15px; border: 1px solid var(--rule); background: var(--rule); }
+.metric { display: flex; flex-direction: column; gap: 2px; padding: 10px; background: rgba(9,16,15,.78); }
+.metric strong { font: 14px/1.2 var(--mono); }
+.metric span { color: var(--faint); font: 9px/1.3 var(--mono); text-transform: uppercase; }
+.signal-list { margin-top: 10px; border-top: 1px solid var(--rule); }
+.signal-item { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 11px; }
+.signal-item span { color: var(--muted); font-family: var(--mono); }
+.signal-item strong { text-align: right; font: 10px/1.5 var(--mono); }
+.signal-more { padding: 8px 0 0; color: var(--faint); font: 9px/1.4 var(--mono); }
+.evidence-tabs { display: flex !important; gap: 5px; overflow-x: auto; margin: 13px 0 10px; scrollbar-width: thin; }
+.evidence-tabs:empty { display: none !important; }
+.evidence-tab { flex: none; padding: 6px 9px; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); background: transparent; font: 10px/1 var(--mono); cursor: pointer; }
+.evidence-tab.active { border-color: rgba(101,221,195,.45); color: var(--accent); background: rgba(101,221,195,.05); }
+.evidence-panel { display: flex; flex-direction: column; gap: 9px; }
+.evidence-empty { padding: 20px; border: 1px dashed var(--rule); background: rgba(16,25,24,.35); }
+.evidence-empty h3 { margin: 7px 0 4px; font-size: 17px; }
+.evidence-empty p { margin: 0; color: var(--muted); font-size: 12px; }
+.expectation-list { display: flex; flex-direction: column; gap: 5px; margin-top: 15px; }
+.expectation-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 9px; border: 1px solid var(--rule); color: var(--muted); background: var(--panel); text-align: left; cursor: pointer; }
+.expectation-item:hover { border-color: var(--rule-strong); color: var(--ink); }
+.expectation-item code { flex: none; color: var(--faint); font-size: 9px; }
+.evidence-panel > .evidence-heading { margin: 3px 0 1px; }
+.evidence-panel > .evidence-heading h3 { margin: 5px 0 0; font-size: 15px; }
+.timeline { display: flex; flex-direction: column; gap: 6px; }
+.timeline-item { border: 1px solid var(--rule); background: var(--panel); }
+.timeline-heading { width: 100%; display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 10px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.timeline-heading > span:nth-child(2) { display: flex; flex-direction: column; }
+.timeline-heading small { color: var(--muted); font-size: 10px; }
+.timeline-heading code { color: var(--faint); font-size: 9px; }
+
+.table-change { border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); overflow: hidden; }
+.table-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border-bottom: 1px solid var(--rule); }
+.table-change:not([open]) .table-heading { border-bottom: 0; }
+.table-heading { cursor: pointer; list-style: none; }
+.table-heading::-webkit-details-marker { display: none; }
+.table-heading strong { font: 11px/1.3 var(--mono); }
+.table-heading span { color: var(--faint); font: 9px/1 var(--mono); }
+.row-change { border-top: 1px solid var(--rule); }
+.row-change:first-of-type { border-top: 0; }
+.row-heading { width: 100%; display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; gap: 10px; align-items: center; padding: 9px 11px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+/* The fourth column is the inspect control. It sits in the heading rather than
+   under the fold so that every changed row offers it without being expanded
+   first — and at a fixed width, so rows stay aligned whether or not a given
+   row can be opened. */
+.row-heading .inspect-line { justify-content: flex-end; }
+.row-heading:hover { background: rgba(255,255,255,.02); }
+.row-heading code { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.row-heading > span:last-child { color: var(--faint); font: 9px/1 var(--mono); }
+.change-kind { padding: 4px 6px; border-radius: 3px; font: 8px/1 var(--mono); text-transform: uppercase; }
+.change-kind.insert, .change-kind.entered-scope { color: var(--clean); background: rgba(114,217,151,.1); }
+.change-kind.update, .change-kind.unchanged { color: var(--review); background: rgba(228,184,94,.1); }
+.change-kind.delete, .change-kind.left-scope { color: var(--failed); background: rgba(255,139,114,.1); }
+.field-grid { border-top: 1px solid var(--rule); }
+.field-change { display: grid; grid-template-columns: minmax(90px,.65fr) minmax(0,1fr) auto minmax(0,1fr); gap: 8px; align-items: baseline; padding: 7px 11px; border-top: 1px solid rgba(37,53,50,.65); font: 10px/1.45 var(--mono); }
+.field-change:first-child { border-top: 0; }
+.field-change code { color: var(--muted); }
+.field-change .old { color: var(--faint); text-decoration: line-through; overflow-wrap: anywhere; }
+.field-change .new { color: var(--ink); overflow-wrap: anywhere; }
+.arrow { color: var(--faint); }
+.whole-row { padding: 10px 11px; border-top: 1px solid var(--rule); background: var(--panel-soft); }
+.select-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.select-line code { min-width: 0; flex: 1; overflow-x: auto; color: var(--muted); font-size: 9px; white-space: pre; }
+.select-line code.query-disabled { color: var(--review); white-space: normal; }
+.row-grid { max-height: 360px; overflow-y: auto; overscroll-behavior: contain; margin-top: 9px; border: 1px solid var(--rule); scrollbar-color: var(--rule-strong) transparent; }
+.row-field { display: grid; grid-template-columns: minmax(100px,.65fr) repeat(2,minmax(0,1fr)); gap: 9px; padding: 6px 8px; border-top: 1px solid var(--rule); font: 9px/1.5 var(--mono); }
+.row-field:first-child { border-top: 0; }
+.row-field code { color: var(--muted); }
+.row-field span { overflow-wrap: anywhere; }
+.candidate-block { padding: 11px; border: 1px solid var(--rule); background: var(--panel); }
+.candidate-list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--rule-strong) transparent; }
+.candidate { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--rule); font-size: 11px; }
+.candidate:first-of-type { border-top: 0; }
+.candidate span { min-width: 0; overflow-wrap: anywhere; }
+
+.empty-state { min-height: 200px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 22px; border: 1px dashed var(--rule); color: var(--muted); background: rgba(16,25,24,.35); }
+.empty-state.compact { min-height: 110px; }
+.empty-state strong { color: var(--ink); }
+.empty-state span { margin-top: 3px; font-size: 12px; }
+.empty-state h3 { margin: 8px 0 3px; color: var(--ink); }
+.empty-state p { margin: 0; max-width: 480px; font-size: 12px; }
+.fatal { max-width: 600px; margin: 12vh auto; padding: 30px; border: 1px solid var(--rule); background: var(--panel); }
+.fatal h1 { margin-top: 0; }
+.fatal p { color: var(--failed); font-family: var(--mono); }
+
+@keyframes pulse { 50% { opacity: .45; transform: scale(.8); } }
+
+@media (max-width: 1220px) {
+  body { display: block; }
+  .layout { min-height: calc(100vh - 60px); grid-template-columns: 320px minmax(0,1fr); }
+  .col { min-height: 520px; overflow: visible; }
+  .col-db { grid-column: 1 / -1; }
+}
+
+@media (max-width: 760px) {
+  .topbar { height: auto; min-height: 60px; align-items: flex-start; padding: 12px 14px; }
+  .brand > div { display: block; }
+  .tagline { display: none; }
+  .topbar-meta { max-width: 55%; }
+  .layout { display: block; }
+  .col { min-height: 0; padding: 18px 14px 32px; border-bottom: 1px solid var(--rule); }
+  .dataset-title-row { display: block; }
+  .primary-action { width: 100%; margin-top: 14px; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .request-meta { grid-template-columns: 1fr; }
+  .request-actions { align-items: stretch; flex-direction: column; }
+  .expectation-copy { margin: 2px 0 0; }
+  .field-change { grid-template-columns: 1fr auto 1fr; }
+  .field-change code { grid-column: 1 / -1; }
+  .row-field { grid-template-columns: 1fr; }
+  .result-context-note { align-items: flex-start; flex-direction: column; }
+}
+
+@container (max-width: 520px) {
+  .dataset-title-row { display: block; }
+  .dataset-title-row .primary-action { width: 100%; margin-top: 13px; }
+  .request-meta { grid-template-columns: 1fr; }
+  .response-meta { grid-template-columns: auto 1fr; }
+  .response-meta .actual-url { grid-column: 1 / -1; }
+  .assertion-row, .candidate { align-items: flex-start; flex-direction: column; }
+  .assertion-row code, .candidate button { align-self: flex-start; }
+  .field-change { grid-template-columns: 1fr auto 1fr; }
+  .field-change > code { grid-column: 1 / -1; }
+  .row-field { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}
+
+/* Why a row cannot be opened, and when the statement is not portable. Both sit
+   beside the query rather than replacing it, so a degraded row still shows what
+   it does know. */
+.select-note {
+  font-size: 0.78rem;
+  color: var(--muted, #6b7280);
+  flex-basis: 100%;
+}
+.select-warn {
+  font-size: 0.78rem;
+  color: var(--warn, #a16207);
+  flex-basis: 100%;
+}
+
+/* ── row handoff ───────────────────────────────────────────────────────────
+   One control per row, at a fixed size whatever is bound, so adding a target
+   never reflows the list. */
+
+.inspect-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: relative; }
+
+.inspect-group { display: inline-flex; }
+.inspect-main,
+.inspect-more {
+  background: var(--panel-raised);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.inspect-main { border-radius: 4px 0 0 4px; border-right: 0; }
+.inspect-more { border-radius: 0 4px 4px 0; padding-inline: 7px; }
+.inspect-main:hover:not(:disabled),
+.inspect-more:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+/* Disabled in place, never hidden: hiding loses the degraded-but-usable
+   property, and the row still shows what it does know. */
+.inspect-main:disabled { color: var(--faint); cursor: not-allowed; }
+
+/* The class of problem, not the essay. The sentence lives in the menu. */
+.inspect-chip {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--review);
+  border: 1px solid color-mix(in srgb, var(--review) 40%, transparent);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.inspect-note { font-size: 11px; color: var(--muted); flex-basis: 100%; }
+.inspect-warn { font-size: 11px; color: var(--review); flex-basis: 100%; }
+
+.inspect-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  margin-top: 4px;
+  min-width: 260px;
+  background: var(--panel-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 5px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+  padding: 4px;
+}
+.inspect-why {
+  margin: 4px 8px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 8px;
+}
+.inspect-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.inspect-item:hover:not(:disabled) { background: var(--panel-soft); }
+.inspect-item:disabled { color: var(--faint); cursor: not-allowed; }
+.inspect-item-where { color: var(--faint); }
+
+/* ── inspector ─────────────────────────────────────────────────────────────
+   Output never enters the list. Its own panel, its own scroll, a max height —
+   so the row list is untouched and its scroll position survives without being
+   saved and restored. */
+.inspector {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  width: min(720px, calc(100vw - 32px));
+  max-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 55%);
+}
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+}
+.inspector-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-status { color: var(--muted); font-size: 11px; margin-left: auto; }
+.inspector-close {
+  background: none; border: 0; color: var(--muted); font-size: 16px; line-height: 1;
+  cursor: pointer; padding: 0 2px;
+}
+.inspector-close:hover { color: var(--ink); }
+.inspector pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+/* The script is context; the output is the answer. Capped so it cannot crowd
+   out the thing the reader opened the row to see. */
+.inspector-script {
+  color: var(--faint);
+  border-bottom: 1px solid var(--rule);
+  max-height: 5.5em;
+  flex: none;
+}
+.inspector-out { color: var(--ink); flex: 1; min-height: 0; }
+.inspector-err { color: var(--failed); border-top: 1px solid var(--rule); }
+
+/* ── first-use drawer ──────────────────────────────────────────────────────
+   A drawer and not a modal: a modal is a thing the mouse can complete, and the
+   only exit here is a typed command. It does not move the list, and dismissing
+   it decides nothing. */
+.handoff-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  width: min(520px, 100vw);
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--panel);
+  border-left: 1px solid var(--rule-strong);
+  box-shadow: -18px 0 50px rgb(0 0 0 / 55%);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.handoff-drawer h3 { margin: 0; font-size: 15px; }
+.drawer-sub { margin: 2px 0 18px; color: var(--review); font-size: 11px; }
+.drawer-lead { margin-top: 18px; }
+.handoff-drawer pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--panel-soft);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.drawer-cmd { color: var(--accent); }
+.drawer-foot { color: var(--faint); font-size: 11px; }
+.drawer-dismiss {
+  margin-top: 20px;
+  background: none;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.drawer-dismiss:hover { color: var(--ink); border-color: var(--rule-strong); }
+
+/* One line for the whole panel, whatever the row count. */
+.handoff-standing { margin: 0 0 10px; color: var(--faint); font-size: 11px; }
+.handoff-standing.warn { color: var(--review); }
+
+/* Reset stands beside Run, not inside it. */
+/* The run controls live in the run strip now — the one row already about this
+   run. What was above it repeated the scenario title, the dataset label and its
+   note, all three of which the left column shows. */
+.dataset-actions { display: flex; gap: 6px; align-items: center; }
+.run-controls { display: flex; align-items: center; gap: 8px; flex: none; }
+/* Sized for the strip rather than for a page header: still the primary action,
+   no longer a banner. */
+.run-controls .primary-action { padding: 5px 12px; font-size: 11px; }
+.run-controls .secondary-action { padding: 4px 10px; font-size: 11px; }
+
+/* Evidence that predates this page. The panel used to look identical whether a
+   run had just finished or was restored on load, so a reader who had run
+   nothing was looking at rows from a database that has since been reset. */
+.stale-run {
+  margin: 0 0 12px;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--review);
+  background: color-mix(in srgb, var(--review) 8%, transparent);
+  border-left: 2px solid var(--review);
+  border-radius: 0 3px 3px 0;
+}
+.stale-run strong { font-weight: 600; }
+.stale-run span { color: var(--muted); }
+
+/* Folded by default; promoting an observation is a deliberate act, not
+   something scanned. Measured at 302px, it was taller than the change list it
+   sat under. */
+.candidate-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none; }
+.candidate-summary::-webkit-details-marker { display: none; }
+.candidate-summary strong { font: 10px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); font-weight: 500; }
+.candidate-summary span { font: 10px/1.4 var(--mono); color: var(--muted); }
+.candidate-block[open] .candidate-summary { margin-bottom: 8px; }
+/* The count carries the colour when something needs looking at. */
+.contract-trouble { color: var(--review); }
+
+/* "Nothing is bound yet" is not a fault — it is the state every machine starts
+   in. It reads as information, not as a warning. */
+.inspect-chip.muted { color: var(--faint); border-color: var(--rule-strong); }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { AssertionResult, ChangeSet, Run, StepResult, VerdictPolicy } from '@statescope/core';
-import { DEFAULT_POLICY, exitCodeOf, mergeVerdicts, verdictOf } from '@statescope/core';
+import type { AssertionResult, ChangeSet, Run, StepResult, VerdictPolicy } from '@tuplescope/core';
+import { DEFAULT_POLICY, exitCodeOf, mergeVerdicts, verdictOf, visible } from '@tuplescope/core';
 import { buildEnvelope, readAssertionOutcome, readStepOutcome, summariseChanges } from './envelope.js';
 import { mapAssertion, outcomeFromCases, toJUnit } from './junit.js';
 
@@ -24,8 +24,11 @@ function changes(warnings: ChangeSet['warnings'] = []): ChangeSet {
   return {
     captureMethod: 'mvcc-xmin',
     detection: 'write',
-    scope: { allTables: true, tables: [] },
+    fidelity: 'net',
+    scope: { schema: 'public', database: 'test', allTables: true, tables: [] },
     changes: [],
+    // Required, so a ChangeSet cannot exist without saying how its text was printed.
+    rendering: { DateStyle: 'ISO, MDY', TimeZone: 'UTC', bytea_output: 'hex', IntervalStyle: 'iso_8601', extra_float_digits: '1' },
     warnings,
     durationMs: 1,
   };
@@ -75,13 +78,13 @@ function envelopeFor(steps: StepResult[], policy: VerdictPolicy = DEFAULT_POLICY
     ],
     suite,
     {
-      producer: { tool: 'statescope', version: '0.2.0', surface: 'cli' },
+      producer: { tool: 'tuplescope', version: '0.2.0', surface: 'cli' },
       workspace: {
         name: 'Demo Bank',
-        configPath: '/repo/statescope.yaml',
+        configPath: '/repo/tuplescope.yaml',
         baseUrl: 'http://127.0.0.1:7421',
         scenariosDir: '/repo/scenarios',
-        capture: { method: 'mvcc-xmin', detection: 'write' },
+        capture: { method: 'mvcc-xmin', detection: 'write', fidelity: 'net' },
         tableCount: 11,
       },
       invocation: {
@@ -168,8 +171,8 @@ describe('undecided assertions', () => {
     // turns Inconclusive into an indistinguishable pass. <error> is the only
     // element that means "no verdict" everywhere.
     const xmlText = toJUnit(envelopeFor([step({ stepId: 'a', assertions: [undecided()] })]));
-    assert.match(xmlText, /<error type="statescope\.unevaluable"/);
-    assert.doesNotMatch(xmlText, /<skipped type="statescope\.unevaluable"/);
+    assert.match(xmlText, /<error type="tuplescope\.unevaluable"/);
+    assert.doesNotMatch(xmlText, /<skipped type="tuplescope\.unevaluable"/);
   });
 
   it('say in the body that this is neither a pass nor a failure', () => {
@@ -188,7 +191,7 @@ describe('undecided assertions', () => {
         unevaluable: 'warn',
       }),
     );
-    assert.match(xmlText, /<skipped type="statescope\.unevaluable"/);
+    assert.match(xmlText, /<skipped type="tuplescope\.unevaluable"/);
     // Demoted, never removed.
     assert.match(xmlText, /single\(\) expected exactly one row/);
   });
@@ -212,7 +215,7 @@ describe('undecided assertions', () => {
 describe('the file itself', () => {
   it('escapes everything an assertion source can contain', () => {
     // `a < b & c > d 'e'` in a name would produce a file no CI parser reads,
-    // which the user experiences as StateScope having produced nothing at all.
+    // which the user experiences as TupleScope having produced nothing at all.
     const nasty = 'single(t).after.note == "a < b & c > d \'e\'"';
     const xmlText = toJUnit(envelopeFor([step({ stepId: 'a', assertions: [fail(nasty)] })]));
     assert.match(xmlText, /&quot;a &lt; b &amp; c &gt; d &apos;e&apos;&quot;/);
@@ -265,13 +268,13 @@ describe('the file itself', () => {
   it('records what a reader needs to recover the run', () => {
     const xmlText = toJUnit(envelopeFor([step({ stepId: 'a', assertions: [pass()] })]));
     for (const name of [
-      'statescope.schema',
-      'statescope.runId',
-      'statescope.outcome',
-      'statescope.proves',
-      'statescope.captureMethod',
-      'statescope.baseline',
-      'statescope.unevaluable',
+      'tuplescope.schema',
+      'tuplescope.runId',
+      'tuplescope.outcome',
+      'tuplescope.proves',
+      'tuplescope.captureMethod',
+      'tuplescope.baseline',
+      'tuplescope.unevaluable',
     ]) {
       assert.match(xmlText, new RegExp(`name="${name.replace('.', '\\.')}"`), `missing ${name}`);
     }
@@ -283,7 +286,7 @@ describe('the file itself', () => {
         baseline: { probed: false, windowMs: 0 },
       }),
     );
-    assert.match(xmlText, /name="statescope\.baseline" value="not-probed"/);
+    assert.match(xmlText, /name="tuplescope\.baseline" value="not-probed"/);
   });
 
   it('shows a capture warning as its own case', () => {
@@ -312,8 +315,8 @@ describe('summariseChanges', () => {
           table: 'refunds',
           key: null,
           kind: 'update',
-          before: { id: { pgType: 'text', text: 'r1' } },
-          after: { id: { pgType: 'text', text: 'r1' } },
+          before: { id: visible('text', 'r1') },
+          after: { id: visible('text', 'r1') },
           changedColumns: [],
           visibleColumns: [],
           hasWrite: true,
@@ -334,7 +337,7 @@ describe('summariseChanges', () => {
           key: null,
           kind: 'insert',
           before: null,
-          after: { id: { pgType: 'text', text: '1' } },
+          after: { id: visible('text', '1') },
           changedColumns: ['id'],
           visibleColumns: ['id'],
           hasWrite: true,

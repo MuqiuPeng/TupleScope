@@ -1,7 +1,7 @@
 /**
- * The workspace file: what StateScope points at, and how it is found.
+ * The workspace file: what TupleScope points at, and how it is found.
  *
- * StateScope's entire interface to the outside world is two strings — an HTTP
+ * TupleScope's entire interface to the outside world is two strings — an HTTP
  * base URL and a database connection string. It deliberately knows nothing
  * about how either of those came to exist: no process supervisor, no container
  * runtime, no service registry. Whoever brings the backend up supplies the
@@ -17,6 +17,21 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import YAML from 'yaml';
+import { parseTemplate, ReferenceSyntaxError, secretMarker } from '@tuplescope/secrets';
+import { randomBytes } from 'node:crypto';
+
+/**
+ * Minted once per process, and never written anywhere.
+ *
+ * It is what separates a secret reference the *file* contained from one that
+ * appeared in an environment variable's value or survived the `$${` escape.
+ * Both of those reached the keychain before this existed.
+ */
+const SECRET_NONCE = randomBytes(16).toString('hex');
+
+export { SECRET_NONCE };
+import { ENGINE_NAMES, type EngineName } from '@tuplescope/db-postgres';
+import { NAMESPACE, namespaceFor, type Namespace } from '@tuplescope/secrets';
 
 export class WorkspaceConfigError extends Error {
   constructor(
@@ -46,6 +61,27 @@ export interface WorkspaceConfig {
   resetUrl?: string;
   /** Idle window watched before each run to detect writers other than the scenario. */
   baselineWindowMs?: number;
+  /**
+   * Which capture engine observes the database.
+   *
+   * `mvcc-xmin` is the default and the one to want: it detects a *write* rather
+   * than a value difference, which is what an idempotency assertion needs, and
+   * it reads almost nothing. `snapshot-diff` reads every watched table twice per
+   * step and cannot see a rewrite to identical values — assertions that need
+   * that come back undecided rather than wrong — but it holds no transaction
+   * open, which matters against a database where a long-lived REPEATABLE READ
+   * is unwelcome.
+   */
+  engine?: EngineName;
+  /**
+   * Which slot in the machine's credential store this workspace's secrets use.
+   *
+   * Defaults to a slug of `name`, which is already required and already
+   * committed — so every workspace gets one without an edit. Set it explicitly
+   * when two projects share a name, or when renaming the workspace should not
+   * orphan its stored credentials.
+   */
+  secrets?: { namespace?: string };
 }
 
 /** The same config after resolution: absolute paths, every `${VAR}` expanded. */
@@ -60,7 +96,7 @@ export interface ResolvedWorkspaceConfig extends WorkspaceConfig {
 
 // ─── discovery ────────────────────────────────────────────────────────────────
 
-const FILE_NAME = 'statescope.yaml';
+const FILE_NAME = 'tuplescope.yaml';
 
 export interface DiscoveryOptions {
   /** Explicit path, highest precedence. */
@@ -71,7 +107,7 @@ export interface DiscoveryOptions {
 }
 
 /**
- * Finds the workspace file: explicit path, then `STATESCOPE_CONFIG`, then a
+ * Finds the workspace file: explicit path, then `TUPLESCOPE_CONFIG`, then a
  * walk up from the working directory.
  *
  * Resolving relative to the *installed location of the code* — which is what an
@@ -81,7 +117,7 @@ export interface DiscoveryOptions {
  */
 export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promise<string> {
   const env = options.env ?? process.env;
-  const explicit = options.configPath ?? env['STATESCOPE_CONFIG'];
+  const explicit = options.configPath ?? env['TUPLESCOPE_CONFIG'];
   if (explicit) {
     const path = resolve(explicit);
     if (!(await readable(path))) {
@@ -97,7 +133,7 @@ export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promi
     searched.push(candidate);
     if (await readable(candidate)) return candidate;
     // Stop at the repository root: past it we are searching someone else's
-    // directories, and a stray statescope.yaml in a parent would be a
+    // directories, and a stray tuplescope.yaml in a parent would be a
     // surprising thing to silently pick up.
     if (await readable(join(dir, '.git'))) break;
     const parent = dirname(dir);
@@ -108,7 +144,7 @@ export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promi
   throw new WorkspaceConfigError(
     `no ${FILE_NAME} found. Looked in:\n` +
       searched.map((p) => `  ${p}`).join('\n') +
-      `\n\nCopy statescope.example.yaml to ${FILE_NAME}, or pass --config.`,
+      `\n\nCopy tuplescope.example.yaml to ${FILE_NAME}, or pass --config.`,
   );
 }
 
@@ -132,37 +168,69 @@ async function readable(path: string): Promise<boolean> {
  * at a line the user did not write. `$${` is a literal `${`.
  *
  * This is how a workspace file stays portable across a laptop and CI without
- * StateScope knowing anything about either. It is also the reason there is no
+ * TupleScope knowing anything about either. It is also the reason there is no
  * service-discovery integration: whoever knows the real port can put it in the
  * environment.
  */
-const PLACEHOLDER = /\$(\$)?\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
+/**
+ * Expands environment references, and leaves secret references for later.
+ *
+ * Secrets cannot be resolved here: reading a credential store means talking to
+ * another process, and this runs before the config has even been validated. So
+ * `\${secret:…}` survives this pass untouched and is resolved by `openWorkspace`,
+ * which is the moment a run actually needs a value.
+ *
+ * What this pass *does* do for them is check the syntax. A reference that made
+ * it through as literal text would be sent to the API as those characters — and
+ * before the grammar was shared, `\${secret:x}` matched no pattern here and did
+ * exactly that. Anything `\${…}`-shaped is now either recognised or an error.
+ */
 export function interpolate(
   value: unknown,
   env: Readonly<Record<string, string | undefined>>,
   path: ReadonlyArray<string> = [],
+  nonce: string = SECRET_NONCE,
 ): unknown {
   if (typeof value === 'string') {
-    return value.replace(PLACEHOLDER, (match, escaped: string | undefined, name: string, fallback: string | undefined) => {
-      if (escaped) return match.slice(1); // `$${VAR}` -> `${VAR}`
-      const found = env[name];
-      if (found !== undefined) return found;
-      if (fallback !== undefined) return fallback;
-      throw new WorkspaceConfigError(
-        `\`${path.join('.') || '(root)'}\` refers to \${${name}}, which is not set. ` +
-          `Set it, or give it a default: \${${name}:-something}.`,
-      );
-    });
+    const where = `\`${path.join('.') || '(root)'}\``;
+    let parts;
+    try {
+      parts = parseTemplate(value);
+    } catch (error) {
+      if (error instanceof ReferenceSyntaxError) {
+        throw new WorkspaceConfigError(`${where}: ${error.message}`);
+      }
+      throw error;
+    }
+    return parts
+      .map((part) => {
+        if (part.kind === 'literal') return part.text;
+        if (part.kind === 'secret') {
+          // A marker, not the original text. Emitting `${secret:…}` here meant
+          // the later pass re-read it — which defeated the `$${` escape and
+          // let an environment variable whose value happened to look like a
+          // reference become one.
+          return secretMarker(nonce, part.name);
+        }
+        const found = env[part.name];
+        if (found !== undefined) return found;
+        if (part.fallback !== undefined) return part.fallback;
+        throw new WorkspaceConfigError(
+          `${where} refers to \${${part.name}}, which is not set. ` +
+            `Set it, or give it a default: \${${part.name}:-something}.`,
+        );
+      })
+      .join('');
   }
   if (Array.isArray(value)) {
-    return value.map((item, index) => interpolate(item, env, [...path, String(index)]));
+    return value.map((item, index) => interpolate(item, env, [...path, String(index)], nonce));
   }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, item]) => [
         key,
-        interpolate(item, env, [...path, key]),
+        interpolate(item, env, [...path, key], nonce),
       ]),
     );
   }
@@ -181,6 +249,8 @@ const KNOWN_KEYS = new Set([
   'maskColumns',
   'resetUrl',
   'baselineWindowMs',
+  'engine',
+  'secrets',
 ]);
 
 export interface LoadOptions extends DiscoveryOptions {
@@ -213,6 +283,17 @@ export async function loadWorkspaceConfig(
   }
 
   return validate(expanded, file);
+}
+
+/**
+ * The credential-store slot this workspace uses.
+ *
+ * Explicit if the file says so, and otherwise a slug of `name` — which is
+ * already required and already committed, so nothing has to be edited for a
+ * workspace to stop sharing credentials with its neighbours.
+ */
+export function namespaceOf(config: Pick<WorkspaceConfig, 'name' | 'secrets'>): Namespace {
+  return config.secrets?.namespace ?? namespaceFor(config.name);
 }
 
 /** Parses an already-read document. Used by tests and by anything holding text. */
@@ -301,6 +382,31 @@ function validate(value: unknown, file: string): ResolvedWorkspaceConfig {
   const window = doc['baselineWindowMs'];
   if (window !== undefined && (typeof window !== 'number' || window < 0)) {
     return fail('`baselineWindowMs` must be a non-negative number of milliseconds');
+  }
+
+  const secrets = doc['secrets'];
+  if (secrets !== undefined) {
+    if (typeof secrets !== 'object' || secrets === null || Array.isArray(secrets)) {
+      return fail('`secrets` must be a mapping, e.g. `secrets: { namespace: my_project }`');
+    }
+    const ns = (secrets as Record<string, unknown>)['namespace'];
+    if (ns !== undefined && (typeof ns !== 'string' || !NAMESPACE.test(ns))) {
+      return fail(
+        '`secrets.namespace` must be lower-case letters, digits, underscores and hyphens, ' +
+          'starting with a letter or digit',
+      );
+    }
+    for (const key of Object.keys(secrets as object)) {
+      if (key !== 'namespace') return fail(`\`secrets.${key}\` is not a setting this understands`);
+    }
+  }
+
+  const engine = doc['engine'];
+  if (engine !== undefined && !ENGINE_NAMES.includes(engine as EngineName)) {
+    return fail(
+      `\`engine\` must be one of ${ENGINE_NAMES.map((e) => `\`${e}\``).join(', ')}` +
+        (typeof engine === 'string' ? `, not \`${engine}\`` : ''),
+    );
   }
 
   const configDir = dirname(file);

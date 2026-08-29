@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/db-postgres",
+  "name": "@tuplescope/db-postgres",
   "version": "0.0.0",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@statescope/core": "workspace:*",
+    "@tuplescope/core": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": {

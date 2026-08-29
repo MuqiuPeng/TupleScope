@@ -1,5 +1,5 @@
 /**
- * `statescope url` — hand back the URL of a running instance, token and all.
+ * `tuplescope url` — hand back the URL of a running instance, token and all.
  *
  * Exists because "the runtime printed it once, an hour ago, in a terminal you
  * have since closed" is not a way to find a credential.
@@ -14,7 +14,7 @@ const sessions = listSessions();
 
 if (sessions.length === 0) {
   console.error(
-    'No StateScope instance is running.\n' +
+    'No TupleScope instance is running.\n' +
       'Start one with `pnpm start`; it will print its URL and record it for next time.',
   );
   process.exit(1);

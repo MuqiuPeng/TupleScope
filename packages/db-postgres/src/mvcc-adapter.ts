@@ -40,18 +40,22 @@ import type {
   CaptureWarning,
   ChangeSet,
   DatabaseAdapter,
-  Row,
   RowChange,
-  RowKey,
   TableScope,
-  Value,
-} from '@statescope/core';
-import { listBaseTables, readTableIdentities, readTypeNames, type TableIdentity } from './introspect.js';
+  } from '@tuplescope/core';
+import {
+  listBaseTables, listColumnsByTable,
+  readLocation,
+  readTableIdentities,
+  type TableIdentity,
+} from './introspect.js';
+import { readCurrentRows, readKeySets } from './images.js';
+import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
+import type { RowsRead } from '@tuplescope/core';
+import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
+import { RAW_TEXT_TYPES, ROWS_LIMIT, RowReader } from './rows.js';
 
 const { Pool } = pg;
-
-/** Every value arrives as raw text; nothing is parsed into a JS type on the way in. */
-const RAW_TEXT_TYPES = { getTypeParser: () => (value: string) => value };
 
 /** Ceiling on how long one capture may hold its observer transaction open. */
 const DEFAULT_WINDOW_TIMEOUT_MS = 30_000;
@@ -63,11 +67,13 @@ export interface MvccAdapterOptions {
   maskColumns?: ReadonlyArray<string>;
 }
 
-const MASKED: Value = { pgType: 'text', text: '••••••••' };
-
 export class MvccPostgresAdapter implements DatabaseAdapter {
   readonly captureMethod = 'mvcc-xmin' as const;
   readonly detection = 'write' as const;
+  // It knows a row was written; it cannot know how many times, or in what
+  // order relative to another table. Saying `net` is what stops a consumer
+  // from believing an ordering it was never given.
+  readonly fidelity = 'net' as const;
 
   /** Data connections. Everything comes back as raw text; nothing is parsed. */
   private readonly pool: pg.Pool;
@@ -80,11 +86,19 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
    */
   private readonly metaPool: pg.Pool;
   private readonly windowTimeoutMs: number;
-  private typeNames?: Map<number, string>;
+  private readonly reader = new RowReader();
 
   constructor(private readonly options: MvccAdapterOptions) {
     this.pool = new Pool({ connectionString: options.connectionString, types: RAW_TEXT_TYPES, max: 6 });
     this.metaPool = new Pool({ connectionString: options.connectionString, max: 2 });
+    // Both pools: catalogue reads do not care, but a connection that renders
+    // differently depending on which pool it came from is a trap for the next
+    // person to add a query.
+    pinPool(this.pool);
+    pinPool(this.metaPool);
+    // A socket that dies while idle must not become an uncaught crash.
+    absorbIdleErrors(this.pool);
+    absorbIdleErrors(this.metaPool);
     this.windowTimeoutMs = options.windowTimeoutMs ?? DEFAULT_WINDOW_TIMEOUT_MS;
   }
 
@@ -97,13 +111,25 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
     }
   }
 
+  /** Every base table's columns, for `check` to resolve a predicate against. */
+  async listColumns(): Promise<Map<string, Set<string>>> {
+    const client = await this.metaPool.connect();
+    try {
+      return await listColumnsByTable(client);
+    } finally {
+      client.release();
+    }
+  }
+
   /** Builds a scope covering every base table — the default when none is declared. */
   async fullScope(overrides?: Partial<TableScope>): Promise<CaptureScope> {
     const tables = await this.listTables();
     const client = await this.metaPool.connect();
     try {
       const identities = await readTableIdentities(client, tables);
+      const where = await readLocation(client);
       return {
+        ...where,
         allTables: true,
         tables: tables.map((table) => ({
           table,
@@ -112,6 +138,36 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
           keyStrategy: identities.get(table)!.strategy,
         })),
       };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Rows as they are now, for a `rows(...)` selector.
+   *
+   * Bounded: a selector is meant to pick out a handful of rows, and a
+   * predicate that matches a whole table is a mistake worth reporting rather
+   * than a query worth running.
+   */
+  async readRows(
+    table: string,
+    clauses: ReadonlyArray<{ column: string; value: string }>,
+    scope: CaptureScope,
+  ): Promise<RowsRead> {
+    const spec = scope.tables.find((t) => t.table === table);
+    if (!spec) return { rows: [], complete: true };
+    const meta = await this.metaPool.connect();
+    let identity;
+    try {
+      await this.reader.ensureTypes(meta);
+      identity = (await readTableIdentities(meta, [table])).get(table);
+    } finally {
+      meta.release();
+    }
+    const client = await this.pool.connect();
+    try {
+      return await readCurrentRows(client, this.reader, spec, identity, clauses, ROWS_LIMIT);
     } finally {
       client.release();
     }
@@ -127,12 +183,12 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
 
     let snapshot: string;
     let identities: Map<string, TableIdentity>;
-    let beforeKeys: Map<string, Set<string>>;
+    let relfilenodesBefore: Map<string, string>;
 
     try {
       const meta = await this.metaPool.connect();
       try {
-        if (!this.typeNames) this.typeNames = await readTypeNames(meta);
+        await this.reader.ensureTypes(meta);
         identities = await readTableIdentities(
           meta,
           scope.tables.map((t) => t.table),
@@ -148,8 +204,9 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
         'SELECT pg_current_snapshot()::text AS snapshot',
       );
       snapshot = snap.rows[0]!.snapshot;
-
-      beforeKeys = await this.readKeySets(observer, scope, identities);
+      relfilenodesBefore = await this.readRelfilenodesOutsideObserver(
+        scope.tables.map((t) => t.table),
+      );
     } catch (error) {
       observer.release();
       throw error;
@@ -165,10 +222,31 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
     }
 
     try {
+      // The before key set is read *after* the step, not before it.
+      //
+      // The observer's snapshot is frozen, so it sees the same pre-request
+      // world whenever it is asked — but a scan taken before the step holds
+      // ACCESS SHARE on every watched table for the whole window, and anything
+      // needing a stronger lock then waits. Measured: a `TRUNCATE` inside a
+      // step queued behind that lock until the idle-in-transaction timeout
+      // killed the capture. Read afterwards, the same TRUNCATE completes in a
+      // millisecond and the answer is identical.
+      const beforeKeys = await readKeySets(observer, this.reader, scope, identities);
+      // A table rewritten mid-step takes the observer's view of it with it.
+      reportRewrites(
+        relfilenodesBefore,
+        await this.readRelfilenodesOutsideObserver(scope.tables.map((t) => t.table)),
+        warnings,
+      );
+
       const worker = await this.pool.connect();
       let changes: RowChange[];
+      let rendering: Rendering;
       try {
-        changes = await this.collectChanges(
+        // On the connection that reads the values, not on any connection.
+        rendering = await verifyRendering(worker, warnings);
+        changes = await collectNetChanges(
+          this.reader,
           worker,
           observer,
           scope,
@@ -186,8 +264,10 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
         changes: {
           captureMethod: this.captureMethod,
           detection: this.detection,
+          fidelity: this.fidelity,
           scope,
           changes,
+          rendering,
           warnings,
           durationMs: Date.now() - started,
         },
@@ -230,6 +310,25 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
 
   // ─── internals ──────────────────────────────────────────────────────────────
 
+  /**
+   * Reads the catalogue on its own connection, deliberately not the observer's.
+   *
+   * A catalogue read inside the observer's REPEATABLE READ transaction can come
+   * from the frozen snapshot, so both sides of the window report the same
+   * `relfilenode` and a table rewritten mid-step goes unnoticed — which is the
+   * silent case this check exists to catch.
+   */
+  private async readRelfilenodesOutsideObserver(
+    tables: ReadonlyArray<string>,
+  ): Promise<Map<string, string>> {
+    const client = await this.metaPool.connect();
+    try {
+      return await readRelfilenodes(client, tables);
+    } finally {
+      client.release();
+    }
+  }
+
   private async endObserver(client: pg.PoolClient): Promise<void> {
     try {
       await client.query('ROLLBACK');
@@ -241,234 +340,5 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
     }
   }
 
-  private typeName(oid: number): string {
-    return this.typeNames?.get(oid) ?? 'unknown';
-  }
 
-  private toRow(
-    fields: ReadonlyArray<pg.FieldDef>,
-    raw: Record<string, string | null>,
-    masked: ReadonlySet<string>,
-  ): Row {
-    const row: Record<string, Value> = {};
-    for (const field of fields) {
-      row[field.name] = masked.has(field.name)
-        ? MASKED
-        : { pgType: this.typeName(field.dataTypeID), text: raw[field.name] ?? null };
-    }
-    return row;
-  }
-
-  private keyOf(row: Row, columns: ReadonlyArray<string>): RowKey | null {
-    if (columns.length === 0) return null;
-    const parts = columns.map((column) => ({ column, value: row[column]! }));
-    return {
-      columns: parts,
-      // JSON of an ordered array: unambiguous for composite keys, and immune to
-      // the delimiter collisions a joined string would have.
-      serialized: JSON.stringify(parts.map((p) => [p.column, p.value?.text ?? null])),
-    };
-  }
-
-  private quoteIdent(name: string): string {
-    return `"${name.replace(/"/g, '""')}"`;
-  }
-
-  /** Reads only key columns — the cheap half, used to spot deletes. */
-  private async readKeySets(
-    client: pg.PoolClient,
-    scope: CaptureScope,
-    identities: Map<string, TableIdentity>,
-  ): Promise<Map<string, Set<string>>> {
-    const keys = new Map<string, Set<string>>();
-    for (const table of scope.tables) {
-      const identity = identities.get(table.table);
-      if (!identity || identity.keyColumns.length === 0) continue;
-      const columns = identity.keyColumns.map((c) => this.quoteIdent(c)).join(', ');
-      const where = table.where ? ` WHERE ${table.where}` : '';
-      const result = await client.query(
-        `SELECT ${columns} FROM ${this.quoteIdent(table.table)}${where}`,
-      );
-      const set = new Set<string>();
-      for (const raw of result.rows) {
-        const row = this.toRow(result.fields, raw, new Set());
-        set.add(this.keyOf(row, identity.keyColumns)!.serialized);
-      }
-      keys.set(table.table, set);
-    }
-    return keys;
-  }
-
-  private async collectChanges(
-    worker: pg.PoolClient,
-    observer: pg.PoolClient,
-    scope: CaptureScope,
-    identities: Map<string, TableIdentity>,
-    snapshot: string,
-    beforeKeys: Map<string, Set<string>>,
-    warnings: CaptureWarning[],
-  ): Promise<RowChange[]> {
-    const changes: RowChange[] = [];
-
-    for (const table of scope.tables) {
-      const identity = identities.get(table.table)!;
-      const masked = new Set(table.maskedColumns);
-      const ignore = new Set(table.ignoreColumns);
-      const where = table.where ? ` AND (${table.where})` : '';
-
-      // Rows written during the window: their inserting transaction was not yet
-      // visible when the observer froze its snapshot.
-      const touched = await worker.query(
-        `SELECT * FROM ${this.quoteIdent(table.table)}
-          WHERE NOT pg_visible_in_snapshot(xmin::text::xid8, $1::pg_snapshot)${where}`,
-        [snapshot],
-      );
-
-      if (identity.keyColumns.length === 0) {
-        // No usable identity: rows can be counted but not paired, so an update
-        // is indistinguishable from a delete plus an insert. Say so.
-        if (touched.rows.length > 0) {
-          warnings.push({
-            code: 'degraded-row-identity',
-            table: table.table,
-            message:
-              `\`${table.table}\` has no primary key or unique index, so changed rows cannot be ` +
-              `matched to their previous version. Reporting them as inserts.`,
-          });
-          for (const raw of touched.rows) {
-            const after = this.toRow(touched.fields, raw, masked);
-            changes.push({
-              table: table.table,
-              key: null,
-              kind: 'insert',
-              before: null,
-              after,
-              changedColumns: Object.keys(after),
-              visibleColumns: Object.keys(after).filter((c) => !ignore.has(c)),
-              hasWrite: true,
-            });
-          }
-        }
-        continue;
-      }
-
-      const afterByKey = new Map<string, Row>();
-      for (const raw of touched.rows) {
-        const row = this.toRow(touched.fields, raw, masked);
-        afterByKey.set(this.keyOf(row, identity.keyColumns)!.serialized, row);
-      }
-
-      const afterKeys = await this.readKeySets(worker, { ...scope, tables: [table] }, identities);
-      const nowPresent = afterKeys.get(table.table) ?? new Set<string>();
-      const wasPresent = beforeKeys.get(table.table) ?? new Set<string>();
-
-      const deletedKeys = [...wasPresent].filter((k) => !nowPresent.has(k));
-      const updatedKeys = [...afterByKey.keys()].filter((k) => wasPresent.has(k));
-
-      // The time-travel step: read the previous version of every row we need
-      // through the observer, which still sees the pre-request world.
-      const beforeRows = await this.readBeforeImages(
-        observer,
-        table,
-        identity,
-        [...updatedKeys, ...deletedKeys],
-        masked,
-      );
-
-      for (const [key, after] of afterByKey) {
-        const before = beforeRows.get(key) ?? null;
-        if (!before) {
-          changes.push({
-            table: table.table,
-            key: this.keyOf(after, identity.keyColumns),
-            kind: 'insert',
-            before: null,
-            after,
-            changedColumns: Object.keys(after),
-            visibleColumns: Object.keys(after).filter((c) => !ignore.has(c)),
-            hasWrite: true,
-          });
-          continue;
-        }
-        const changedColumns = Object.keys(after).filter(
-          (column) => !valuesLookEqual(before[column], after[column]),
-        );
-        changes.push({
-          table: table.table,
-          key: this.keyOf(after, identity.keyColumns),
-          kind: 'update',
-          before,
-          after,
-          changedColumns,
-          visibleColumns: changedColumns.filter((c) => !ignore.has(c)),
-          // True regardless of whether any value differs: the row was rewritten,
-          // which is what an idempotency assertion needs to know.
-          hasWrite: true,
-        });
-      }
-
-      for (const key of deletedKeys) {
-        const before = beforeRows.get(key);
-        if (!before) continue;
-        changes.push({
-          table: table.table,
-          key: this.keyOf(before, identity.keyColumns),
-          // A narrowed scope makes absence ambiguous, so say which kind it is.
-          kind: table.where ? 'left-scope' : 'delete',
-          before,
-          after: null,
-          changedColumns: Object.keys(before),
-          visibleColumns: Object.keys(before).filter((c) => !ignore.has(c)),
-          hasWrite: true,
-        });
-      }
-    }
-
-    return changes;
-  }
-
-  private async readBeforeImages(
-    observer: pg.PoolClient,
-    table: TableScope,
-    identity: TableIdentity,
-    keys: ReadonlyArray<string>,
-    masked: ReadonlySet<string>,
-  ): Promise<Map<string, Row>> {
-    const out = new Map<string, Row>();
-    if (keys.length === 0) return out;
-
-    const width = identity.keyColumns.length;
-    const keyValues = keys.map((key) => (JSON.parse(key) as [string, string | null][]).map((k) => k[1]));
-    const tuple = `(${identity.keyColumns.map((c) => this.quoteIdent(c)).join(', ')})`;
-
-    // One round trip regardless of key width: a row-value IN list. Postgres
-    // infers each parameter's type from the column it sits opposite, so a
-    // composite key of mixed types needs no casts here.
-    const placeholders = keyValues
-      .map((_, i) => `(${identity.keyColumns.map((__, j) => `$${i * width + j + 1}`).join(', ')})`)
-      .join(', ');
-
-    const result = await observer.query(
-      `SELECT * FROM ${this.quoteIdent(table.table)} WHERE ${tuple} IN (${placeholders})`,
-      keyValues.flat(),
-    );
-
-    for (const raw of result.rows) {
-      const row = this.toRow(result.fields, raw, masked);
-      const key = JSON.stringify(
-        identity.keyColumns.map((column) => [column, row[column]?.text ?? null]),
-      );
-      out.set(key, row);
-    }
-    return out;
-  }
-}
-
-/**
- * Raw-text comparison used only to decide which columns changed within a row we
- * already know was written. Semantic comparison (jsonb key order, numeric
- * scale, citext case) belongs to the assertion layer, which knows the type.
- */
-function valuesLookEqual(a: Value | undefined, b: Value | undefined): boolean {
-  return (a?.text ?? null) === (b?.text ?? null);
 }

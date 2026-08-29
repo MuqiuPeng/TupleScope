@@ -7,8 +7,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import YAML from 'yaml';
-import { parse as parseExpr } from '@statescope/expr';
-import type { Scenario } from '@statescope/core';
+import { parse as parseExpr } from '@tuplescope/expr';
+import type { Scenario } from '@tuplescope/core';
 
 export class ScenarioLoadError extends Error {
   constructor(

@@ -89,6 +89,11 @@ export const WARNING_SEVERITY: Readonly<Record<CaptureWarning['code'], 'error' |
   // The observation is complete and correct; something else also writes here.
   // Outbox pollers and session sweepers are ordinary on a running dev machine.
   'concurrent-writes-detected': 'warn',
+  // The values came back from this connection and every assertion over them is
+  // decided; the text is simply not portable to a second tool. Reddening a run
+  // whose assertions all held, over a property no assertion depends on, is the
+  // kind of noise that gets a suite `|| true`'d.
+  'rendering-not-pinned': 'warn',
 };
 
 /** Unknown codes escalate: a warning from a newer producer is not one to guess about. */
@@ -422,6 +427,34 @@ export function mergeVerdicts(
   const deciding = verdicts.find((v) => v.outcome === worst);
   const coverages = new Set(verdicts.map((v) => v.coverage));
 
+  /**
+   * The run-wide tail, counted across every dataset.
+   *
+   * This used to borrow `deciding.reason` — the *first* dataset that reached
+   * the worst outcome — and paste it after a run-wide count. On the demo's own
+   * `tuplescope run`, the first command the README asks anyone to type, that
+   * produced two numbers about different things on adjacent lines:
+   *
+   *     outcome  clean · 2 of 2 datasets passed cleanly: 15 assertions …
+   *     checks   23/23 passed
+   *
+   * `15` was one dataset's total. The JUnit file said 23 throughout, so only
+   * the sentence a person reads was wrong.
+   */
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const runTail =
+    worst === 'clean'
+      ? assertions.total === 0
+        ? 'every step ran; nothing was asserted'
+        : `${plural(assertions.total, 'assertion')} evaluated and passed`
+      : worst === 'failed'
+        ? `${plural(assertions.failed, 'assertion')} failed`
+        : worst === 'undecided'
+          ? `${plural(assertions.unevaluable, 'assertion')} could not be evaluated`
+          : // `errored` is about steps, not assertions: nothing was asserted
+            // because the step never completed.
+            `${plural(datasets.errored, 'dataset')} could not run`;
+
   return {
     outcome: worst,
     reason:
@@ -430,7 +463,7 @@ export function mergeVerdicts(
         : datasets.total === 1
           ? (deciding?.reason ?? 'nothing ran')
           : `${datasets[worst]} of ${datasets.total} dataset${datasets.total === 1 ? '' : 's'} ` +
-            `${worst === 'clean' ? 'passed cleanly' : worst}: ${deciding?.reason ?? ''}`.trim(),
+            `${worst === 'clean' ? 'passed cleanly' : worst}: ${runTail}`,
     assertions,
     steps,
     datasets,

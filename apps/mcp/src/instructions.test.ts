@@ -11,6 +11,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { parse } from '@tuplescope/expr';
 import { INSTRUCTIONS } from './instructions.js';
 
 /**
@@ -83,6 +84,26 @@ describe('the handshake instructions', () => {
 
   it('state what the server will not do', () => {
     assert.match(FLAT, /No shell, no process control, no arbitrary SQL/);
+  });
+
+  it('teach only syntax the parser accepts', () => {
+    // The instructions shipped an example the parser rejects outright — the
+    // first one an agent reads, so the first thing it would write back is an
+    // ExprSyntaxError. Prose about a language is only correct by accident
+    // unless something runs it.
+    const examples = [...INSTRUCTIONS.matchAll(/^ {2}(\S.*(?:==|!=|<=|>=|<|>).*)$/gm)].map(
+      (m) => m[1]!.trim(),
+    );
+    assert.ok(examples.length >= 5, `found only ${examples.length} examples to check`);
+    const broken: string[] = [];
+    for (const example of examples) {
+      try {
+        parse(example);
+      } catch (error) {
+        broken.push(`${example}\n    ${(error as Error).message}`);
+      }
+    }
+    assert.deepEqual(broken, [], `\n${broken.join('\n')}`);
   });
 
   it('are long enough to carry all of that and short enough to be read', () => {

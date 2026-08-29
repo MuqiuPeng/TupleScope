@@ -18,7 +18,7 @@ const PORT = 7420;
 
 interface Captured {
   status?: number;
-  body?: { error?: string; message?: string };
+  body?: { error?: string; message?: string } | undefined;
   headers: Record<string, string>;
   contentType?: string;
 }
@@ -60,7 +60,7 @@ function call(options: {
       // `host: undefined` has to mean "send no Host header", not "use the default".
       host: 'host' in options ? options.host : `127.0.0.1:${PORT}`,
       ...(options.origin ? { origin: options.origin } : {}),
-      ...(options.header ? { 'x-statescope-token': options.header } : {}),
+      ...(options.header ? { 'x-tuplescope-token': options.header } : {}),
       ...(options.cookie ? { cookie: options.cookie } : {}),
       ...(options.accept ? { accept: options.accept } : {}),
     },
@@ -83,7 +83,7 @@ describe('createGuard', () => {
     assert.ok(allowed(result));
     const cookie = result.headers['set-cookie'];
     assert.ok(cookie, 'a cookie should be set');
-    assert.match(cookie!, /^statescope_token=/);
+    assert.match(cookie!, /^tuplescope_token=/);
     assert.match(cookie!, /HttpOnly/);
     assert.match(cookie!, /SameSite=Strict/);
     assert.match(cookie!, /Path=\//);
@@ -91,13 +91,13 @@ describe('createGuard', () => {
 
   it('accepts a request carrying only that cookie', async () => {
     // This is every stylesheet, script and image the page asks for.
-    assert.ok(allowed(await call({ url: '/styles.css', cookie: `statescope_token=${TOKEN}` })));
-    assert.ok(allowed(await call({ url: '/app.js', cookie: `statescope_token=${TOKEN}` })));
+    assert.ok(allowed(await call({ url: '/styles.css', cookie: `tuplescope_token=${TOKEN}` })));
+    assert.ok(allowed(await call({ url: '/app.js', cookie: `tuplescope_token=${TOKEN}` })));
   });
 
   it('finds its cookie among others', async () => {
     assert.ok(
-      allowed(await call({ cookie: `other=1; statescope_token=${TOKEN}; another=2` })),
+      allowed(await call({ cookie: `other=1; tuplescope_token=${TOKEN}; another=2` })),
     );
   });
 
@@ -121,21 +121,21 @@ describe('createGuard', () => {
     const result = await call({
       url: '/',
       query: { token: TOKEN },
-      cookie: 'statescope_token=token-from-the-previous-run',
+      cookie: 'tuplescope_token=token-from-the-previous-run',
     });
     assert.ok(allowed(result), 'the fresh query token should win');
     // ...and the stale cookie is overwritten, not left to rot.
-    assert.match(result.headers['set-cookie'] ?? '', new RegExp(`^statescope_token=${TOKEN};`));
+    assert.match(result.headers['set-cookie'] ?? '', new RegExp(`^tuplescope_token=${TOKEN};`));
   });
 
   it('lets a header through past a stale cookie too', async () => {
-    assert.ok(allowed(await call({ header: TOKEN, cookie: 'statescope_token=stale' })));
+    assert.ok(allowed(await call({ header: TOKEN, cookie: 'tuplescope_token=stale' })));
   });
 
   it('refuses when every source is wrong', async () => {
     const result = await call({
       header: 'no',
-      cookie: 'statescope_token=nope',
+      cookie: 'tuplescope_token=nope',
       query: { token: 'nah' },
     });
     assert.equal(result.status, 401);
@@ -143,7 +143,7 @@ describe('createGuard', () => {
   });
 
   it('refuses a wrong cookie', async () => {
-    assert.equal((await call({ cookie: 'statescope_token=nope' })).status, 401);
+    assert.equal((await call({ cookie: 'tuplescope_token=nope' })).status, 401);
   });
 
   it('lets a public path through with nothing', async () => {
@@ -191,7 +191,7 @@ describe('createGuard', () => {
     // The message must point at something that is right whoever started the
     // process. Reading a supervisor's log is not: it happily reports the token
     // of an instance that has already exited.
-    assert.match(api.body?.message ?? '', /statescope url/);
+    assert.match(api.body?.message ?? '', /tuplescope url/);
   });
 });
 

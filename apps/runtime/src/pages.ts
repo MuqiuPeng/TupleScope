@@ -29,18 +29,18 @@ export function unauthorisedPage(port: number): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StateScope — access token required</title><style>${STYLE}</style></head>
+<title>TupleScope — access token required</title><style>${STYLE}</style></head>
 <body><main>
   <h1><span class="dot"></span>This page needs an access token</h1>
-  <p>StateScope minted one when it started. It is printed with the URL, and it changes
+  <p>TupleScope minted one when it started. It is printed with the URL, and it changes
      every time the runtime restarts.</p>
 
   <p>Ask this instance for it — the answer is right whoever started it, and a
      dead instance is never reported as live:</p>
-  <pre>open "$(statescope url)"</pre>
+  <pre>open "$(tuplescope url)"</pre>
 
   <p>Or read the URL and open it yourself:</p>
-  <pre>statescope url
+  <pre>tuplescope url
 http://127.0.0.1:${port}/?token=&lt;the token&gt;</pre>
 
   <div class="note">

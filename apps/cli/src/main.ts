@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * `statescope` — the headless surface.
+ * `tuplescope` — the headless surface.
  *
  * It drives the engine in-process and never speaks to the HTTP runtime. CI has
  * no server to talk to, and requiring one would mean starting a web server,
  * waiting on a health check and managing a token for a localhost process the
- * job just launched. The composition root in `@statescope/workspace` is what
+ * job just launched. The composition root in `@tuplescope/workspace` is what
  * makes that possible; this file is argument parsing, ordering and output.
  *
  * Two process rules, both load-bearing:
@@ -27,18 +27,41 @@ import {
   verdictOf,
   type RunVerdict,
   type VerdictPolicy,
-} from '@statescope/core';
-import { buildEnvelope, toJUnit, type Envelope } from '@statescope/report';
-import { loadWorkspaceConfig, openWorkspace, WorkspaceConfigError, WorkspaceError } from '@statescope/workspace';
-import { addAssertion } from '@statescope/scenario-engine';
+} from '@tuplescope/core';
+import { RUN_REPORT_SCHEMA, buildEnvelope, toJUnit, type Envelope } from '@tuplescope/report';
+import {
+  StaleRunError,
+  WorkspaceConfigError,
+  WorkspaceError,
+  loadWorkspaceConfig,
+  namespaceOf,
+  openWorkspace,
+  resolveWorkspaceSecrets,
+  secretsReferencedBy,
+} from '@tuplescope/workspace';
+import { addAssertion } from '@tuplescope/scenario-engine';
+import { parse, predicateColumnsIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
+import {
+  DEFAULT_CONTEXT,
+  SecretNotConfigured,
+  secretIdFor,
+  SecretStoreUnavailable,
+  tryOpenSecretStore,
+} from '@tuplescope/secrets';
+import { commandHandoff } from './handoff.js';
+import { commandSecret } from './secrets.js';
+
+/** One place, so `--version` and the envelope's `producer` cannot drift apart. */
+const VERSION = '0.3.0';
 
 /** Codes a run can produce come from core. These are the CLI's own. */
 const EXIT_USAGE = 4;
 const EXIT_NOTHING_SELECTED = 5;
 
 const OPTIONS = {
+  show: { type: 'boolean' },
   config: { type: 'string' },
   json: { type: 'boolean' },
   junit: { type: 'string' },
@@ -61,22 +84,32 @@ const OPTIONS = {
   quiet: { type: 'boolean', short: 'q' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean' },
+  // handoff
+  as: { type: 'string' },
+  origin: { type: 'string' },
+  server: { type: 'string' },
+  username: { type: 'string' },
+  service: { type: 'string' },
+  everywhere: { type: 'boolean' },
+  'i-know-this-is-not-local': { type: 'boolean' },
 } as const;
 
-const HELP = `statescope — run backend scenarios, see exactly what changed
+const HELP = `tuplescope — run backend scenarios, see exactly what changed
 
-  statescope run [target…]     run scenarios and report what the API wrote
-  statescope ls                every scenario and dataset in this workspace
-  statescope show <target>     one scenario or dataset, in detail
-  statescope check [target]    what this suite can and cannot prove, without running it
-  statescope runs [n]          stored runs, newest first
-  statescope runs show <id>    re-render a stored run (an id, or 'last')
-  statescope keep <sel> <step> [n…]
+  tuplescope run [target…]     run scenarios and report what the API wrote
+  tuplescope ls                every scenario and dataset in this workspace
+  tuplescope show <target>     one scenario or dataset, in detail
+  tuplescope check [target]    what this suite can and cannot prove, without running it
+  tuplescope runs [n]          stored runs, newest first
+  tuplescope runs show <id>    re-render a stored run (an id, or 'last')
+  tuplescope keep <sel> <step> [n…]
                                turn what a run observed into assertions in the
                                scenario file. With no numbers, lists them.
-  statescope report <file…>    re-render stored envelopes as text or JUnit
-  statescope status            what this workspace points at, and whether it answers
-  statescope url               the URL of a running runtime, token and all
+  tuplescope report <file…>    re-render stored envelopes as text or JUnit
+  tuplescope secret <cmd>      credentials a workspace refers to but does not contain
+  tuplescope handoff <cmd>     open an observed row in a database tool of yours
+  tuplescope status            what this workspace points at, and whether it answers
+  tuplescope url               the URL of a running runtime, token and all
 
 A target is scenario[/dataset]. With none, every dataset runs.
 
@@ -86,7 +119,7 @@ Run options
       --only <stepId>          run this step alone
       --continue-from <id>     reuse a stored run's variables; 'last' for the
                                newest full run of the same dataset
-      --no-save                do not record this run in .statescope/runs
+      --no-save                do not record this run in .tuplescope/runs
       --unevaluable <mode>     error | warn        whether an undecided check
                                reaches the exit code                 (error)
       --warnings <mode>        default | strict | off                (default)
@@ -109,7 +142,7 @@ Exit codes
   2  a step could not be executed
   3  undecided — it ran, nothing failed, but something was never checked
   4  bad invocation, or a workspace that will not load
-  5  the target matched no dataset
+  5  this workspace has no scenarios to run
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -128,7 +161,10 @@ async function main(argv: string[]): Promise<number> {
 
   const { values, positionals } = parsed;
   if (values.version) {
-    process.stdout.write('statescope 0.2.0 (schema statescope.run-report/1)\n');
+    // Imported, not typed out. This line said `/1` for as long as the constant
+    // did, and would have gone on saying it after the bump — TypeScript cannot
+    // object to a string that happens to be wrong.
+    process.stdout.write(`tuplescope ${VERSION} (schema ${RUN_REPORT_SCHEMA})\n`);
     return 0;
   }
   const command = positionals[0] ?? (values.help ? 'help' : undefined);
@@ -156,6 +192,13 @@ async function main(argv: string[]): Promise<number> {
       return commandReport(positionals.slice(1), values);
     case 'status':
       return commandStatus(values);
+    case 'secret':
+      return commandSecret(positionals.slice(1), values);
+    case 'handoff':
+      // `values` carries `--config`, so the grant is recorded against the
+      // workspace the config names rather than whatever directory the shell
+      // happens to be in.
+      return commandHandoff(positionals.slice(1), values);
     default:
       process.stderr.write(`Unknown command \`${command}\`.\n\n${HELP}`);
       return EXIT_USAGE;
@@ -168,7 +211,7 @@ function commandUrl(args: string[]): number {
   const sessions = listSessions();
   if (sessions.length === 0) {
     process.stderr.write(
-      'No StateScope runtime is running.\nStart one with `statescope serve`; it prints its URL and records it for next time.\n',
+      'No TupleScope runtime is running.\nStart one with `pnpm start`; it prints its URL and records it for next time.\n',
     );
     return 1;
   }
@@ -180,7 +223,7 @@ function commandUrl(args: string[]): number {
   }
   process.stdout.write(`${sessions[0]!.url}\n`);
   if (sessions.length > 1) {
-    process.stderr.write(`(${sessions.length - 1} other instance(s) running — statescope url --all)\n`);
+    process.stderr.write(`(${sessions.length - 1} other instance(s) running — tuplescope url --all)\n`);
   }
   return 0;
 }
@@ -207,6 +250,20 @@ function policyFrom(values: Values): VerdictPolicy | string {
   };
 }
 
+/**
+ * Removes resolved credentials from text this process did not format.
+ *
+ * A PostgreSQL driver reports an authentication failure with the whole
+ * connection string in the message, password included, and that message goes
+ * to stderr. Wrapping the value in a `Secret` cannot help there — the string
+ * was built by someone else. This is the backstop.
+ */
+let scrubber: (text: string) => string = (text) => text;
+
+export function scrubSecrets(text: string): string {
+  return scrubber(text);
+}
+
 async function withWorkspace<T>(
   values: Values,
   body: (session: Awaited<ReturnType<typeof open>>) => Promise<T>,
@@ -216,6 +273,10 @@ async function withWorkspace<T>(
     session = await open(values);
   } catch (error) {
     if (error instanceof WorkspaceConfigError) {
+      process.stderr.write(`${scrubSecrets(error.message)}\n`);
+      return EXIT_USAGE;
+    }
+    if (error instanceof SecretStoreUnavailable || error instanceof SecretNotConfigured) {
       process.stderr.write(`${error.message}\n`);
       return EXIT_USAGE;
     }
@@ -223,6 +284,25 @@ async function withWorkspace<T>(
   }
   try {
     return await body(session);
+  } catch (error) {
+    // A stored run this build cannot read is an ordinary, actionable outcome —
+    // not a crash. It reached the top as a stack trace *and exited 0*, which
+    // in a tool whose exit codes are the contract is the worse half.
+    if (error instanceof StaleRunError) {
+      process.stderr.write(`${error.message}\n`);
+      return EXIT_USAGE;
+    }
+    // A workspace that is misconfigured is an ordinary outcome with a remedy,
+    // not a crash. `tuplescope status` had always rendered its own properly;
+    // every other command answered a missing `scenariosDir` with a Node stack
+    // trace — on the second command in the README, on a machine that had done
+    // nothing wrong.
+    if (error instanceof WorkspaceError) {
+      process.stderr.write(`${error.message}\n`);
+      if (error.remedy) process.stderr.write(`${error.remedy}\n`);
+      return EXIT_USAGE;
+    }
+    throw error;
   } finally {
     // Racing the close is what stops Ctrl-C mid-request from waiting out the
     // HTTP timeout: the observer client is held across the step.
@@ -231,9 +311,25 @@ async function withWorkspace<T>(
 }
 
 async function open(values: Values) {
-  const config = await loadWorkspaceConfig({
+  const loaded = await loadWorkspaceConfig({
     ...(values.config !== undefined ? { configPath: values.config } : {}),
   });
+
+  // The workspace names credentials; this is where they become values. The
+  // store is only opened when something actually refers to one, so a workspace
+  // with no secrets never touches the keychain and never prompts.
+  const needed = secretsReferencedBy(loaded);
+  const opened =
+    needed.length > 0
+      ? await tryOpenSecretStore({ namespace: namespaceOf(loaded) })
+      : { store: undefined, reason: '' };
+  const { config, scrub } = await resolveWorkspaceSecrets(loaded, {
+    ...('store' in opened && opened.store ? { store: opened.store } : {}),
+    ...('reason' in opened && opened.reason ? { storeUnavailable: opened.reason } : {}),
+  });
+  // Anything formatted from here on can have the values taken back out.
+  scrubber = scrub;
+
   const baseline = values.baseline;
   return openWorkspace(config, {
     ...(baseline !== undefined
@@ -245,7 +341,19 @@ async function open(values: Values) {
   });
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * `unref`'d, so a timer that lost its race cannot keep the process alive.
+ *
+ * It is used as the losing half of `Promise.race([close(), sleep(2000)])`, and
+ * a `setTimeout` holds the event loop open until it fires whether or not
+ * anybody is still waiting on it. Measured: `tuplescope ls` finished its work
+ * in 16ms and the process then sat for another 2,250ms — every invocation of
+ * every command paying two seconds for a deadline that had already been beaten.
+ */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
 
 // ─── ls / status ──────────────────────────────────────────────────────────────
 
@@ -269,10 +377,72 @@ async function commandList(values: Values): Promise<number> {
   return typeof result === 'number' ? result : 0;
 }
 
+/**
+ * Whether every secret a workspace refers to is configured — without reading a
+ * single value.
+ *
+ * `status` and `check` are the commands run *because* something is wrong, so
+ * they have to survive a missing credential and report it, rather than failing
+ * on the way to finding out. Asking the store whether an id exists is the whole
+ * check; the value never leaves the keychain.
+ */
+async function reportSecrets(values: Values): Promise<{ lines: string[]; allConfigured: boolean }> {
+  const config = await loadWorkspaceConfig({
+    ...(values.config !== undefined ? { configPath: values.config } : {}),
+  });
+  const names = secretsReferencedBy(config);
+  if (names.length === 0) return { lines: [], allConfigured: true };
+
+  const opened = await tryOpenSecretStore({ namespace: namespaceOf(config) });
+  if (!opened.store) {
+    return {
+      lines: [
+        `  secrets   ${names.length} referenced, and no secret store is available`,
+        `            ${opened.reason}`,
+      ],
+      allConfigured: false,
+    };
+  }
+  const lines: string[] = [];
+  let allConfigured = true;
+  for (const name of names) {
+    const id = secretIdFor(name, DEFAULT_CONTEXT);
+    // `has`, not `get`: reading the value is what raises the macOS permission
+    // dialog and what blocks on a locked keychain, and this command's whole
+    // job is to work when something is wrong.
+    const present = await opened.store.has(id);
+    if (!present) allConfigured = false;
+    lines.push(
+      `  ${lines.length === 0 ? 'secrets ' : '        '}  ${present ? '\u2713' : '\u2717'} ${name}` +
+        (present ? '' : ` \u2014 not configured; \`tuplescope secret set ${id}\``),
+    );
+  }
+  return { lines, allConfigured };
+}
+
 async function commandStatus(values: Values): Promise<number> {
+  // Before the workspace opens, because opening it resolves secrets and a
+  // missing one would abort the very report that explains why.
+  let secretsOk = true;
+  let secretLines: string[] = [];
+  try {
+    const report = await reportSecrets(values);
+    secretLines = report.lines;
+    secretsOk = report.allConfigured;
+  } catch (error) {
+    if (!(error instanceof WorkspaceConfigError)) throw error;
+  }
+  if (!secretsOk) {
+    // The workspace cannot open without them, so this is the whole report.
+    process.stdout.write('tuplescope\n');
+    for (const line of secretLines) process.stdout.write(`${line}\n`);
+    return 2;
+  }
+
   const result = await withWorkspace(values, async (session) => {
     const style = styleFor(values);
     process.stdout.write(`${renderWorkspaceLine(style, session.config)}\n`);
+    for (const line of secretLines) process.stdout.write(`${line}\n`);
     try {
       const { tables } = await session.preflight();
       process.stdout.write(`  database  reachable · ${tables.length} tables\n`);
@@ -361,8 +531,9 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
       return EXIT_USAGE;
     }
     let tables: string[];
+    let columns: Map<string, Set<string>>;
     try {
-      tables = (await session.preflight()).tables;
+      ({ tables, columns } = await session.preflight());
     } catch (error) {
       const workspaceError = error instanceof WorkspaceError ? error : undefined;
       process.stderr.write(`${workspaceError?.message ?? String(error)}\n`);
@@ -397,24 +568,60 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
               `  ${scenario.id}/${dataset.id}/${step.id}  names table \`${table}\`, which is not in this database`,
             );
           }
+          // The columns inside a predicate, which the evaluator resolves only
+          // when it has a row to resolve them against. On a step that writes
+          // nothing it never gets one, so `count(inserted(t).where(nmae = "x"))
+          // == 0` is green for as long as the typo lives — and that is the
+          // shape of a "must not write twice" guard, the assertion this tool
+          // exists to make. Here is the one place with a connection and no
+          // rows to depend on.
+          let named: Array<{ table: string; column: string }>;
+          try {
+            named = predicateColumnsIn(parse(assertion));
+          } catch {
+            // Unparseable: `run` will say so in its own words, with position.
+            named = [];
+          }
+          for (const { table, column } of named) {
+            const have = columns.get(table);
+            // An unknown table is already reported above; do not say it twice.
+            if (!have || have.has(column)) continue;
+            problems.push(
+              `  ${scenario.id}/${dataset.id}/${step.id}  matches on \`${table}.${column}\`, ` +
+                `which is not a column of \`${table}\``,
+            );
+          }
         }
       }
     }
 
     const out = [
-      `statescope · ${session.config.name}`,
+      `tuplescope · ${session.config.name}`,
       `  selected   ${selected.length} dataset(s), ${assertions} assertion(s)`,
       `  database   ${tables.length} tables`,
     ];
-    if (problems.length === 0) {
-      out.push('', '  Nothing here would fail for a reason other than the system under test.');
-    } else {
+    if (problems.length > 0) {
       out.push('', ...problems);
+    } else if (assertions === 0) {
+      // Nothing to be right about. This command is what the README puts in
+      // front of the pipeline, and its clean sentence is an unconditional
+      // assurance — so a workspace that asserts nothing must not receive it.
+      // `run` already refuses the same shape; `check` said the words and
+      // exited 0, on a suite where the answer had not been looked for.
+      out.push(
+        '',
+        selected.length === 0
+          ? '  Nothing was selected, so nothing was checked.'
+          : `  ${selected.length} dataset(s) selected, and not one assertion between them.`,
+        '  A green `check` over nothing asserted is the failure this command exists to prevent.',
+      );
+    } else {
+      out.push('', '  Nothing here would fail for a reason other than the system under test.');
     }
     process.stdout.write(`${out.join('\n')}\n`);
     // Exit 3: the suite is not wrong, it just does not establish what it looks
     // like it does — the same meaning the code has everywhere else.
-    return problems.length > 0 ? 3 : 0;
+    return problems.length > 0 || assertions === 0 ? 3 : 0;
   });
   return typeof result === 'number' ? result : 0;
 }
@@ -447,7 +654,7 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
       }
       const stored = id === 'last' ? await store.latest() : await store.get(id);
       if (!stored) {
-        process.stderr.write(`No stored run \`${id}\`. \`statescope runs\` lists what is there.\n`);
+        process.stderr.write(`No stored run \`${id}\`. \`tuplescope runs\` lists what is there.\n`);
         return EXIT_USAGE;
       }
       process.stdout.write(`${JSON.stringify(stored, null, 2)}\n`);
@@ -487,7 +694,7 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
 async function commandKeep(args: string[], values: Values): Promise<number> {
   const [selector, stepId, ...picked] = args;
   if (!selector || !stepId) {
-    process.stderr.write('keep needs a target and a step: statescope keep refund/happy create_payment\n');
+    process.stderr.write('keep needs a target and a step: tuplescope keep refund/happy create_payment\n');
     return EXIT_USAGE;
   }
   const [scenarioId, datasetId] = selector.split('/');
@@ -554,7 +761,7 @@ async function commandKeep(args: string[], values: Values): Promise<number> {
       process.stdout.write(
         `${found.scenario.id}/${targetDataset}/${stepId}  ·  from run ${stored.run.id}\n\n` +
           `${out.join('\n')}\n\n` +
-          `  statescope keep ${selector} ${stepId} 1 2   keeps those two\n`,
+          `  tuplescope keep ${selector} ${stepId} 1 2   keeps those two\n`,
       );
       return 0;
     }
@@ -602,7 +809,7 @@ async function commandKeep(args: string[], values: Values): Promise<number> {
  */
 async function commandReport(files: string[], values: Values): Promise<number> {
   if (files.length === 0) {
-    process.stderr.write('report needs at least one stored envelope: statescope report run.json\n');
+    process.stderr.write('report needs at least one stored envelope: tuplescope report run.json\n');
     return EXIT_USAGE;
   }
   const { readFile } = await import('node:fs/promises');
@@ -610,17 +817,33 @@ async function commandReport(files: string[], values: Values): Promise<number> {
   for (const file of files) {
     try {
       const parsed = JSON.parse(await readFile(file, 'utf8')) as Envelope;
-      if (typeof parsed.schema !== 'string' || !parsed.schema.startsWith('statescope.run-report/')) {
-        process.stderr.write(`${file}: not a StateScope run report.\n`);
+      if (typeof parsed.schema !== 'string' || !parsed.schema.startsWith('tuplescope.run-report/')) {
+        process.stderr.write(`${file}: not a TupleScope run report.\n`);
         return EXIT_USAGE;
       }
       const major = Number(parsed.schema.split('/')[1]);
-      if (major > 1) {
+      const supported = Number(RUN_REPORT_SCHEMA.split('/')[1]);
+      if (!Number.isInteger(major)) {
+        process.stderr.write(`${file}: unreadable schema version \`${parsed.schema}\`.\n`);
+        return EXIT_USAGE;
+      }
+      if (major > supported) {
         // A newer producer. Refusing beats guessing: the rule everywhere else
         // is that an unknown value degrades to undecided, and silently reading
         // a format we do not know would be the opposite of that.
         process.stderr.write(
-          `${file}: written by a newer StateScope (${parsed.schema}); this build reads version 1.\n`,
+          `${file}: written by a newer TupleScope (${parsed.schema}); this build reads version ${supported}.\n`,
+        );
+        return EXIT_USAGE;
+      }
+      if (major < supported) {
+        // The gate only ever looked upwards, so an *older* file sailed through
+        // and was rendered as though its fields meant what they mean now. A
+        // /1 file's column values carry `text` with no `state`, which reads as
+        // neither visible nor masked — every value would print as unknown.
+        process.stderr.write(
+          `${file}: written by an older TupleScope (${parsed.schema}); this build reads version ${supported}. ` +
+            `Re-run the scenario to produce a current report.\n`,
         );
         return EXIT_USAGE;
       }
@@ -744,7 +967,7 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
             source === 'last'
               ? `--from/--only continue a previous run, and there is no stored full run of ` +
                 `\`${scenario.id}/${dataset.id}\` to continue. Run the whole dataset once first.\n`
-              : `No stored run \`${source}\`. \`statescope runs\` lists what is there.\n`,
+              : `No stored run \`${source}\`. \`tuplescope runs\` lists what is there.\n`,
           );
           return EXIT_USAGE;
         }
@@ -802,13 +1025,17 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
     const exitCode = values['exit-zero'] && (natural === 1 || natural === 3) ? 0 : natural;
 
     const envelope = buildEnvelope(reports, suite, {
-      producer: { tool: 'statescope', version: '0.2.0', surface: 'cli' },
+      producer: { tool: 'tuplescope', version: VERSION, surface: 'cli' },
       workspace: {
         name: session.config.name,
         configPath: session.config.configFile,
         baseUrl: session.config.baseUrl,
         scenariosDir: session.config.scenariosDir,
-        capture: { method: session.adapter.captureMethod, detection: session.adapter.detection },
+        capture: {
+          method: session.adapter.captureMethod,
+          detection: session.adapter.detection,
+          fidelity: session.adapter.fidelity,
+        },
         tableCount: (await session.adapter.listTables()).length,
       },
       invocation: {

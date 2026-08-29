@@ -3,43 +3,62 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>StateScope</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <title>TupleScope</title>
+    <link rel="stylesheet" href="/styles.css?v=14" />
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
         <span class="dot"></span>
-        <h1>StateScope</h1>
-        <span class="tagline">run backend scenarios &middot; see exactly what changed</span>
+        <div>
+          <h1>TupleScope</h1>
+          <span class="tagline">Run the story. Inspect the evidence.</span>
+        </div>
       </div>
-      <div class="topbar-meta" id="workspaceMeta"></div>
+      <div class="topbar-meta" id="workspaceMeta" aria-live="polite"></div>
     </header>
 
     <main class="layout">
-      <section class="col col-scenarios">
-        <h2 class="col-title">Scenarios</h2>
+      <aside class="col col-scenarios" aria-label="Scenario library">
+        <div class="pane-heading">
+          <div>
+            <span class="eyebrow">Workspace</span>
+            <h2>Scenarios</h2>
+          </div>
+          <span class="pane-count" id="scenarioCount"></span>
+        </div>
         <div id="scenarios" class="scenario-list"></div>
-      </section>
+      </aside>
 
       <section class="col col-steps">
-        <h2 class="col-title">Steps <span class="hint" id="runSummary"></span></h2>
-        <div id="steps" class="panel">
-          <p class="muted">Pick a dataset on the left and run it.</p>
+        <div class="run-strip" id="runStrip">
+          <span id="runSummary"></span>
         </div>
+        <div id="requestWorkspace" class="request-workspace"></div>
       </section>
 
       <section class="col col-db">
-        <h2 class="col-title">
-          Database changes
-          <span class="hint" id="diffSummary"></span>
-        </h2>
-        <div id="diff" class="panel">
-          <p class="muted">What the API committed will appear here.</p>
+        <div class="pane-heading evidence-heading">
+          <div>
+            <span class="eyebrow">Evidence</span>
+            <h2>What changed</h2>
+          </div>
+          <span class="pane-count" id="diffSummary"></span>
+        </div>
+        <div id="story" class="story-panel"></div>
+        <div id="evidenceTabs" class="evidence-tabs"></div>
+        <div id="diff" class="evidence-panel">
+          <div class="empty-state compact">
+            <span class="empty-index">02</span>
+            <h3>Then read the proof</h3>
+            <p>Response, assertions, state transitions and database writes stay connected to the step that caused them.</p>
+          </div>
         </div>
       </section>
     </main>
 
-    <script src="/app.js"></script>
+    <script src="/api-error.js?v=1"></script>
+    <script src="/runs.js?v=1"></script>
+    <script src="/app.js?v=34"></script>
   </body>
 </html>

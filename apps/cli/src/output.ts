@@ -6,12 +6,13 @@
  * changed without touching either.
  */
 
-import type { Run, RunVerdict } from '@statescope/core';
-import type { ResolvedWorkspaceConfig } from '@statescope/workspace';
+import type { Run, RunVerdict } from '@tuplescope/core';
+import type { ResolvedWorkspaceConfig } from '@tuplescope/workspace';
 import {
   glyph,
   renderAssertion,
   renderDiff,
+  renderWriteOrder,
   renderWarning,
   stepGlyph,
   type Style,
@@ -42,7 +43,7 @@ export function styleFor(values: Flags): Style {
 
 export function renderWorkspaceLine(style: Style, config: ResolvedWorkspaceConfig): string {
   return (
-    `statescope · ${config.name} → ${config.baseUrl}\n` +
+    `tuplescope · ${config.name} → ${config.baseUrl}\n` +
     `  config    ${config.configFile}`
   );
 }
@@ -95,6 +96,13 @@ export function renderRun(
           maxTables: mode === 'all' ? Number.MAX_SAFE_INTEGER : 6,
           interesting,
           indent: '      ',
+        }),
+      );
+      out.push(
+        ...renderWriteOrder(step.changes, {
+          style,
+          indent: '      ',
+          maxRows: mode === 'all' ? Number.MAX_SAFE_INTEGER : 8,
         }),
       );
       if (step.changes.changes.length === 0 && step.assertions.length > 0) {

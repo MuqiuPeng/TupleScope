@@ -14,7 +14,7 @@
  *            | '{{' IDENT '}}' | IDENT '(' args ')' | IDENT | '(' or ')'
  */
 
-import type { Expr, CompareOp, Selector, SelectorKind, Temporal } from '@statescope/core';
+import type { Expr, CompareOp, Selector, SelectorKind, Temporal } from '@tuplescope/core';
 
 const SELECTOR_KINDS: ReadonlySet<string> = new Set([
   'changes',
@@ -344,6 +344,16 @@ export function parse(source: string): Expr {
       const inner = parseOr();
       expect(')');
       return { node: 'isEmpty', source: inner };
+    }
+    if (name.text === 'atomic') {
+      const inner = parseOr();
+      expect(')');
+      return { node: 'atomic', source: inner };
+    }
+    if (name.text === 'writeCount') {
+      const inner = parseOr();
+      expect(')');
+      return { node: 'writeCount', source: inner };
     }
 
     throw new ExprSyntaxError(`unknown function \`${name.text}\``, source, name.pos);
