@@ -155,8 +155,17 @@ function describeRun(report: {
 
 // ─── the server ───────────────────────────────────────────────────────────────
 
+/**
+ * One place, so the handshake and the envelope's `producer` cannot drift apart.
+ *
+ * They were two literals, which is the shape that goes stale on the next bump:
+ * every stored envelope would carry a version the server no longer reports, and
+ * nothing would say so.
+ */
+const VERSION = '0.3.0';
+
 const server = new McpServer(
-  { name: 'tuplescope', version: '0.3.0' },
+  { name: 'tuplescope', version: VERSION },
   { instructions: INSTRUCTIONS },
 );
 
@@ -352,7 +361,7 @@ server.registerTool(
 
       const suite = mergeVerdicts(verdicts, policy);
       const envelope = buildEnvelope(reports, suite, {
-        producer: { tool: 'tuplescope', version: '0.3.0', surface: 'mcp' },
+        producer: { tool: 'tuplescope', version: VERSION, surface: 'mcp' },
         workspace: {
           name: s.config.name,
           configPath: s.config.configFile,
