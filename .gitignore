@@ -15,6 +15,13 @@ docs/technical-review.md
 # it is yours, not the project's.
 tuplescope.yaml
 
+# Local demo applications. They are not part of what this repository ships —
+# the README teaches pointing TupleScope at your own backend, not running ours
+# — but they are useful to develop against. Deliberately outside the pnpm
+# workspace too, so their dependencies never reach the committed lockfile:
+# install them in place with `cd examples/demo-bank && pnpm install`.
+examples/
+
 # Stored runs. Values are masked at capture, but this is still a record of
 # what your development database contained.
 .tuplescope/
