@@ -10,6 +10,9 @@ dist/
 # Kept local, not published. Both reference private work and an unpublished plan.
 docs/prototype-carryover.md
 docs/technical-review.md
+# Frozen design for a feature that does not exist — its own first line says so.
+# Publishing a spec for vapour in a release invites "so what does it actually do".
+docs/panel-mods-design.md
 
 # The workspace file points at your backend and your development database, so
 # it is yours, not the project's.

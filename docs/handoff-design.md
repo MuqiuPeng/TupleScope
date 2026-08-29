@@ -1,5 +1,9 @@
 # Row handoff — design r2
 
+*An internal design record, kept in the open. It is not user documentation —
+for how to use handoff, see the README. The section headings are the review
+questions it was written to answer.*
+
 *Types are normative; prose is not. §9 is now a record of what was built, and
 §10 of where building it changed the design.*
 

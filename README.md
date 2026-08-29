@@ -18,19 +18,22 @@ wallets         wal_alice  balance  900.00 → 1000.00
                 wal_shop   balance  100.00 → 0.00
 ```
 
-Local-first. Your database credentials never leave your machine.
+Local-first and PostgreSQL-only. Your database credentials never leave your machine.
 
 ---
 
 ## Quick start
 
-Node 22 or newer and pnpm 9, and a development database you do not mind being
-read. TupleScope holds a real connection to it and watches what your API writes.
+You need Node 22 or newer, pnpm 9, and a PostgreSQL you do not mind being read
+— TupleScope holds a real connection to it and watches what your API writes.
 
 ```bash
+git clone https://github.com/MuqiuPeng/TupleScope && cd TupleScope
 pnpm install && pnpm build
 export PATH="$PWD/node_modules/.bin:$PATH"   # this shell only; nothing goes global
 ```
+
+Not on npm yet; a checkout is the only way to run it today.
 
 ### Point it at your backend
 
@@ -69,8 +72,10 @@ backend answers. A failure names the file and the key.
 
 `scenariosDir` starts empty, so there is nothing to run yet. A scenario is one
 YAML file describing requests and what must be true of the database afterwards;
-the [Running a scenario](#running-a-scenario) section below is the full grammar,
-and this is the shape:
+the worked example under [A worked scenario, in full](#a-worked-scenario-in-full)
+shows every field. The selector language is
+`changes`, `inserted`, `updated`, `deleted` and `rows`, wrapped in `count`,
+`single`, `delta`, `sum`, `after` and `hasWrite`. This is the shape:
 
 ```yaml
 version: 1
@@ -106,8 +111,8 @@ resolves names without sending a request, so a misspelled table or column is
 caught before the run rather than by it.
 
 `tuplescope show <target>` prints a scenario in detail before you run it,
-`tuplescope runs` lists the runs it kept and `tuplescope runs show <id>`
-re-renders one, `tuplescope url` prints a running runtime's URL with its token,
+`tuplescope runs` lists the runs it kept and `tuplescope runs show <id>` prints
+one as JSON, `tuplescope url` prints a running runtime's URL with its token,
 and `tuplescope handoff` binds a database tool of yours to a row. `--help` is
 the full surface; `--config <path>` picks a workspace file directly.
 
@@ -135,45 +140,7 @@ pnpm start                     # stays in the foreground — leave it running
 open "$(pnpm -s url)"          # in another terminal: the running instance, token and all
 ```
 
-### In CI
-
-```yaml
-- run: pnpm exec tuplescope check                # before anything runs
-- run: pnpm exec tuplescope run --junit results.xml
-```
-
-`check` resolves every name an assertion uses — tables, and the columns inside
-`.where(...)` and `rows(...)` — against the live schema, without sending a
-request. The columns matter more than they look. A predicate is only read when
-there is a row to read it against, so on a step that correctly writes nothing
-`count(inserted(refunds).where(nmae = "x")) == 0` is *true*, and stays green for
-as long as the typo lives. That is the shape of a "must not write twice" guard,
-which is the assertion this tool exists to make; `check` is where it is caught,
-because `check` holds a connection and depends on no rows. Sharded? `tuplescope report shard-*.json --junit merged.xml` folds
-them into one verdict, keeping the worst — a shard's problem cannot be washed
-out by another shard's green.
-
-| exit | meaning |
-|---|---|
-| 0 | every check evaluated and passed |
-| 1 | a check failed — the system under test is wrong |
-| 2 | a step could not be executed |
-| 3 | **undecided** — it ran, nothing failed, but something was never checked |
-| 4 | bad invocation, or a workspace that will not load |
-| 5 | this workspace has no scenarios to run |
-
-`3` is the one that matters. An assertion that could not be *decided* — a
-mutation count against a value-comparing engine, a `single()` that matched
-three rows, a misspelled table name — is neither a pass nor a failure, and in
-CI nothing but the exit code is ever read. Merging it into `0` would make the
-build green on a check that never happened; merging it into `1` would make
-"open a bug against the backend" ambiguous, since a scenario that used to pass
-has opposite owners depending on whether the endpoint regressed or somebody
-narrowed the watch scope.
-
-`--unevaluable=warn` opts out, and says so in the summary and in the envelope.
-
-Write a scenario in `scenariosDir`:
+### A worked scenario, in full
 
 ```yaml
 version: 1
@@ -239,6 +206,45 @@ declaring `expectStatus` fails on its own), but stating the status you expect
 is what makes the scenario say out loud which of the two it means.
 
 ---
+
+### In CI
+
+```yaml
+- run: pnpm exec tuplescope check                # before anything runs
+- run: pnpm exec tuplescope run --junit results.xml
+```
+
+`check` resolves every name an assertion uses — tables, and the columns inside
+`.where(...)` and `rows(...)` — against the live schema, without sending a
+request. The columns matter more than they look. A predicate is only read when
+there is a row to read it against, so on a step that correctly writes nothing
+`count(inserted(refunds).where(nmae = "x")) == 0` is *true*, and stays green for
+as long as the typo lives. That is the shape of a "must not write twice" guard,
+which is the assertion this tool exists to make; `check` is where it is caught,
+because `check` holds a connection and depends on no rows. Sharded? `tuplescope report shard-*.json --junit merged.xml` folds
+them into one verdict, keeping the worst — a shard's problem cannot be washed
+out by another shard's green.
+
+| exit | meaning |
+|---|---|
+| 0 | every check evaluated and passed |
+| 1 | a check failed — the system under test is wrong |
+| 2 | a step could not be executed |
+| 3 | **undecided** — it ran, nothing failed, but something was never checked |
+| 4 | bad invocation, or a workspace that will not load |
+| 5 | this workspace has no scenarios to run |
+
+`3` is the one that matters. An assertion that could not be *decided* — a
+mutation count against a value-comparing engine, a `single()` that matched
+three rows, a misspelled table name — is neither a pass nor a failure, and in
+CI nothing but the exit code is ever read. Merging it into `0` would make the
+build green on a check that never happened; merging it into `1` would make
+"open a bug against the backend" ambiguous, since a scenario that used to pass
+has opposite owners depending on whether the endpoint regressed or somebody
+narrowed the watch scope.
+
+`--unevaluable=warn` opts out, and says so in the summary and in the envelope.
+
 
 ## What makes it different
 
@@ -723,7 +729,7 @@ that `ChangeSet` is missing an axis — never that a consumer needs to learn one
 more engine name.
 
 `core` holds the contracts, the verdict, and the one SQL renderer every surface
-addresses a row through — a second renderer is a second quoting bug. v0.1 is
+addresses a row through — a second renderer is a second quoting bug. This release is
 deliberately relational and
 Postgres-shaped rather than pretending to a database-neutral value model it
 cannot honestly provide — a document store will be a new ChangeSet variant, not
@@ -789,11 +795,19 @@ The token is also written to `~/.tuplescope/sessions/<port>.json`, mode 0600, so
 clean shutdown, and a stale one left by a crash is discarded on read rather than
 handed back as a dead URL.
 
+There is no Content-Security-Policy yet. The loopback bind, the `Host` and
+`Origin` allow-lists and the per-session token are what stand in for it; a CSP
+becomes necessary when dashboard plugins exist, and they do not.
+
 ## For agents
 
 ```json
-{ "mcpServers": { "tuplescope": { "command": "tuplescope-mcp" } } }
+{ "mcpServers": { "tuplescope": {
+    "command": "/absolute/path/to/TupleScope/node_modules/.bin/tuplescope-mcp" } } }
 ```
+
+The full path, not the bare name: an MCP client does not inherit the `PATH` you
+exported in the quick start, and that export was deliberately for one shell.
 
 Twelve tools over the same engine everything else uses: describe the workspace,
 list the tables, write a scenario, check it, run it, read what changed, keep the
@@ -822,7 +836,8 @@ Not yet built: dashboard plugins, and any handoff preset beyond Adminer and
 
 ### Known issues
 
-Found by a release check and shipped knowingly, worst first.
+Found by a release check and written down rather than quietly deferred, worst
+first. None of them lose data, and each says how to avoid it.
 
 - **Two `tuplescope run` invocations against one workspace can deadlock.** The
   second's observer transaction holds a lock the first's `resetFirst` TRUNCATE
@@ -837,8 +852,6 @@ Found by a release check and shipped knowingly, worst first.
   backend that is answering.
 - **`--junit -` does not produce parseable XML** — the human summary is
   interleaved with it. Write to a path.
-- **`tuplescope runs show <id>` prints the stored run as JSON.** The README and
-  `--help` both call it a re-render; the text is wrong, not the command.
 - **`tuplescope status` does not look at the scenarios directory,** so it can
   report a healthy workspace on which `ls`, `run` and `check` all exit 4. And
   `ls` over an empty directory prints the header and exits 0.
@@ -847,9 +860,6 @@ Found by a release check and shipped knowingly, worst first.
   wrong.
 - **`--config` works everywhere and appears in no help text.**
   `tuplescope url --all` is suggested by `url` and not accepted.
-- **The runtime serves no Content-Security-Policy.** The loopback `Host` and
-  `Origin` allowlists and the per-session token are what stand in for it; CSP
-  is a prerequisite for dashboard plugins, which do not exist yet.
 - **The demo's `pg_hba.conf` rewrite handles the shapes `initdb` writes.** A
   hand-edited file using the two-field `IP-address IP-mask` form, or line
   continuations, is rewritten in place without a backup.
@@ -859,4 +869,4 @@ Found by a release check and shipped knowingly, worst first.
 
 ## Licence
 
-MIT
+[MIT](LICENSE) © 2026 Guanshun Peng
