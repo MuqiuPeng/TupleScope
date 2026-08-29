@@ -335,7 +335,7 @@ async function findPsql(): Promise<{ executable: string; realpath: string } | un
  * The workspace a grant is for: the one the config names, not the shell's cwd.
  *
  * These were the same thing right up until someone ran `tuplescope handoff
- * enable --config examples/shopfront/tuplescope.yaml` from the repository root,
+ * enable --config path/to/tuplescope.yaml` for the workspace it is for,
  * and the grant landed on the repository root while the runtime — which
  * resolves it from `configDir` — went on refusing. A grant that names a
  * different directory from the one that checks it is a grant that silently

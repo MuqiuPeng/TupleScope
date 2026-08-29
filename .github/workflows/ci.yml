@@ -54,19 +54,19 @@ jobs:
           test -x node_modules/.bin/tuplescope-mcp
           node_modules/.bin/tuplescope --version
 
-      - name: start the example database
+      - name: start the test database
         run: |
-          nohup pnpm demo:db > "$RUNNER_TEMP/db.log" 2>&1 &
+          nohup pnpm testdb > "$RUNNER_TEMP/db.log" 2>&1 &
           for _ in $(seq 1 60); do
             grep -q 'postgres ready' "$RUNNER_TEMP/db.log" && exit 0
             sleep 2
           done
           echo "database did not come up:"; cat "$RUNNER_TEMP/db.log"; exit 1
 
-      # From inside the example, which is where `pg` is a dependency. At the
-      # repository root it does not resolve.
+      # From inside a package that depends on `pg`. At the repository root it
+      # does not resolve.
       - name: it is the server the wal engine needs
-        working-directory: examples/demo-bank
+        working-directory: packages/db-postgres
         run: |
           level=$(node -e "
             const {Client} = require('pg');
@@ -119,14 +119,3 @@ jobs:
 
           test "$total" -ge 560
           test "$failed" -eq 0
-
-      - name: the example runs, end to end
-        run: |
-          nohup pnpm demo:api > "$RUNNER_TEMP/api.log" 2>&1 &
-          for _ in $(seq 1 45); do
-            curl -sf http://127.0.0.1:7421/health >/dev/null && break
-            sleep 2
-          done
-          cd examples/demo-bank
-          ../../node_modules/.bin/tuplescope check
-          ../../node_modules/.bin/tuplescope run --no-save

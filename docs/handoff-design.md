@@ -815,7 +815,7 @@ otherwise opening a row also collapses the diff the reader was looking at.
 **And a grant bug that made it fail silently for a second reason.** `handoff
 enable` keyed the grant on `process.cwd()`; the runtime checks it against the
 workspace's own `configDir`. Identical directories, right up until someone runs
-`tuplescope handoff enable --config examples/shopfront/tuplescope.yaml` from the
+`tuplescope handoff enable --config path/to/tuplescope.yaml` for the
 repository root — measured, the grant landed on the repository root, and the
 runtime went on reporting `granted: false` for shopfront with nothing anywhere
 explaining why. A grant recorded in one place and checked in another is a grant

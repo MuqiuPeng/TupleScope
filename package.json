@@ -9,9 +9,7 @@
     "build": "tsc -b packages/core packages/secrets packages/handoff packages/expr packages/http-runner packages/db-postgres packages/scenario-engine packages/report packages/conformance packages/workspace apps/runtime apps/cli apps/mcp",
     "typecheck": "pnpm build && tsc -p tsconfig.check.json",
     "start": "pnpm --filter @tuplescope/runtime start",
-    "demo:db": "pnpm --filter @tuplescope/example-demo-bank db",
-    "demo:api": "pnpm --filter @tuplescope/example-demo-bank api",
-    "demo:shop": "pnpm --filter @tuplescope/example-shopfront api",
+    "testdb": "tsx scripts/testdb.ts",
     "test": "pnpm typecheck && pnpm -r --no-bail run test",
     "url": "pnpm --filter @tuplescope/runtime url"
   },
@@ -19,6 +17,7 @@
     "@tuplescope/cli": "workspace:*",
     "@tuplescope/mcp": "workspace:*",
     "@types/node": "^22.10.2",
+    "embedded-postgres": "^17.5.0-beta.15",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

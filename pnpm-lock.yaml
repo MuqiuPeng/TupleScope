@@ -17,6 +17,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      embedded-postgres:
+        specifier: ^17.5.0-beta.15
+        version: 17.5.0-beta.15
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
@@ -115,41 +118,6 @@ importers:
         version: 4.23.12
 
   apps/web: {}
-
-  examples/demo-bank:
-    dependencies:
-      embedded-postgres:
-        specifier: ^17.5.0-beta.15
-        version: 17.5.0-beta.15
-      fastify:
-        specifier: ^5.2.0
-        version: 5.12.1
-      pg:
-        specifier: ^8.13.1
-        version: 8.23.0
-    devDependencies:
-      '@types/pg':
-        specifier: ^8.11.10
-        version: 8.23.1
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.12
-
-  examples/shopfront:
-    dependencies:
-      fastify:
-        specifier: ^5.2.0
-        version: 5.12.1
-      pg:
-        specifier: ^8.13.1
-        version: 8.23.0
-    devDependencies:
-      '@types/pg':
-        specifier: ^8.11.10
-        version: 8.23.1
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.12
 
   packages/conformance:
     dependencies:

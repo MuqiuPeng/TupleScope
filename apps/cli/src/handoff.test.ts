@@ -4,7 +4,7 @@
  * The bug this exists for: `handoff enable` keyed the grant on `process.cwd()`
  * while the runtime checks it against the workspace's own `configDir`. They are
  * the same directory right up until someone runs
- * `tuplescope handoff enable --config examples/shopfront/tuplescope.yaml` from
+ * `tuplescope handoff enable --config path/to/tuplescope.yaml` for
  * the repository root — and then the grant lands on the repository root while
  * the thing that checks it goes on refusing, with nothing anywhere saying why.
  * A grant that names a different directory from the one that checks it is a

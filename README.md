@@ -24,34 +24,86 @@ Local-first. Your database credentials never leave your machine.
 
 ## Quick start
 
-Node 22 or newer and pnpm 9. You do **not** need PostgreSQL installed — the
-example brings its own, as a platform binary pnpm fetches (about 51 MB over the
-wire on macOS, 23 MB on Linux). Point TupleScope at your own database and none
-of that is used.
+Node 22 or newer and pnpm 9, and a development database you do not mind being
+read. TupleScope holds a real connection to it and watches what your API writes.
 
 ```bash
 pnpm install && pnpm build
 export PATH="$PWD/node_modules/.bin:$PATH"   # this shell only; nothing goes global
 ```
 
-### Run the example
-
-Three terminals. The database is embedded — no Docker, nothing to install, and
-no password: it listens on loopback only and holds nothing but fictional money.
+### Point it at your backend
 
 ```bash
-pnpm demo:db                   # PostgreSQL on :7432, creating demobank and shopfront
-pnpm demo:api                  # the API under test, on :7421
+cp tuplescope.example.yaml tuplescope.yaml
+mkdir scenarios
 ```
 
-```bash
-cd examples/demo-bank
+Two things in that file decide everything: `baseUrl`, the API you are testing,
+and `database.connectionString`, the database it writes to. They must be the
+same running system — TupleScope sends a request to the first and reads the
+second, and a mismatched pair reports an API that writes nothing.
 
-tuplescope status              # does this workspace point at something that answers?
-tuplescope ls                  # every scenario and dataset
+The password belongs in your OS keychain, not in that file:
+
+```bash
+tuplescope secret set db_password        # reads from the terminal, never echoed
+```
+
+and the file refers to it as `${secret:db_password}`, which is how the template
+already spells it. `${VAR}` and `${VAR:-default}` read the environment instead.
+Nothing resolves silently: an unset reference is refused at load, with the name
+it wanted.
+
+Then check the wiring before writing anything:
+
+```bash
+tuplescope status
+```
+
+It answers three questions separately — whether the config resolved, whether
+the database is reachable and how many tables are in scope, and whether the
+backend answers. A failure names the file and the key.
+
+### Write the first scenario
+
+`scenariosDir` starts empty, so there is nothing to run yet. A scenario is one
+YAML file describing requests and what must be true of the database afterwards;
+the [Running a scenario](#running-a-scenario) section below is the full grammar,
+and this is the shape:
+
+```yaml
+version: 1
+id: refund
+title: Refund lifecycle
+datasets:
+  - id: happy
+    label: A. Full refund of 100.00
+    steps:
+      - id: pay
+        name: Alice pays 100.00
+        request:
+          method: POST
+          path: /payments
+          body: { amount: "100.00", currency: USD }
+        expect: { status: 201 }
+        assert:
+          - count(inserted(payments)) == 1
+          - delta(single(rows(wallets, id = "wal_alice")).balance) == "-100.00"
+```
+
+Then:
+
+```bash
+tuplescope ls                  # every scenario and dataset it found
+tuplescope check               # resolves every table and column against the live schema
 tuplescope run                 # all of them
 tuplescope run refund/happy    # one dataset
 ```
+
+`check` is worth running first and worth putting in front of a pipeline: it
+resolves names without sending a request, so a misspelled table or column is
+caught before the run rather than by it.
 
 `tuplescope show <target>` prints a scenario in detail before you run it,
 `tuplescope runs` lists the runs it kept and `tuplescope runs show <id>`
@@ -59,43 +111,20 @@ re-renders one, `tuplescope url` prints a running runtime's URL with its token,
 and `tuplescope handoff` binds a database tool of yours to a row. `--help` is
 the full surface; `--config <path>` picks a workspace file directly.
 
-There is a second example, `examples/shopfront`, which exists to prove the same
-runtime and engine serve a different schema. It has no database of its own —
-`pnpm demo:db` creates both — so start that first, then:
+### A database to develop against
+
+If you have no PostgreSQL to hand — or want one with `wal_level = logical`, which
+the `wal` capture engine needs and a stock server does not have — this repository
+brings its own:
 
 ```bash
-pnpm demo:shop                 # the second API, on :7423
-
-cd examples/shopfront
-tuplescope run
+pnpm testdb                    # 127.0.0.1:7432, trust auth on loopback, logical
 ```
 
-**It fails on purpose, and that is the demonstration.** Its `after_checkout`
-dataset adds an item to a cart that is already checked out. The API answers
-`201`, writes the row anyway, and the run exits 1 — `expected false, got true`
-on `hasWrite(changes(cart_items))`. A second check comes back undecided rather
-than green: `writeCount()` needs the order the writes happened in, and the
-default `mvcc-xmin` engine records where each row ended up, not how it got
-there. Guessing would have been the easy answer and the wrong one.
-
-### Point it at your own backend
-
-From the repository root — the two commands above left you in an example:
-
-```bash
-cd ../..                                     # back to the root, if you ran the example
-cp tuplescope.example.yaml tuplescope.yaml   # your API and your dev database
-mkdir scenarios                              # where your own scenarios go
-```
-
-`scenariosDir` starts empty: there is nothing to `run` until you write a
-scenario, and the section below is where that starts.
-
-Every port above is a default, not a requirement. `DEMO_BANK_DB_PORT`,
-`DEMO_BANK_PORT`, `SHOPFRONT_PORT` and `TUPLESCOPE_PORT` move the services;
-`DEMO_BANK_BASE_URL`, `DEMO_BANK_DATABASE_URL` and the `SHOPFRONT_` pair move
-what TupleScope points at. Set both halves — a service on a new port that
-nothing is looking at is the confusing half of the job.
+It is a platform binary pnpm fetches (about 51 MB on macOS, 23 MB on Linux), so
+there is nothing to install and no Docker. Data lives in `.pgdata`; delete it
+for a clean slate. It exists for the test suite and for exactly this — it is not
+part of what TupleScope ships.
 
 ### The UI
 
@@ -713,6 +742,13 @@ you like:
 
 ```bash
 TUPLESCOPE_TEST_DATABASE_URL=postgresql://... pnpm test
+```
+
+Or take the one this repository brings, which is what CI runs against:
+
+```bash
+pnpm testdb &                  # 127.0.0.1:7432, wal_level=logical, trust on loopback
+TUPLESCOPE_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:7432/postgres pnpm test
 ```
 
 Those integration tests skip cleanly when no database is reachable, so the suite
