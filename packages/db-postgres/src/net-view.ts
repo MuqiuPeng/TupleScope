@@ -10,7 +10,7 @@ import type {
   Row,
   RowChange,
 } from '@tuplescope/core';
-import { readKeySets, readRowsByKey } from './images.js';
+import { readDepartedKeys, readRowsByKey } from './images.js';
 import type { TableIdentity } from './introspect.js';
 import { quoteIdent, RowReader, serializeKey, valuesLookEqual } from './rows.js';
 
@@ -46,7 +46,6 @@ export async function collectNetChanges(
   scope: CaptureScope,
   identities: Map<string, TableIdentity>,
   snapshot: string,
-  beforeKeys: Map<string, Set<string>>,
   warnings: CaptureWarning[],
 ): Promise<RowChange[]> {
   const changes: RowChange[] = [];
@@ -74,8 +73,8 @@ export async function collectNetChanges(
       // below, which meant the one branch that *knows* this table cannot be
       // read properly stayed silent exactly when it had nothing else to
       // report. A DELETE from a keyless table leaves no trace here at all —
-      // `readKeySets` skips the table, so there is no before-set to subtract
-      // from — and the run then printed "Nothing was written. Not a single row
+      // the key reader skips such a table, so a departure leaves no trace at
+      // all — and the run then printed "Nothing was written. Not a single row
       // was touched", clean, exit 0, over rows that were really deleted.
       // `hasWrite(changes(*))` returned false, so the idempotency guard this
       // tool exists for passed green.
@@ -107,8 +106,8 @@ export async function collectNetChanges(
 
     // Paired on the raw row, masked afterwards.
     //
-    // Keying off an already-masked row does not work, because `readKeySets`
-    // reads key columns unmasked: the two never match, so a row whose primary
+    // Keying off an already-masked row does not work, because key columns are
+    // read unmasked: the two never match, so a row whose primary
     // key is masked is absent from the before set and comes back as an
     // **insert with no before-image and no warning**. Measured on mvcc-xmin —
     // one `UPDATE` reported `kind: 'insert'`, `before: null`, `warnings: []`,
@@ -135,12 +134,16 @@ export async function collectNetChanges(
       });
     }
 
-    const afterKeys = await readKeySets(worker, reader, { ...scope, tables: [table] }, identities);
-    const nowPresent = afterKeys.get(table.table) ?? new Set<string>();
-    const wasPresent = beforeKeys.get(table.table) ?? new Set<string>();
-
-    const deletedKeys = [...wasPresent].filter((k) => !nowPresent.has(k));
-    const updatedKeys = [...afterByKey.keys()].filter((k) => wasPresent.has(k));
+    // Two full key scans used to meet here — one taken before the step through
+    // the observer, one after through the worker — for the sole purpose of
+    // subtracting them. Every step paid for the whole table twice, whether or
+    // not anything was written. `readDepartedKeys` asks the far narrower
+    // question directly: which rows carry an `xmax`, and of those, which are
+    // gone now.
+    const deletedKeys = await readDepartedKeys(observer, worker, reader, table, identity);
+    // `wasPresent` is not needed to tell an insert from an update either. The
+    // before-image read below answers that, and its absence *is* the insert.
+    const updatedKeys = [...afterByKey.keys()];
 
     // The time-travel step: read the previous version of every row we need
     // through the observer, which still sees the pre-request world.

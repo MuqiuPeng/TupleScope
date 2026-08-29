@@ -387,3 +387,52 @@ describe('a masked key', { skip: !available }, () => {
     }
   });
 });
+
+describe('finding what left', () => {
+  /**
+   * The candidate scan is deliberately wider than it needs to be — every row
+   * carrying any `xmax`, with no visibility filter — because narrowing it would
+   * introduce two ways to miss a real delete, and a missed delete is reported
+   * as "Nothing was written". These are the shapes that produce an `xmax` on a
+   * row that did *not* leave, and each must be filtered out by presence rather
+   * than by a guess about the transaction id.
+   */
+  it('does not mistake an update for a departure', async () => {
+    const changes = await observe(`UPDATE accounts SET balance = '5.00' WHERE id = 'acc_a'`);
+    const rows = forTable(changes, 'accounts');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.kind, 'update');
+  });
+
+  it('does not mistake a rolled-back delete for a departure', async () => {
+    const changes = await observe(async () => {
+      await sql.query('BEGIN');
+      await sql.query(`DELETE FROM accounts WHERE id = 'acc_a'`);
+      await sql.query('ROLLBACK');
+    });
+    assert.deepEqual(forTable(changes, 'accounts'), []);
+  });
+
+  it('does not mistake a row that was merely locked for a departure', async () => {
+    // `SELECT … FOR UPDATE` sets `xmax` and changes nothing.
+    const changes = await observe(async () => {
+      await sql.query('BEGIN');
+      await sql.query(`SELECT * FROM accounts WHERE id = 'acc_a' FOR UPDATE`);
+      await sql.query('COMMIT');
+    });
+    assert.deepEqual(forTable(changes, 'accounts'), []);
+  });
+
+  it('finds a delete among all three', async () => {
+    await sql.query(`INSERT INTO accounts VALUES ('acc_gone', '1.00', now())`);
+    const changes = await observe(async () => {
+      await sql.query(`UPDATE accounts SET balance = '6.00' WHERE id = 'acc_a'`);
+      await sql.query('BEGIN');
+      await sql.query(`SELECT * FROM accounts WHERE id = 'acc_b' FOR UPDATE`);
+      await sql.query('COMMIT');
+      await sql.query(`DELETE FROM accounts WHERE id = 'acc_gone'`);
+    });
+    const kinds = forTable(changes, 'accounts').map((c) => c.kind).sort();
+    assert.deepEqual(kinds, ['delete', 'update']);
+  });
+});

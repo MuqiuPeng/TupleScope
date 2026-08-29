@@ -50,7 +50,7 @@ import {
   type ScopeReport,
   type TableIdentity,
 } from './introspect.js';
-import { readCurrentRows, readKeySets } from './images.js';
+import { readCurrentRows } from './images.js';
 import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
 import type { RowsRead } from '@tuplescope/core';
 import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
@@ -242,7 +242,6 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
       // step queued behind that lock until the idle-in-transaction timeout
       // killed the capture. Read afterwards, the same TRUNCATE completes in a
       // millisecond and the answer is identical.
-      const beforeKeys = await readKeySets(observer, this.reader, scope, identities);
       // A table rewritten mid-step takes the observer's view of it with it.
       reportRewrites(
         relfilenodesBefore,
@@ -263,7 +262,6 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
           scope,
           identities,
           snapshot,
-          beforeKeys,
           warnings,
         );
       } finally {

@@ -14,34 +14,13 @@
  */
 
 import type pg from 'pg';
-import type { CaptureScope, Row, TableScope } from '@tuplescope/core';
+import type { Row, TableScope } from '@tuplescope/core';
 import type { TableIdentity } from './introspect.js';
 import { ValueUnavailable } from '@tuplescope/core';
 import type { RowsRead } from '@tuplescope/core';
 import { parseKey, quoteIdent, RowReader, serializeKey } from './rows.js';
 
 /** Reads only key columns — the cheap half, used to spot rows that left. */
-export async function readKeySets(
-  client: pg.PoolClient,
-  reader: RowReader,
-  scope: CaptureScope,
-  identities: Map<string, TableIdentity>,
-): Promise<Map<string, Set<string>>> {
-  const keys = new Map<string, Set<string>>();
-  for (const table of scope.tables) {
-    const identity = identities.get(table.table);
-    if (!identity || identity.keyColumns.length === 0) continue;
-    const columns = identity.keyColumns.map((c) => quoteIdent(c)).join(', ');
-    const where = table.where ? ` WHERE ${table.where}` : '';
-    const result = await client.query(`SELECT ${columns} FROM ${quoteIdent(table.table)}${where}`);
-    const set = new Set<string>();
-    for (const raw of result.rows) {
-      set.add(serializeKey(reader.toRow(result.fields, raw, new Set()), identity.keyColumns));
-    }
-    keys.set(table.table, set);
-  }
-  return keys;
-}
 
 /**
  * Reads whole rows for a set of serialized keys, on whichever connection is
@@ -108,6 +87,88 @@ export async function readRowsByKey(
  * building a statement out of its text would be an injection — and a tool whose
  * claim is that it only observes has no business having one.
  */
+/**
+ * The keys that left the table during the step.
+ *
+ * Replaces subtracting one full key scan from another. Those two scans existed
+ * only to compute this set, and they cost the whole table twice on every step
+ * whether or not anything was written — measured on 800k rows: 196 ms and
+ * 800,000 rows across the wire, each way, against 20 ms and 4 rows for this.
+ * The constant becomes proportional to what was *written* rather than to what
+ * is *stored*, which is also what removes the memory ceiling.
+ *
+ * Read through the observer, whose snapshot still holds the pre-request world,
+ * so a row deleted during the step is still there to be found with its `xmax`
+ * set to whatever removed it.
+ *
+ * **Deliberately no visibility filter on `xmax`.** Narrowing the candidates
+ * with `NOT pg_visible_in_snapshot(xmax::text::xid8, …)` would introduce two
+ * ways to miss a real delete: `xmax` holds a multixact id once more than one
+ * transaction has touched the row, and reading that as an xid8 is meaningless;
+ * and the `::xid8` conversion is epoch-blind, so past the first epoch the
+ * answer is wrong for every row. Over-including costs one keyed lookup.
+ * Under-including is a deleted row reported as nothing at all — the failure
+ * this tool exists to prevent.
+ *
+ * So every row carrying any `xmax` is a candidate — an update's superseded
+ * version, a lock, a rolled-back delete — and presence *now* is what decides.
+ * A row that is still there did not leave.
+ */
+export async function readDepartedKeys(
+  observer: pg.PoolClient,
+  worker: pg.PoolClient,
+  reader: RowReader,
+  table: TableScope,
+  identity: TableIdentity,
+): Promise<string[]> {
+  const columns = identity.keyColumns.map((c) => quoteIdent(c)).join(', ');
+  const where = table.where ? ` AND (${table.where})` : '';
+  const candidates = await observer.query(
+    `SELECT ${columns} FROM ${quoteIdent(table.table)} WHERE xmax <> '0'${where}`,
+  );
+  if (candidates.rows.length === 0) return [];
+
+  const keyed = candidates.rows.map((raw) => ({
+    key: serializeKey(reader.toRow(candidates.fields, raw, new Set()), identity.keyColumns),
+    values: identity.keyColumns.map((c) => raw[c]),
+  }));
+
+  // One keyed read of the candidates as they are now. A single-column key takes
+  // `= ANY`, which plans better and is the overwhelmingly common case; a
+  // composite key needs the row-constructor form.
+  // The watch predicate applies to the existence check as well, and it is
+  // load-bearing rather than symmetry for its own sake. A row that stops
+  // matching `watch:` has *left the scope* — it is still in the table, and this
+  // capture is supposed to report it as gone. Checking presence without the
+  // predicate finds it, calls it present, and loses the `left-scope` change
+  // entirely.
+  const survived =
+    identity.keyColumns.length === 1
+      ? await worker.query(
+          `SELECT ${columns} FROM ${quoteIdent(table.table)} ` +
+            `WHERE ${quoteIdent(identity.keyColumns[0]!)} = ANY($1)${where}`,
+          [keyed.map((k) => k.values[0])],
+        )
+      : await worker.query(
+          `SELECT ${columns} FROM ${quoteIdent(table.table)} WHERE (${columns}) IN (${keyed
+            .map(
+              (_, i) =>
+                `(${identity.keyColumns
+                  .map((__, j) => `$${i * identity.keyColumns.length + j + 1}`)
+                  .join(', ')})`,
+            )
+            .join(', ')})${where}`,
+          keyed.flatMap((k) => k.values),
+        );
+
+  const present = new Set(
+    survived.rows.map((raw) =>
+      serializeKey(reader.toRow(survived.fields, raw, new Set()), identity.keyColumns),
+    ),
+  );
+  return keyed.filter((k) => !present.has(k.key)).map((k) => k.key);
+}
+
 export async function readCurrentRows(
   client: pg.PoolClient,
   reader: RowReader,

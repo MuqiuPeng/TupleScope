@@ -45,7 +45,7 @@ import type {
   Value,
 } from '@tuplescope/core';
 import { decodeStream, toWireText, type DecodedChange } from './decode.js';
-import { readCurrentRows, readKeySets } from './images.js';
+import { readCurrentRows } from './images.js';
 import { masked as maskedValue, visible } from '@tuplescope/core';
 import type { RowsRead } from '@tuplescope/core';
 import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
@@ -361,7 +361,6 @@ export class WalPostgresAdapter implements DatabaseAdapter {
       // ACCESS SHARE on every watched table for the whole window, and a
       // `TRUNCATE` inside the step then waits for the idle timeout to kill the
       // capture. The observer's snapshot is frozen, so the answer is the same.
-      const beforeKeys = await readKeySets(observer, this.reader, scope, identities);
       // A table rewritten mid-step takes the observer's view of it with it.
       reportRewrites(
         relfilenodesBefore,
@@ -389,7 +388,6 @@ export class WalPostgresAdapter implements DatabaseAdapter {
           scope,
           identities,
           snapshot,
-          beforeKeys,
           warnings,
         );
         crossCheck(changes, decoded.mutations, scope, warnings);
