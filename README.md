@@ -864,10 +864,6 @@ first. None of them lose data, and each says how to avoid it.
   second's observer transaction holds a lock the first's `resetFirst` TRUNCATE
   waits on; one reports an unreachable backend and the other exits 1. Both
   blame the wrong thing. Run one at a time.
-- **The scenario loader validates less than the types promise.** A step with no
-  `name`, or a dataset with no `label`, passes `ls`, `check` and `show`, then
-  fails `run` with a `TypeError`. A file that will not parse gets a stack trace
-  and exit 2 rather than exit 4.
 - **`baseUrl` is only checked for being a parseable URL.** A scheme typo such as
   `htp://` loads, and `status` then reports "nothing is listening" about a
   backend that is answering.
@@ -879,8 +875,7 @@ first. None of them lose data, and each says how to avoid it.
 - **A workspace file cannot name a handoff alias.** Every alias is bound by the
   person at the keyboard. `tuplescope handoff --help` says otherwise; it is
   wrong.
-- **`--config` works everywhere and appears in no help text.**
-  `tuplescope url --all` is suggested by `url` and not accepted.
+- **`tuplescope url --all` is suggested by `url` and not accepted.**
 - **The demo's `pg_hba.conf` rewrite handles the shapes `initdb` writes.** A
   hand-edited file using the two-field `IP-address IP-mask` form, or line
   continuations, is rewritten in place without a backup.

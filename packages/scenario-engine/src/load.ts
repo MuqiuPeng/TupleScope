@@ -102,6 +102,13 @@ function validate(value: unknown, file: string): Scenario {
       if (typeof stepId !== 'string' || !stepId) return fail(`dataset \`${id}\` step ${stepIndex} has no id`);
       if (stepIds.has(stepId)) return fail(`dataset \`${id}\` reuses step id \`${stepId}\``);
       stepIds.add(stepId);
+      // The renderer pads it into a column, so an absent one reached the user
+      // as `TypeError: Cannot read properties of undefined (reading 'padEnd')`
+      // — after the request had already been sent. `ls`, `check` and `show` all
+      // accepted the file first.
+      if (typeof step['name'] !== 'string' || !step['name']) {
+        return fail(`dataset \`${id}\` step \`${stepId}\` has no name`);
+      }
       if (!step['request'] || typeof step['request'] !== 'object') {
         return fail(`step \`${stepId}\` has no request`);
       }

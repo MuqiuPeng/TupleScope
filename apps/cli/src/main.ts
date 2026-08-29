@@ -119,6 +119,7 @@ Run options
       --only <stepId>          run this step alone
       --continue-from <id>     reuse a stored run's variables; 'last' for the
                                newest full run of the same dataset
+      --config <path>          the workspace file to use, instead of searching upward
       --no-save                do not record this run in .tuplescope/runs
       --unevaluable <mode>     error | warn        whether an undecided check
                                reaches the exit code                 (error)
