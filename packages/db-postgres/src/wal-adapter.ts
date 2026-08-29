@@ -236,7 +236,7 @@ export class WalPostgresAdapter implements DatabaseAdapter {
    */
   async readRows(
     table: string,
-    clauses: ReadonlyArray<{ column: string; value: string }>,
+    clauses: ReadonlyArray<{ column: string; value: string | null }>,
     scope: CaptureScope,
   ): Promise<RowsRead> {
     const spec = scope.tables.find((t) => t.table === table);

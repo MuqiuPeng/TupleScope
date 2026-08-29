@@ -327,7 +327,7 @@ export interface DatabaseAdapter {
    */
   readRows?(
     table: string,
-    clauses: ReadonlyArray<{ column: string; value: string }>,
+    clauses: ReadonlyArray<{ column: string; value: string | null }>,
     scope: CaptureScope,
   ): Promise<RowsRead>;
 

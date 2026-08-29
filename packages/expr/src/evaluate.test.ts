@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { ChangeSet, Detection, Row, RowChange, Value, VisibleValue } from '@tuplescope/core';
-import { parse } from './parse.js';
+import { ExprSyntaxError, parse } from './parse.js';
 import {
   Unevaluable,
   evaluateAssertion,
+  predicateClauses,
   predicateColumnsIn,
   valuesEqual,
 } from './evaluate.js';
@@ -736,5 +737,61 @@ describe('predicateColumnsIn', () => {
 
   it('finds nothing where there is no predicate', () => {
     assert.deepEqual(at('count(inserted(widgets)) == 0'), []);
+  });
+});
+
+describe('a predicate that cannot be answered', () => {
+  /**
+   * All three of these used to be green, and two of them were green over data
+   * that contradicted them one line above in the same report. The refusal has
+   * to happen where a row count cannot reach it — `Array.prototype.filter`
+   * never calls its callback on an empty list, so a predicate over a selection
+   * that matched nothing was never read at all, and `count(...) == 0` was
+   * satisfied by never having done any work.
+   */
+  it('refuses an operator it cannot evaluate, rather than never reading it', () => {
+    assert.throws(() => parse('count(inserted(t).where(amount > 100)) == 0'), /`>` is not available/);
+    assert.throws(() => parse('count(rows(t, n <= 3)) == 0'), /not available/);
+    assert.throws(() => parse('count(inserted(t).where(name like "a%")) == 0'), /not available/);
+  });
+
+  it('refuses `or` rather than folding it into one mangled literal', () => {
+    // Measured before this: `kind = "A" or kind = "B"` survived as a single
+    // clause whose expected value was the fifteen characters `A" or kind = "B`.
+    // It matched nothing, and written as `== 0` it passed with both rows
+    // rendered directly above it.
+    assert.throws(
+      () => parse('count(inserted(t).where(kind = "A" or kind = "B")) == 0'),
+      /`or` is not available/,
+    );
+  });
+
+  it('leaves an `or` inside a quoted value alone', () => {
+    const clauses = predicateClauses('name = "Bob or Alice"');
+    assert.deepEqual(clauses, [{ column: 'name', value: 'Bob or Alice' }]);
+  });
+
+  it('reads a bare `null` as SQL NULL, not as four characters', () => {
+    assert.deepEqual(predicateClauses('note = null'), [{ column: 'note', value: null }]);
+    assert.deepEqual(predicateClauses('note = NULL'), [{ column: 'note', value: null }]);
+    // Quoted, it is the word.
+    assert.deepEqual(predicateClauses('note = "null"'), [{ column: 'note', value: 'null' }]);
+  });
+
+  it('refuses at parse time, so an empty selection cannot skip the check', () => {
+    // The point of moving this out of the per-row match: `check` and the
+    // scenario loader both see it, before any row exists to be filtered.
+    assert.throws(() => parse('count(inserted(t).where(x > 1)) == 0'), ExprSyntaxError);
+  });
+
+  it('still splits on `and` and on a comma', () => {
+    assert.deepEqual(predicateClauses('a = "x" and b = "y"'), [
+      { column: 'a', value: 'x' },
+      { column: 'b', value: 'y' },
+    ]);
+    assert.deepEqual(predicateClauses('a = "x", b = "y"'), [
+      { column: 'a', value: 'x' },
+      { column: 'b', value: 'y' },
+    ]);
   });
 });

@@ -175,22 +175,76 @@ function asDecimal(value: Value | null, what: string): Decimal {
  * and can carry a captured variable's value; pasting it into a statement would
  * be an injection this tool has no business having.
  */
-export function predicateClauses(predicate: string): Array<{ column: string; value: string }> {
+export function predicateClauses(
+  predicate: string,
+): Array<{ column: string; value: string | null }> {
+  // Delegated, not duplicated. This used to carry its own copy of the clause
+  // regex, so the two paths a predicate can take — matched against a captured
+  // changeset, or turned into a `WHERE` against the live table — disagreed
+  // about what a predicate means. `col = null` was a real NULL on one and the
+  // four characters on the other, which is the shape of a bug nobody finds:
+  // the same assertion answering differently depending on which selector it
+  // was written with.
+  return parsePredicate(predicate).map(({ column, literal }) => ({ column, value: literal }));
+}
+
+/** One `column = literal` test. `literal: null` is a real SQL NULL. */
+export interface PredicateClause {
+  readonly column: string;
+  readonly literal: string | null;
+  readonly source: string;
+}
+
+/**
+ * Reads a predicate into clauses, refusing anything it cannot answer.
+ *
+ * The refusal has to happen here, and here has to be reachable without a row,
+ * because `Array.prototype.filter` never calls its callback on an empty list.
+ * While this lived only inside the per-row match, a predicate over a selection
+ * that matched nothing was never read at all:
+ *
+ *     count(inserted(widgets).where(amount > 1000000)) == 0    → green, always
+ *
+ * That is exactly the shape of a must-not-write guard, so the assertion was
+ * satisfied precisely when it was doing no work. `parse()` now calls this, so
+ * an unsupported predicate is a syntax error at load time and `check` catches
+ * it — the same treatment a misspelled table already got.
+ *
+ * Only `=` joined by `and` or a comma. `or`, `>`, `like` and the rest are
+ * refused by name rather than mis-parsed: `kind = "A" or kind = "B"` used to
+ * become one clause whose expected value was the seven characters
+ * `A" or kind = "B`, which matched nothing and reported a green over two rows
+ * that were right there. Widening the grammar is a separate decision from
+ * closing this hole, and doing it in the other order would ship four new
+ * operators over the same "never evaluated, therefore satisfied" floor.
+ */
+export function parsePredicate(predicate: string): PredicateClause[] {
   return splitClauses(predicate).map((clause) => {
-    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/.exec(clause);
+    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(=|<=|>=|<>|!=|<|>|~~\*?|\blike\b|\bilike\b|\bin\b|\bis\b)\s*(.+?)\s*$/i.exec(
+      clause,
+    );
     if (!m) throw new Unevaluable(`cannot read predicate \`${clause.trim()}\``);
-    return { column: m[1]!, value: literalOf(m[2]!, clause) };
+    const [, column, operator, rawLiteral] = m;
+    if (operator !== '=') {
+      throw new Unevaluable(
+        `\`${operator}\` is not available in a predicate — only \`=\`, joined by \`and\` or a comma. ` +
+          `Select the rows with \`=\` and ask the rest with an aggregate.`,
+      );
+    }
+    const bare = rawLiteral!.trim();
+    // A bare, unquoted `null` is SQL's NULL. It used to be the four characters,
+    // so `count(rows(t, col = null)) == 0` passed over a table with a real NULL
+    // in it — answerable, wrongly, as a green.
+    const literal = /^null$/i.test(bare) ? null : literalOf(bare, clause);
+    return { column: column!, literal, source: clause.trim() };
   });
 }
 
 function matchesPredicate(row: Row | null, predicate: string): boolean {
   if (!row) return false;
-  for (const clause of splitClauses(predicate)) {
-    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/.exec(clause);
-    if (!m) throw new Unevaluable(`cannot read predicate \`${clause.trim()}\``);
-    const [, column, rawLiteral] = m;
-    const expected = literalOf(rawLiteral!, clause);
-    const actual = row[column!];
+  for (const { column, literal } of parsePredicate(predicate)) {
+    const expected = literal;
+    const actual = row[column];
     if (actual === undefined) throw new Unevaluable(`no column \`${column}\` to match on`);
     // Refused, not answered. A predicate is a question about a value, and
     // equality against a masked column is an oracle over it: ask enough of them
@@ -237,6 +291,19 @@ function splitClauses(predicate: string): string[] {
       out.push(predicate.slice(start, i));
       i += and[0].length - 1;
       start = i + 1;
+      continue;
+    }
+    // Outside quotes, so `name = "Bob or Alice"` is untouched. An `or` reaching
+    // here is a join this cannot evaluate, and guessing costs a wrong *answer*
+    // rather than a wrong error: `kind = "A" or kind = "B"` used to survive as
+    // one clause whose expected value was the fifteen characters
+    // `A" or kind = "B`. It matched nothing, and written as `count(...) == 0`
+    // it came back green with both rows printed directly above it.
+    if (/^\s+or\s+/i.test(predicate.slice(i))) {
+      throw new Unevaluable(
+        '`or` is not available in a predicate — clauses join with `and` or a comma. ' +
+          'Ask the two cases separately, or select more broadly and count.',
+      );
     }
   }
   if (quote) throw new Unevaluable(`unterminated ${quote} in predicate \`${predicate}\``);

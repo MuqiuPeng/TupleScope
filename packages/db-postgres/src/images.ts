@@ -113,7 +113,7 @@ export async function readCurrentRows(
   reader: RowReader,
   table: TableScope,
   identity: TableIdentity | undefined,
-  clauses: ReadonlyArray<{ column: string; value: string }>,
+  clauses: ReadonlyArray<{ column: string; value: string | null }>,
   limit: number,
 ): Promise<RowsRead> {
   const masked = new Set(table.maskedColumns);
@@ -135,8 +135,17 @@ export async function readCurrentRows(
         'Remove the column from `maskColumns` if the selector needs it.',
     );
   }
+  // `IS NULL` for a null literal, because `col = NULL` is never true in SQL and
+  // `col::text = 'null'` matches the four characters. `count(rows(t, col =
+  // null)) == 0` used to pass over a table with a real NULL in it — answerable,
+  // wrongly, as a green. Parameters are numbered over the non-null clauses only.
+  const params: string[] = [];
   const where = [
-    ...clauses.map((c, i) => `${quoteIdent(c.column)}::text = $${i + 1}`),
+    ...clauses.map((c) =>
+      c.value === null
+        ? `${quoteIdent(c.column)} IS NULL`
+        : `${quoteIdent(c.column)}::text = $${params.push(c.value)}`,
+    ),
     ...(table.where ? [`(${table.where})`] : []),
   ];
 
@@ -147,7 +156,7 @@ export async function readCurrentRows(
       // with exactly that many rows from one with ten thousand, and the
       // difference decides whether a count is a total or a lower bound.
       ` LIMIT ${limit + 1}`,
-    clauses.map((c) => c.value),
+    params,
   );
 
   const complete = result.rows.length <= limit;

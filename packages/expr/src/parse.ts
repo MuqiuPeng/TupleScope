@@ -15,6 +15,7 @@
  */
 
 import type { Expr, CompareOp, Selector, SelectorKind, Temporal } from '@tuplescope/core';
+import { parsePredicate } from './evaluate.js';
 
 const SELECTOR_KINDS: ReadonlySet<string> = new Set([
   'changes',
@@ -141,6 +142,25 @@ function rawUntilClose(src: string, tokens: Token[], from: number): { text: stri
   return { text: src.slice(start, end).trim(), next: i };
 }
 
+/**
+ * Reads a predicate the moment it is captured, so nothing unparsed reaches a run.
+ *
+ * The evaluator reads predicates per row, and `Array.prototype.filter` never
+ * calls its callback on an empty list — so a predicate over a selection that
+ * matched nothing was never read at all, and `count(...) == 0` over it was
+ * satisfied by never having done any work. Reading it here makes an
+ * unsupported predicate a syntax error at load time, which is where `check`
+ * and the scenario loader can see it, and removes the row count from the
+ * question entirely.
+ */
+function validatePredicate(raw: string, source: string, at: number): void {
+  try {
+    parsePredicate(raw);
+  } catch (error) {
+    throw new ExprSyntaxError(error instanceof Error ? error.message : String(error), source, at);
+  }
+}
+
 export function parse(source: string): Expr {
   const tokens = tokenize(source);
   let pos = 0;
@@ -215,6 +235,7 @@ export function parse(source: string): Expr {
           const raw = rawUntilClose(source, tokens, pos);
           pos = raw.next;
           expect(')');
+          validatePredicate(raw.text, source, raw.next);
           expr = { node: 'predicate', source: expr, predicate: raw.text };
           continue;
         }
@@ -307,6 +328,7 @@ export function parse(source: string): Expr {
         if (eat(',')) {
           const raw = rawUntilClose(source, tokens, pos);
           pos = raw.next;
+          validatePredicate(raw.text, source, raw.next);
           selector.predicate = raw.text;
         }
       }
