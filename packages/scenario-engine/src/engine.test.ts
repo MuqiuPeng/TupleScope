@@ -13,8 +13,8 @@ import type {
   Detection,
   RowChange,
   Scenario,
-} from '@statescope/core';
-import type { Exchange, HttpRunner } from '@statescope/http-runner';
+} from '@tuplescope/core';
+import type { Exchange, HttpRunner } from '@tuplescope/http-runner';
 import { ScenarioEngine, template } from './index.js';
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
@@ -462,7 +462,7 @@ describe('ScenarioEngine', () => {
   it('turns a transport failure into a typed error with a remedy', async () => {
     const broken: HttpRunner = {
       async send() {
-        const { HttpRunnerError } = await import('@statescope/http-runner');
+        const { HttpRunnerError } = await import('@tuplescope/http-runner');
         throw new HttpRunnerError('POST http://127.0.0.1:9/a failed: ECONNREFUSED', 'http://127.0.0.1:9/a');
       },
     } as unknown as HttpRunner;

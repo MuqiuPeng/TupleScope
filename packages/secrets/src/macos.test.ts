@@ -135,14 +135,14 @@ describe('the macOS Keychain', () => {
     await promisify(execFile)('/usr/bin/security', [
       'add-generic-password',
       '-s',
-      `dev.statescope.secret.${NS}.${id}`,
+      `dev.tuplescope.secret.${NS}.${id}`,
       '-a',
-      'statescope',
+      'tuplescope',
       '-w',
       'Bearer cus_alice',
       '-U',
     ]);
-    await assert.rejects(() => store.get(id), /was not written by StateScope/);
+    await assert.rejects(() => store.get(id), /was not written by TupleScope/);
     // ...and `has` still says it is there, because it is.
     assert.equal(await store.has(id), true);
   });

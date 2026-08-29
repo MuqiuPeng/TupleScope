@@ -46,7 +46,7 @@ export function mintToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-const COOKIE = 'statescope_token';
+const COOKIE = 'tuplescope_token';
 
 /** Reads one cookie without pulling in a parser: the header is `a=1; b=2`. */
 function cookieToken(header: string | undefined): string | undefined {
@@ -88,7 +88,7 @@ export function createGuard(options: GuardOptions) {
     if (!host || !allowedHosts.has(host.toLowerCase())) {
       await reply.status(403).send({
         error: 'BAD_HOST',
-        message: `Refusing a request addressed to \`${host ?? '(none)'}\`. StateScope answers only to localhost.`,
+        message: `Refusing a request addressed to \`${host ?? '(none)'}\`. TupleScope answers only to localhost.`,
       });
       return;
     }
@@ -98,7 +98,7 @@ export function createGuard(options: GuardOptions) {
     if (origin && !allowedOrigins.has(origin.toLowerCase())) {
       await reply.status(403).send({
         error: 'BAD_ORIGIN',
-        message: `\`${origin}\` is not allowed to talk to StateScope.`,
+        message: `\`${origin}\` is not allowed to talk to TupleScope.`,
       });
       return;
     }
@@ -107,7 +107,7 @@ export function createGuard(options: GuardOptions) {
 
     // 2. The token. Any one of the three sources matching is enough — a stale
     //    cookie from a previous run must not shadow a freshly pasted URL.
-    const rawHeader = request.headers['x-statescope-token'];
+    const rawHeader = request.headers['x-tuplescope-token'];
     const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
     const query = (request.query as { token?: string } | undefined)?.token;
     const cookie = cookieToken(request.headers.cookie);
@@ -137,7 +137,7 @@ export function createGuard(options: GuardOptions) {
       await reply.status(401).send({
         error: 'UNAUTHORISED',
         message:
-          'Missing or wrong access token. Run `statescope url` for the URL of this ' +
+          'Missing or wrong access token. Run `tuplescope url` for the URL of this ' +
           'instance, token and all.',
       });
       return;

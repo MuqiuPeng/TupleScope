@@ -29,7 +29,7 @@ export interface SecretStore {
    *
    * Separate from `get` because the difference is not an optimisation. Reading
    * a value is the operation that raises the macOS permission dialog and the
-   * one that blocks on a locked keychain — so `statescope status`, the command
+   * one that blocks on a locked keychain — so `tuplescope status`, the command
    * a person runs *because* something is wrong, was the most likely to prompt
    * or hang. It also made this file's own claim that "the value never leaves
    * the keychain" untrue.
@@ -73,9 +73,9 @@ export class SecretNotConfigured extends Error {
     super(
       name === id
         ? `The secret \`${name}\` is not configured. Set it with ` +
-          `\`statescope secret set ${name}\`. (referenced by ${where})`
+          `\`tuplescope secret set ${name}\`. (referenced by ${where})`
         : `\`${name}\` resolves to the secret \`${id}\`, which is not configured. ` +
-          `Set it with \`statescope secret set ${id}\`. (referenced by ${where})`,
+          `Set it with \`tuplescope secret set ${id}\`. (referenced by ${where})`,
     );
     this.name = 'SecretNotConfigured';
   }
@@ -88,7 +88,7 @@ export class SecretNotConfigured extends Error {
  * `db_password` would collide with whatever else wanted that name — and `list`
  * would show a person credentials this tool never stored and must not touch.
  */
-export const SERVICE = 'dev.statescope.secret';
+export const SERVICE = 'dev.tuplescope.secret';
 
 /**
  * Marks a stored blob as one this tool wrote, and in which encoding.
@@ -102,7 +102,7 @@ export const SERVICE = 'dev.statescope.secret';
  *
  * With the marker, a foreign item is a sentence instead.
  */
-export const ENVELOPE = 'statescope.v1:';
+export const ENVELOPE = 'tuplescope.v1:';
 
 export function wrap(value: string): string {
   return ENVELOPE + Buffer.from(value, 'utf8').toString('base64');
@@ -112,9 +112,9 @@ export function unwrap(stored: string, id: SecretId, where: string): string {
   const trimmed = stored.trim();
   if (!trimmed.startsWith(ENVELOPE)) {
     throw new Error(
-      `The item stored for \`${id}\` in the ${where} was not written by StateScope, so its ` +
+      `The item stored for \`${id}\` in the ${where} was not written by TupleScope, so its ` +
         `contents cannot be read reliably. Overwrite it with ` +
-        `\`statescope secret set ${id}\`, or remove it from the store first.`,
+        `\`tuplescope secret set ${id}\`, or remove it from the store first.`,
     );
   }
   return Buffer.from(trimmed.slice(ENVELOPE.length), 'base64').toString('utf8');

@@ -1,5 +1,5 @@
 /**
- * @statescope/core — the contracts, and nothing else.
+ * @tuplescope/core — the contracts, and nothing else.
  *
  * This package holds types and pure helpers. It must never depend on React, on
  * a database driver, on WhoDB, or on the MCP layer; those are adapters around

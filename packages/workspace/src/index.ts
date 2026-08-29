@@ -1,5 +1,5 @@
 /**
- * @statescope/workspace — config in, a running engine out.
+ * @tuplescope/workspace — config in, a running engine out.
  *
  * The HTTP runtime, the CLI and later MCP are three callers of this one
  * assembly. Nothing here knows about HTTP serving, terminals or MCP.

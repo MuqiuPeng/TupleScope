@@ -7,7 +7,7 @@
  * built, not committed, so a bin pointing straight at it is skipped by the
  * first `pnpm install` and the command never appears; the build that would
  * have created it runs too late, and a later build does not re-link. That is
- * why `statescope` did not exist after the documented two-command install.
+ * why `tuplescope` did not exist after the documented two-command install.
  *
  * This file is committed, so the link always happens. The one thing it does
  * before handing over is say plainly when the build has not run yet.
@@ -25,6 +25,6 @@ if (existsSync(fileURLToPath(main))) {
   // write is async, and exiting truncates it.
   process.exitCode = 4;
   process.stderr.write(
-    'statescope is not built yet.\nRun `pnpm build` at the repository root, then try again.\n',
+    'tuplescope is not built yet.\nRun `pnpm build` at the repository root, then try again.\n',
   );
 }

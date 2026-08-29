@@ -19,7 +19,7 @@
  */
 
 import type pg from 'pg';
-import type { CaptureWarning } from '@statescope/core';
+import type { CaptureWarning } from '@tuplescope/core';
 
 /**
  * Set on every capture connection. Values are the form `current_setting`

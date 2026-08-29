@@ -7,7 +7,7 @@
  * An agent with only the list will read `engineStatus: "passed"` and report
  * success — that is the obvious reading, and on this tool it is wrong.
  */
-export const INSTRUCTIONS = `StateScope runs backend scenarios and observes what
+export const INSTRUCTIONS = `TupleScope runs backend scenarios and observes what
 the API actually wrote to PostgreSQL. Its value is not that it sends requests —
 anything can do that — but that it can tell you a row was rewritten even when no
 column value changed, which is what an idempotency check actually needs.
@@ -120,7 +120,7 @@ the scenario file, adding a single line and reformatting nothing.
 
 No shell, no process control, no arbitrary SQL. \`describe_table\` reads the
 catalogue; nothing here writes to the database except through the API under
-test, which is the whole point — StateScope observes what *your backend* did,
+test, which is the whole point — TupleScope observes what *your backend* did,
 and a tool that also wrote rows itself could not tell you that.
 
 Scenario files are the only thing you can write, they are validated before they

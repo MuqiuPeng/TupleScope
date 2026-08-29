@@ -43,11 +43,11 @@ import type {
   RowKey,
   TableScope,
   Value,
-} from '@statescope/core';
+} from '@tuplescope/core';
 import { decodeStream, toWireText, type DecodedChange } from './decode.js';
 import { readCurrentRows, readKeySets } from './images.js';
-import { masked as maskedValue, visible } from '@statescope/core';
-import type { RowsRead } from '@statescope/core';
+import { masked as maskedValue, visible } from '@tuplescope/core';
+import type { RowsRead } from '@tuplescope/core';
 import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
 import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
 import {
@@ -190,7 +190,7 @@ export class WalPostgresAdapter implements DatabaseAdapter {
                 current_setting('max_replication_slots') AS max,
                 (SELECT coalesce(array_agg(slot_name::text), '{}')
                    FROM pg_replication_slots
-                  WHERE slot_name LIKE 'statescope\\_%' AND NOT active AND NOT temporary) AS stale`,
+                  WHERE slot_name LIKE 'tuplescope\\_%' AND NOT active AND NOT temporary) AS stale`,
       );
       const { used, max, stale } = slots.rows[0]!;
       if (stale.length > 0) {
@@ -277,9 +277,9 @@ export class WalPostgresAdapter implements DatabaseAdapter {
     // async-commit database the engine reported an empty stream.
     const slotConn = await this.metaPool.connect();
     // Random rather than the pid: two developers pointed at one shared server
-    // would collide on `statescope_<pid>_0` and get a bare 42710 with nothing
+    // would collide on `tuplescope_<pid>_0` and get a bare 42710 with nothing
     // to suggest another human caused it.
-    const slot = `statescope_${randomBytes(6).toString('hex')}_${this.slotSequence++}`;
+    const slot = `tuplescope_${randomBytes(6).toString('hex')}_${this.slotSequence++}`;
 
     let snapshot: string;
     let openedAt: string;
@@ -480,7 +480,7 @@ export class WalPostgresAdapter implements DatabaseAdapter {
    * Creates the temporary slot, translating the failures a person can act on.
    *
    * A bare driver error here is unhelpful in the two ways it most often fails:
-   * a name collision means another StateScope is running, and a slot that
+   * a name collision means another TupleScope is running, and a slot that
    * vanishes between creation and use means a connection pooler moved the two
    * statements to different backends.
    */
@@ -698,7 +698,7 @@ export function slotFailure(error: unknown, slot: string): Error {
   if (code === '42710') {
     return new Error(
       `A replication slot named \`${slot}\` already exists. The name is random per capture, so ` +
-        `this most likely means another StateScope is running against this database. (${message})`,
+        `this most likely means another TupleScope is running against this database. (${message})`,
     );
   }
   if (code === '53400' || /max_replication_slots/.test(message)) {

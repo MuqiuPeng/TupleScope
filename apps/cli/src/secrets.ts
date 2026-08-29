@@ -1,5 +1,5 @@
 /**
- * `statescope secret …` — the four things a person needs to do with a
+ * `tuplescope secret …` — the four things a person needs to do with a
  * credential this tool will later read.
  *
  * Two decisions in here are about what the commands deliberately do *not* do.
@@ -16,18 +16,18 @@
  * or from a pipe when there is no terminal.
  */
 
-import { openSecretStore, SecretStoreUnavailable, type SecretStore } from '@statescope/secrets';
-import { loadWorkspaceConfig, namespaceOf } from '@statescope/workspace';
+import { openSecretStore, SecretStoreUnavailable, type SecretStore } from '@tuplescope/secrets';
+import { loadWorkspaceConfig, namespaceOf } from '@tuplescope/workspace';
 
 const EXIT_USAGE = 4;
 const EXIT_ERROR = 2;
 
-const USAGE = `statescope secret — credentials a workspace refers to but does not contain
+const USAGE = `tuplescope secret — credentials a workspace refers to but does not contain
 
-  statescope secret set <name>      store a value, read from the terminal or a pipe
-  statescope secret get <name>      whether it is configured; --show to print it
-  statescope secret list            every secret this tool stored on this machine
-  statescope secret delete <name>   remove one
+  tuplescope secret set <name>      store a value, read from the terminal or a pipe
+  tuplescope secret get <name>      whether it is configured; --show to print it
+  tuplescope secret list            every secret this tool stored on this machine
+  tuplescope secret delete <name>   remove one
 
 A workspace refers to these by name, and never contains the value:
 
@@ -66,7 +66,7 @@ export async function commandSecret(
       `${(error as Error).message}\n\n` +
         `Secrets belong to a workspace: the name a reference uses is stored under that ` +
         `workspace's own slot, so two projects that both want \`api_token\` do not collide. ` +
-        `Run this from a directory with a statescope.yaml, or pass --config.\n`,
+        `Run this from a directory with a tuplescope.yaml, or pass --config.\n`,
     );
     return EXIT_USAGE;
   }
@@ -100,7 +100,7 @@ export async function commandSecret(
 
 async function commandSet(store: SecretStore, name: string | undefined): Promise<number> {
   if (!name) {
-    process.stderr.write('Which secret? `statescope secret set <name>`\n');
+    process.stderr.write('Which secret? `tuplescope secret set <name>`\n');
     return EXIT_USAGE;
   }
   const value = await readValue(name);
@@ -125,7 +125,7 @@ async function commandGet(
   show: boolean,
 ): Promise<number> {
   if (!name) {
-    process.stderr.write('Which secret? `statescope secret get <name>`\n');
+    process.stderr.write('Which secret? `tuplescope secret get <name>`\n');
     return EXIT_USAGE;
   }
   const found = await store.get(name);
@@ -149,7 +149,7 @@ async function commandListSecrets(store: SecretStore, workspace: string): Promis
   const stored = await store.list();
   if (stored.length === 0) {
     process.stdout.write(
-      `No secrets stored for \`${workspace}\`. Add one with \`statescope secret set <name>\`, ` +
+      `No secrets stored for \`${workspace}\`. Add one with \`tuplescope secret set <name>\`, ` +
         `and refer to it from the workspace as \`\${secret:<name>}\`.\n`,
     );
     return 0;
@@ -169,7 +169,7 @@ async function commandListSecrets(store: SecretStore, workspace: string): Promis
 
 async function commandDelete(store: SecretStore, name: string | undefined): Promise<number> {
   if (!name) {
-    process.stderr.write('Which secret? `statescope secret delete <name>`\n');
+    process.stderr.write('Which secret? `tuplescope secret delete <name>`\n');
     return EXIT_USAGE;
   }
   const removed = await store.delete(name);

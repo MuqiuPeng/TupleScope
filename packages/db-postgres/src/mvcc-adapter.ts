@@ -42,7 +42,7 @@ import type {
   DatabaseAdapter,
   RowChange,
   TableScope,
-  } from '@statescope/core';
+  } from '@tuplescope/core';
 import {
   listBaseTables, listColumnsByTable,
   readLocation,
@@ -51,7 +51,7 @@ import {
 } from './introspect.js';
 import { readCurrentRows, readKeySets } from './images.js';
 import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
-import type { RowsRead } from '@statescope/core';
+import type { RowsRead } from '@tuplescope/core';
 import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
 import { RAW_TEXT_TYPES, ROWS_LIMIT, RowReader } from './rows.js';
 

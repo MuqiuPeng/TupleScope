@@ -10,8 +10,8 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
-import type { Row, RowKey, Value } from '@statescope/core';
-import { isVisible, masked as maskedValue, visible } from '@statescope/core';
+import type { Row, RowKey, Value } from '@tuplescope/core';
+import { isVisible, masked as maskedValue, visible } from '@tuplescope/core';
 import { readTypeNames } from './introspect.js';
 
 /** Every value arrives as raw text; nothing is parsed into a JS type on the way in. */

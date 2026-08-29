@@ -7,7 +7,7 @@
  *
  * That refusal is the feature. The whole point of `${secret:…}` is that the
  * credential is not in a file that gets committed, and a tool that responds to
- * a missing keyring by writing `.statescope/secrets.json` has kept the syntax
+ * a missing keyring by writing `.tuplescope/secrets.json` has kept the syntax
  * and thrown away the promise. A file-backed store may exist, but only where
  * someone chose it on purpose and was told what it is worth.
  */

@@ -101,7 +101,7 @@ export class SecretServiceStore implements SecretStore {
     // These two are distinguishable by their message and worth naming exactly,
     // because the advice differs: one needs a session bus, the other needs a
     // keyring to exist at all.
-    const dry = await run(['lookup', ...SCHEMA, 'name', 'statescope-availability-probe']);
+    const dry = await run(['lookup', ...SCHEMA, 'name', 'tuplescope-availability-probe']);
     // Both spellings are real: a desktop with no `$DISPLAY` says the first, and
     // a container — measured on `debian:bookworm-slim` — says the second,
     // because it has no machine-id either. Matching only the documented one
@@ -162,7 +162,7 @@ export class SecretServiceStore implements SecretStore {
     assertUsableId(id);
     const encoded = wrap(value);
     const { code, stderr } = await run(
-      ['store', '--label', `StateScope: ${id}`, ...this.attributes(id)],
+      ['store', '--label', `TupleScope: ${id}`, ...this.attributes(id)],
       encoded,
     );
     if (code === 0) return;
@@ -197,7 +197,7 @@ export class SecretServiceStore implements SecretStore {
         `\`secret-tool\` offers is \`search\`, which prints the values — and a command whose ` +
         `job is to say which secrets exist must not be a way to read them. ` +
         `Use your desktop's keyring application to browse them; ` +
-        `\`statescope status\` still reports whether each one a workspace needs is configured.`,
+        `\`tuplescope status\` still reports whether each one a workspace needs is configured.`,
     );
   }
 }

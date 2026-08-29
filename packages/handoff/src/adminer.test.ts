@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { masked, visible } from '@statescope/core';
+import { masked, visible } from '@tuplescope/core';
 import { adminerUrl, MAX_URL_LENGTH } from './adminer.js';
 import type { AdminerBinding } from './config.js';
 

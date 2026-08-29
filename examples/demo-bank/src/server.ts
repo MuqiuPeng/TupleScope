@@ -2,7 +2,7 @@
  * Demo Bank API.
  *
  * Small on purpose, but not a mock: every endpoint runs a real transaction
- * against a real Postgres, so what StateScope observes is what actually
+ * against a real Postgres, so what TupleScope observes is what actually
  * committed. Auth is `Authorization: Bearer <customer_id>` — a demo shortcut,
  * and the one place this service is deliberately not realistic.
  */
@@ -78,7 +78,7 @@ app.get('/health', async () => ({ ok: true }));
 /**
  * A signpost, not an endpoint.
  *
- * This service is the thing StateScope observes, not the thing you look at —
+ * This service is the thing TupleScope observes, not the thing you look at —
  * but a developer who sees three ports in a stack will open all three, and
  * meeting a bare framework 404 reads as "it is broken". Browsers get a page;
  * anything else gets the same facts as JSON.
@@ -91,11 +91,11 @@ const ROUTES = [
 ] as const;
 
 app.get('/', async (request, reply) => {
-  const uiPort = process.env['STATESCOPE_PORT'] ?? '7420';
+  const uiPort = process.env['TUPLESCOPE_PORT'] ?? '7420';
   if (!request.headers.accept?.includes('text/html')) {
     return {
       service: 'demo-bank',
-      role: 'The example backend StateScope observes. Not a UI.',
+      role: 'The example backend TupleScope observes. Not a UI.',
       ui: `http://127.0.0.1:${uiPort}`,
       routes: ROUTES.map(([method, path, what]) => `${method} ${path} — ${what}`),
     };
@@ -119,7 +119,7 @@ app.get('/', async (request, reply) => {
 </style></head>
 <body><main>
   <h1>Demo Bank API</h1>
-  <p>This is the backend StateScope watches — the subject, not the tool.
+  <p>This is the backend TupleScope watches — the subject, not the tool.
      The UI is at <a href="http://127.0.0.1:${uiPort}">127.0.0.1:${uiPort}</a>
      (it needs the access token the runtime printed at startup).</p>
   <ul>${ROUTES.map(([m, path, what]) => `<li><b>${m} ${path}</b> — ${what}</li>`).join('')}</ul>

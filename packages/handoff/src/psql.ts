@@ -2,7 +2,7 @@
  * The `psql-service` target: a program of the user's, run with their
  * credentials, told nothing it did not already know.
  *
- * Not an interactive session. StateScope spawns, writes SQL on stdin, and
+ * Not an interactive session. TupleScope spawns, writes SQL on stdin, and
  * renders the captured stdout. Three rules make that safe, and each closes a
  * specific hole:
  *
@@ -18,15 +18,15 @@
  *          **not** disable `\!` read from stdin.
  *
  * The connection is the user's: `PGSERVICE` names an entry in their own
- * `pg_service.conf`, and their own `~/.pgpass` supplies the password. StateScope
+ * `pg_service.conf`, and their own `~/.pgpass` supplies the password. TupleScope
  * never reads either file and never sees a credential.
  */
 
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { realpath } from 'node:fs/promises';
-import type { KnownLocation, Value } from '@statescope/core';
-import { renderGuard, renderSelect } from '@statescope/core';
+import type { KnownLocation, Value } from '@tuplescope/core';
+import { renderGuard, renderSelect } from '@tuplescope/core';
 import type { PsqlServiceBinding } from './config.js';
 
 /** Fixed literals. Not a template, not a config key, not concatenated. */
@@ -96,12 +96,12 @@ export async function runPsql(
     try {
       now = await realpath(binding.executable);
     } catch {
-      throw new PsqlRefused(`\`${binding.executable}\` is no longer there. Re-run \`statescope handoff enable\`.`);
+      throw new PsqlRefused(`\`${binding.executable}\` is no longer there. Re-run \`tuplescope handoff enable\`.`);
     }
     if (now !== binding.realpath) {
       throw new PsqlRefused(
         `\`${binding.executable}\` now resolves to \`${now}\`, not the \`${binding.realpath}\` that was approved. ` +
-          'Re-run `statescope handoff enable` if that change was yours.',
+          'Re-run `tuplescope handoff enable` if that change was yours.',
       );
     }
   }
@@ -218,7 +218,7 @@ export function psqlDisclosure(binding: PsqlServiceBinding): {
         `    ${binding.executable} ${ARGS.join(' ')}`,
         ``,
         `  connecting through service \`${binding.service}\` from your own pg_service.conf,`,
-        `  with your own ~/.pgpass. StateScope never reads either file.`,
+        `  with your own ~/.pgpass. TupleScope never reads either file.`,
         ``,
         `  The SQL goes on stdin, so the key never appears in \`ps\`:`,
         ``,
@@ -234,10 +234,10 @@ export function psqlDisclosure(binding: PsqlServiceBinding): {
         ``,
         `  \`${alias}\` is a name this repository chose. Bind it yourself, once:`,
         ``,
-        `    statescope handoff enable psql-service --as ${alias} --service ${binding.service}`,
+        `    tuplescope handoff enable psql-service --as ${alias} --service ${binding.service}`,
         ``,
-        `  Written to ~/.statescope/handoff.json, which this repository cannot write.`,
-        `  statescope handoff list · statescope handoff disable`,
+        `  Written to ~/.tuplescope/handoff.json, which this repository cannot write.`,
+        `  tuplescope handoff list · tuplescope handoff disable`,
       ].join('\n'),
   };
 }

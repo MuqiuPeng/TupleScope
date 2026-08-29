@@ -31,7 +31,7 @@ let dir: string;
 const path = (): string => join(dir, 'handoff.json');
 
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'statescope-handoff-'));
+  dir = await mkdtemp(join(tmpdir(), 'tuplescope-handoff-'));
 });
 after(async () => {
   await rm(dir, { recursive: true, force: true });

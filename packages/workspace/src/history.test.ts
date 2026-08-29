@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { RUN_REPORT_SCHEMA } from '@statescope/core';
+import { RUN_REPORT_SCHEMA } from '@tuplescope/core';
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { openStore, StaleRunError, type StoredRun } from './history.js';
 
 let dir: string;
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'statescope-runs-'));
+  dir = await mkdtemp(join(tmpdir(), 'tuplescope-runs-'));
 });
 after(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -145,12 +145,12 @@ describe('a stored run this build cannot read', () => {
     await store.save(stored('run_stale001'));
     const path = join(dir, 'run_stale001.json');
     const parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
-    await writeFile(path, JSON.stringify({ ...parsed, schema: 'statescope.run-report/1' }));
+    await writeFile(path, JSON.stringify({ ...parsed, schema: 'tuplescope.run-report/1' }));
 
     await assert.rejects(() => store.get('run_stale001'), StaleRunError);
     await assert.rejects(
       () => store.get('run_stale001'),
-      /older StateScope \(statescope\.run-report\/1\)/,
+      /older TupleScope \(tuplescope\.run-report\/1\)/,
     );
   });
 
@@ -162,7 +162,7 @@ describe('a stored run this build cannot read', () => {
     await store.save(stored('run_stale200'));
     const path = join(dir, 'run_stale200.json');
     const parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
-    await writeFile(path, JSON.stringify({ ...parsed, schema: 'statescope.run-report/99' }));
+    await writeFile(path, JSON.stringify({ ...parsed, schema: 'tuplescope.run-report/99' }));
 
     await assert.rejects(() => store.latest(), StaleRunError);
   });
@@ -173,7 +173,7 @@ describe('a stored run this build cannot read', () => {
     await store.save(stored('run_stale400'));
     const path = join(dir, 'run_stale400.json');
     const parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
-    await writeFile(path, JSON.stringify({ ...parsed, schema: 'statescope.run-report/1' }));
+    await writeFile(path, JSON.stringify({ ...parsed, schema: 'tuplescope.run-report/1' }));
 
     const listed = await store.list(50);
     assert.ok(listed.some((entry) => entry.id === 'run_stale300'));

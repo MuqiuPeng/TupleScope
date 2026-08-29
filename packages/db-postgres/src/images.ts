@@ -14,10 +14,10 @@
  */
 
 import type pg from 'pg';
-import type { CaptureScope, Row, TableScope } from '@statescope/core';
+import type { CaptureScope, Row, TableScope } from '@tuplescope/core';
 import type { TableIdentity } from './introspect.js';
-import { ValueUnavailable } from '@statescope/core';
-import type { RowsRead } from '@statescope/core';
+import { ValueUnavailable } from '@tuplescope/core';
+import type { RowsRead } from '@tuplescope/core';
 import { parseKey, quoteIdent, RowReader, serializeKey } from './rows.js';
 
 /** Reads only key columns — the cheap half, used to spot rows that left. */

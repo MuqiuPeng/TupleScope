@@ -14,9 +14,9 @@
  * becomes `{{payment_id}}`.
  */
 
-import type { AssertionCandidate, ChangeSet, RowChange, Value, VisibleValue } from '@statescope/core';
-import { displayText, isVisible } from '@statescope/core';
-import { Decimal } from '@statescope/expr';
+import type { AssertionCandidate, ChangeSet, RowChange, Value, VisibleValue } from '@tuplescope/core';
+import { displayText, isVisible } from '@tuplescope/core';
+import { Decimal } from '@tuplescope/expr';
 
 /** Columns that are never worth asserting on: they differ every run by design. */
 const VOLATILE = /^(created_at|updated_at|inserted_at|modified_at|touched|last_seen|version|etag)$/i;

@@ -9,8 +9,8 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ChangeSet, RowChange } from '@statescope/core';
-import { masked, visible } from '@statescope/core';
+import type { ChangeSet, RowChange } from '@tuplescope/core';
+import { masked, visible } from '@tuplescope/core';
 import { seriesFor, SeriesSourceError, type SeriesStep } from './series.js';
 
 const RENDERING = { DateStyle: 'ISO, MDY', TimeZone: 'UTC', bytea_output: 'hex', IntervalStyle: 'iso_8601', extra_float_digits: '1' };

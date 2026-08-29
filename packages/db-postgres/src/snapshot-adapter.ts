@@ -29,7 +29,7 @@
  */
 
 import pg from 'pg';
-import { isVisible } from '@statescope/core';
+import { isVisible } from '@tuplescope/core';
 import type {
   CaptureScope,
   CaptureWarning,
@@ -38,7 +38,7 @@ import type {
   Row,
   RowChange,
   TableScope,
-} from '@statescope/core';
+} from '@tuplescope/core';
 import {
   listBaseTables, listColumnsByTable,
   readLocation,
@@ -46,7 +46,7 @@ import {
   type TableIdentity,
 } from './introspect.js';
 import { readCurrentRows } from './images.js';
-import type { RowsRead } from '@statescope/core';
+import type { RowsRead } from '@tuplescope/core';
 import { absorbIdleErrors, pinPool, verifyRendering } from './pinning.js';
 import { quoteIdent, RAW_TEXT_TYPES, ROWS_LIMIT, RowReader, serializeKey, valuesLookEqual } from './rows.js';
 

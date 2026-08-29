@@ -6,8 +6,8 @@
  * changed without touching either.
  */
 
-import type { Run, RunVerdict } from '@statescope/core';
-import type { ResolvedWorkspaceConfig } from '@statescope/workspace';
+import type { Run, RunVerdict } from '@tuplescope/core';
+import type { ResolvedWorkspaceConfig } from '@tuplescope/workspace';
 import {
   glyph,
   renderAssertion,
@@ -43,7 +43,7 @@ export function styleFor(values: Flags): Style {
 
 export function renderWorkspaceLine(style: Style, config: ResolvedWorkspaceConfig): string {
   return (
-    `statescope · ${config.name} → ${config.baseUrl}\n` +
+    `tuplescope · ${config.name} → ${config.baseUrl}\n` +
     `  config    ${config.configFile}`
   );
 }

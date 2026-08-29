@@ -27,15 +27,15 @@ import {
   verdictOf,
   type RunVerdict,
   type VerdictPolicy,
-} from '@statescope/core';
-import { buildEnvelope } from '@statescope/report';
-import { addAssertion, loadScenario } from '@statescope/scenario-engine';
+} from '@tuplescope/core';
+import { buildEnvelope } from '@tuplescope/report';
+import { addAssertion, loadScenario } from '@tuplescope/scenario-engine';
 import {
   loadWorkspaceConfig,
   openWorkspace,
   WorkspaceError,
   type WorkspaceSession,
-} from '@statescope/workspace';
+} from '@tuplescope/workspace';
 import { INSTRUCTIONS } from './instructions.js';
 
 // ─── one session, opened lazily ───────────────────────────────────────────────
@@ -156,7 +156,7 @@ function describeRun(report: {
 // ─── the server ───────────────────────────────────────────────────────────────
 
 const server = new McpServer(
-  { name: 'statescope', version: '0.3.0' },
+  { name: 'tuplescope', version: '0.3.0' },
   { instructions: INSTRUCTIONS },
 );
 
@@ -352,7 +352,7 @@ server.registerTool(
 
       const suite = mergeVerdicts(verdicts, policy);
       const envelope = buildEnvelope(reports, suite, {
-        producer: { tool: 'statescope', version: '0.3.0', surface: 'mcp' },
+        producer: { tool: 'tuplescope', version: '0.3.0', surface: 'mcp' },
         workspace: {
           name: s.config.name,
           configPath: s.config.configFile,
@@ -447,7 +447,7 @@ server.registerTool(
 server.registerTool(
   'list_tables',
   {
-    description: 'Every table StateScope can observe in this database.',
+    description: 'Every table TupleScope can observe in this database.',
     inputSchema: {},
   },
   async () =>
@@ -462,7 +462,7 @@ server.registerTool(
   'describe_table',
   {
     description:
-      'One table: its columns, types, and how StateScope will identify its rows. A table with no primary key or unique index can be counted but not matched to a previous version, and assertions over it are weaker.',
+      'One table: its columns, types, and how TupleScope will identify its rows. A table with no primary key or unique index can be counted but not matched to a previous version, and assertions over it are weaker.',
     inputSchema: { table: z.string() },
   },
   async ({ table }) =>

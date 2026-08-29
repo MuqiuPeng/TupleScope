@@ -23,7 +23,7 @@ import {
   type CredentialContext,
   type Secret,
   type SecretStore,
-} from '@statescope/secrets';
+} from '@tuplescope/secrets';
 import { SECRET_NONCE, type ResolvedWorkspaceConfig } from './config.js';
 
 export interface ResolveWorkspaceOptions {

@@ -50,9 +50,9 @@ jobs:
       # install time, without a warning, and a later build does not re-link.
       - name: the CLI is on PATH
         run: |
-          test -x node_modules/.bin/statescope
-          test -x node_modules/.bin/statescope-mcp
-          node_modules/.bin/statescope --version
+          test -x node_modules/.bin/tuplescope
+          test -x node_modules/.bin/tuplescope-mcp
+          node_modules/.bin/tuplescope --version
 
       - name: start the example database
         run: |
@@ -102,7 +102,7 @@ jobs:
       # only measure one of them.
       - name: test
         env:
-          STATESCOPE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:7432/postgres
+          TUPLESCOPE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:7432/postgres
         run: |
           set -o pipefail
           pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"
@@ -128,5 +128,5 @@ jobs:
             sleep 2
           done
           cd examples/demo-bank
-          ../../node_modules/.bin/statescope check
-          ../../node_modules/.bin/statescope run --no-save
+          ../../node_modules/.bin/tuplescope check
+          ../../node_modules/.bin/tuplescope run --no-save

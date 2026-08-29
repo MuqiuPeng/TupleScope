@@ -9,8 +9,8 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ChangeSet, Run, RowChange } from '@statescope/core';
-import { masked, visible } from '@statescope/core';
+import type { ChangeSet, Run, RowChange } from '@tuplescope/core';
+import { masked, visible } from '@tuplescope/core';
 import { withHandoffs } from './handoff-payload.js';
 
 const RENDERING = {

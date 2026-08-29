@@ -117,10 +117,10 @@ export function renderGuard(database: string, schema: string, table: string): st
   const relation = quoteLiteral(quoteRelation(schema, table));
   return `DO $$ BEGIN
   IF current_database() IS DISTINCT FROM ${quoteLiteral(database)} THEN
-    RAISE EXCEPTION 'StateScope: this connection is database %, but the locator names %', current_database(), ${quoteLiteral(database)};
+    RAISE EXCEPTION 'TupleScope: this connection is database %, but the locator names %', current_database(), ${quoteLiteral(database)};
   END IF;
   IF to_regclass(${relation}) IS NULL THEN
-    RAISE EXCEPTION 'StateScope: database % has no table %', current_database(), ${quoteLiteral(`${schema}.${table}`)};
+    RAISE EXCEPTION 'TupleScope: database % has no table %', current_database(), ${quoteLiteral(`${schema}.${table}`)};
   END IF;
 END $$;`;
 }

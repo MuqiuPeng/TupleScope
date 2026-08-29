@@ -13,11 +13,11 @@
  * instead of it surfacing as a stack trace from the first query.
  */
 
-import { createAdapter, type PostgresAdapter } from '@statescope/db-postgres';
+import { createAdapter, type PostgresAdapter } from '@tuplescope/db-postgres';
 import { assertResolved } from './credentials.js';
-import { HttpRunner } from '@statescope/http-runner';
-import { ScenarioEngine, loadScenario } from '@statescope/scenario-engine';
-import type { CaptureScope, Scenario, TableScope } from '@statescope/core';
+import { HttpRunner } from '@tuplescope/http-runner';
+import { ScenarioEngine, loadScenario } from '@tuplescope/scenario-engine';
+import type { CaptureScope, Scenario, TableScope } from '@tuplescope/core';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ResolvedWorkspaceConfig } from './config.js';
@@ -148,7 +148,7 @@ export function openWorkspace(
 
   const history =
     options.history !== undefined && options.history !== false && options.history.keep > 0
-      ? openStore(resolve(config.configDir, '.statescope', 'runs'), options.history)
+      ? openStore(resolve(config.configDir, '.tuplescope', 'runs'), options.history)
       : undefined;
 
   const session: WorkspaceSession = {

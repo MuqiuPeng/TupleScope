@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parse } from '@statescope/expr';
+import { parse } from '@tuplescope/expr';
 import { CASES, type ConformanceCase } from './cases.js';
 import { assertionsOf, expectedFor } from './suite.js';
 

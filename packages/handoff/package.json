@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/handoff",
+  "name": "@tuplescope/handoff",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,6 +11,6 @@
     "typecheck": "tsc -b",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
-  "dependencies": { "@statescope/core": "workspace:*" },
+  "dependencies": { "@tuplescope/core": "workspace:*" },
   "devDependencies": { "tsx": "^4.19.2", "typescript": "^5.7.2" }
 }

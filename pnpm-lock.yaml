@@ -8,10 +8,10 @@ importers:
 
   .:
     devDependencies:
-      '@statescope/cli':
+      '@tuplescope/cli':
         specifier: workspace:*
         version: link:apps/cli
-      '@statescope/mcp':
+      '@tuplescope/mcp':
         specifier: workspace:*
         version: link:apps/mcp
       '@types/node':
@@ -26,25 +26,25 @@ importers:
 
   apps/cli:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@statescope/expr':
+      '@tuplescope/expr':
         specifier: workspace:*
         version: link:../../packages/expr
-      '@statescope/handoff':
+      '@tuplescope/handoff':
         specifier: workspace:*
         version: link:../../packages/handoff
-      '@statescope/report':
+      '@tuplescope/report':
         specifier: workspace:*
         version: link:../../packages/report
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
-      '@statescope/secrets':
+      '@tuplescope/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
-      '@statescope/workspace':
+      '@tuplescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
     devDependencies:
@@ -57,19 +57,19 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@3.25.76)
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@statescope/expr':
+      '@tuplescope/expr':
         specifier: workspace:*
         version: link:../../packages/expr
-      '@statescope/report':
+      '@tuplescope/report':
         specifier: workspace:*
         version: link:../../packages/report
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
-      '@statescope/workspace':
+      '@tuplescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
       zod:
@@ -85,22 +85,22 @@ importers:
       '@fastify/static':
         specifier: ^8.0.3
         version: 8.3.0
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@statescope/db-postgres':
+      '@tuplescope/db-postgres':
         specifier: workspace:*
         version: link:../../packages/db-postgres
-      '@statescope/handoff':
+      '@tuplescope/handoff':
         specifier: workspace:*
         version: link:../../packages/handoff
-      '@statescope/http-runner':
+      '@tuplescope/http-runner':
         specifier: workspace:*
         version: link:../../packages/http-runner
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../../packages/scenario-engine
-      '@statescope/workspace':
+      '@tuplescope/workspace':
         specifier: workspace:*
         version: link:../../packages/workspace
       fastify:
@@ -153,16 +153,16 @@ importers:
 
   packages/conformance:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
-      '@statescope/db-postgres':
+      '@tuplescope/db-postgres':
         specifier: workspace:*
         version: link:../db-postgres
-      '@statescope/expr':
+      '@tuplescope/expr':
         specifier: workspace:*
         version: link:../expr
-      '@statescope/report':
+      '@tuplescope/report':
         specifier: workspace:*
         version: link:../report
       pg:
@@ -187,7 +187,7 @@ importers:
 
   packages/db-postgres:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
       pg:
@@ -203,7 +203,7 @@ importers:
 
   packages/expr:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -213,7 +213,7 @@ importers:
 
   packages/handoff:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -226,13 +226,13 @@ importers:
 
   packages/http-runner:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
 
   packages/report:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -242,13 +242,13 @@ importers:
 
   packages/scenario-engine:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
-      '@statescope/expr':
+      '@tuplescope/expr':
         specifier: workspace:*
         version: link:../expr
-      '@statescope/http-runner':
+      '@tuplescope/http-runner':
         specifier: workspace:*
         version: link:../http-runner
       yaml:
@@ -270,19 +270,19 @@ importers:
 
   packages/workspace:
     dependencies:
-      '@statescope/core':
+      '@tuplescope/core':
         specifier: workspace:*
         version: link:../core
-      '@statescope/db-postgres':
+      '@tuplescope/db-postgres':
         specifier: workspace:*
         version: link:../db-postgres
-      '@statescope/http-runner':
+      '@tuplescope/http-runner':
         specifier: workspace:*
         version: link:../http-runner
-      '@statescope/scenario-engine':
+      '@tuplescope/scenario-engine':
         specifier: workspace:*
         version: link:../scenario-engine
-      '@statescope/secrets':
+      '@tuplescope/secrets':
         specifier: workspace:*
         version: link:../secrets
       yaml:

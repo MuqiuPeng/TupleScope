@@ -9,7 +9,7 @@
  *
  * Point them at any throwaway database:
  *
- *   STATESCOPE_TEST_DATABASE_URL=postgresql://... pnpm --filter @statescope/db-postgres test
+ *   TUPLESCOPE_TEST_DATABASE_URL=postgresql://... pnpm --filter @tuplescope/db-postgres test
  *
  * With nothing set they use the demo-bank cluster on :7432, and skip entirely
  * if it is not up — so `pnpm test` stays green on a machine with no database.
@@ -18,15 +18,15 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
-import type { CaptureScope, ChangeSet, RowChange } from '@statescope/core';
+import type { CaptureScope, ChangeSet, RowChange } from '@tuplescope/core';
 import { MvccPostgresAdapter } from './mvcc-adapter.js';
-import { textIfVisible } from '@statescope/core';
+import { textIfVisible } from '@tuplescope/core';
 
 const BASE_URL =
-  process.env['STATESCOPE_TEST_DATABASE_URL'] ??
+  process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
   'postgresql://postgres:postgres@127.0.0.1:7432/postgres';
 
-const SCHEMA = 'statescope_test';
+const SCHEMA = 'tuplescope_test';
 
 /**
  * Pin every connection to the test schema via a connection-string option, so

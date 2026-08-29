@@ -1,8 +1,8 @@
-# StateScope
+# TupleScope
 
 **Run backend scenarios. See exactly what changed.**
 
-Postman shows you what your API returned. StateScope shows you what it *wrote*.
+Postman shows you what your API returned. TupleScope shows you what it *wrote*.
 
 ```
 POST /payments/pay_01/refund   ->   200 OK
@@ -26,7 +26,7 @@ Local-first. Your database credentials never leave your machine.
 
 Node 22 or newer and pnpm 9. You do **not** need PostgreSQL installed — the
 example brings its own, as a platform binary pnpm fetches (about 51 MB over the
-wire on macOS, 23 MB on Linux). Point StateScope at your own database and none
+wire on macOS, 23 MB on Linux). Point TupleScope at your own database and none
 of that is used.
 
 ```bash
@@ -47,16 +47,16 @@ pnpm demo:api                  # the API under test, on :7421
 ```bash
 cd examples/demo-bank
 
-statescope status              # does this workspace point at something that answers?
-statescope ls                  # every scenario and dataset
-statescope run                 # all of them
-statescope run refund/happy    # one dataset
+tuplescope status              # does this workspace point at something that answers?
+tuplescope ls                  # every scenario and dataset
+tuplescope run                 # all of them
+tuplescope run refund/happy    # one dataset
 ```
 
-`statescope show <target>` prints a scenario in detail before you run it,
-`statescope runs` lists the runs it kept and `statescope runs show <id>`
-re-renders one, `statescope url` prints a running runtime's URL with its token,
-and `statescope handoff` binds a database tool of yours to a row. `--help` is
+`tuplescope show <target>` prints a scenario in detail before you run it,
+`tuplescope runs` lists the runs it kept and `tuplescope runs show <id>`
+re-renders one, `tuplescope url` prints a running runtime's URL with its token,
+and `tuplescope handoff` binds a database tool of yours to a row. `--help` is
 the full surface; `--config <path>` picks a workspace file directly.
 
 There is a second example, `examples/shopfront`, which exists to prove the same
@@ -67,7 +67,7 @@ runtime and engine serve a different schema. It has no database of its own —
 pnpm demo:shop                 # the second API, on :7423
 
 cd examples/shopfront
-statescope run
+tuplescope run
 ```
 
 **It fails on purpose, and that is the demonstration.** Its `after_checkout`
@@ -84,7 +84,7 @@ From the repository root — the two commands above left you in an example:
 
 ```bash
 cd ../..                                     # back to the root, if you ran the example
-cp statescope.example.yaml statescope.yaml   # your API and your dev database
+cp tuplescope.example.yaml tuplescope.yaml   # your API and your dev database
 mkdir scenarios                              # where your own scenarios go
 ```
 
@@ -92,9 +92,9 @@ mkdir scenarios                              # where your own scenarios go
 scenario, and the section below is where that starts.
 
 Every port above is a default, not a requirement. `DEMO_BANK_DB_PORT`,
-`DEMO_BANK_PORT`, `SHOPFRONT_PORT` and `STATESCOPE_PORT` move the services;
+`DEMO_BANK_PORT`, `SHOPFRONT_PORT` and `TUPLESCOPE_PORT` move the services;
 `DEMO_BANK_BASE_URL`, `DEMO_BANK_DATABASE_URL` and the `SHOPFRONT_` pair move
-what StateScope points at. Set both halves — a service on a new port that
+what TupleScope points at. Set both halves — a service on a new port that
 nothing is looking at is the confusing half of the job.
 
 ### The UI
@@ -109,8 +109,8 @@ open "$(pnpm -s url)"          # in another terminal: the running instance, toke
 ### In CI
 
 ```yaml
-- run: pnpm exec statescope check                # before anything runs
-- run: pnpm exec statescope run --junit results.xml
+- run: pnpm exec tuplescope check                # before anything runs
+- run: pnpm exec tuplescope run --junit results.xml
 ```
 
 `check` resolves every name an assertion uses — tables, and the columns inside
@@ -120,7 +120,7 @@ there is a row to read it against, so on a step that correctly writes nothing
 `count(inserted(refunds).where(nmae = "x")) == 0` is *true*, and stays green for
 as long as the typo lives. That is the shape of a "must not write twice" guard,
 which is the assertion this tool exists to make; `check` is where it is caught,
-because `check` holds a connection and depends on no rows. Sharded? `statescope report shard-*.json --junit merged.xml` folds
+because `check` holds a connection and depends on no rows. Sharded? `tuplescope report shard-*.json --junit merged.xml` folds
 them into one verdict, keeping the worst — a shard's problem cannot be washed
 out by another shard's green.
 
@@ -204,7 +204,7 @@ Without it a dataset passes once and then replays its own previous key.
 
 And the `response.status` line above the `hasWrite` one is not decoration. An
 assertion about what was *not* written is evidence only if the request reached
-the handler — over a 401 nothing was written because nothing ran. StateScope
+the handler — over a 401 nothing was written because nothing ran. TupleScope
 will not let that pass silently (a step that returns 4xx or 5xx without
 declaring `expectStatus` fails on its own), but stating the status you expect
 is what makes the scenario say out loud which of the two it means.
@@ -216,7 +216,7 @@ is what makes the scenario say out loud which of the two it means.
 ### It detects writes, not value differences
 
 The obvious way to see what an API changed is to snapshot the tables before and
-after and compare. StateScope does not do that, because a value comparison
+after and compare. TupleScope does not do that, because a value comparison
 cannot see this:
 
 ```sql
@@ -271,17 +271,17 @@ writes it into the scenario file:
 Run  →  see the diff  →  [Keep]  →  a real assertion  →  next run catches the regression
 ```
 
-In the terminal that is `statescope keep`, which reads a stored run rather than
+In the terminal that is `tuplescope keep`, which reads a stored run rather than
 only the one still in memory — promoting should not require you to have noticed
 in the same breath as the run:
 
 ```bash
-$ statescope keep refund/happy refund
+$ tuplescope keep refund/happy refund
    1  response.status == 200  (already kept)
    6  single(updated(payments, id = {{payment_id}})).after.status == "REFUNDED"
       payments.status becomes REFUNDED (was COMPLETED)
 
-$ statescope keep refund/happy refund 6
+$ tuplescope keep refund/happy refund 6
   kept  single(updated(payments, id = {{payment_id}})).after.status == "REFUNDED"
 ```
 
@@ -356,16 +356,16 @@ statement that addresses exactly that row:
 SELECT * FROM "public"."wallets" WHERE "id" = 'wal_alice';
 ```
 
-StateScope has the row, both images, the
+TupleScope has the row, both images, the
 key and the types, so the questions that follow a diff are answered where the
 diff is; and a browser reached from here would connect as the same role and
 render `card_number` in the clear, because masking happens at capture and no
 second tool can inherit it.
 
-When you do want the row open in a database tool, `statescope handoff` binds
+When you do want the row open in a database tool, `tuplescope handoff` binds
 one — Adminer over a URL, or your own `psql` through a `pg_service` entry — and
 every addressable row grows an **Open in…** control. The binding lives in
-`~/.statescope/handoff.json` at mode 0600 and no project can write it: a tool
+`~/.tuplescope/handoff.json` at mode 0600 and no project can write it: a tool
 reached this way connects as its own role and is not bound by `maskColumns`,
 which is a decision only the person at the keyboard can make.
 
@@ -399,7 +399,7 @@ database:
 ```
 
 ```bash
-statescope secret set alice_token
+tuplescope secret set alice_token
 ```
 
 The value goes to the operating system's own credential store — the macOS
@@ -429,10 +429,10 @@ written into the file, which is the one thing the syntax exists to avoid.
 ### The commands
 
 ```
-statescope secret set <name>      store a value, from the terminal or a pipe
-statescope secret get <name>      whether it is configured; --show to print it
-statescope secret list            every secret this tool stored on this machine
-statescope secret delete <name>
+tuplescope secret set <name>      store a value, from the terminal or a pipe
+tuplescope secret get <name>      whether it is configured; --show to print it
+tuplescope secret list            every secret this tool stored on this machine
+tuplescope secret delete <name>
 ```
 
 `get` prints `alice_token  configured`, not the value. A credential is in a
@@ -444,11 +444,11 @@ it somewhere no less public. `--show` exists and says what it is doing.
 credential into the shell's history file and show it in `ps`. It reads from the
 terminal with the echo off, or from a pipe when there is no terminal.
 
-`statescope status` reports what is missing without reading anything:
+`tuplescope status` reports what is missing without reading anything:
 
 ```
   secrets   ✓ alice_token
-            ✗ db_password — not configured; `statescope secret set db_password`
+            ✗ db_password — not configured; `tuplescope secret set db_password`
 ```
 
 ### When there is no store
@@ -460,7 +460,7 @@ Secret store unavailable: there is no credential store for freebsd
 Use environment variables with `${VAR}`.
 ```
 
-A tool that answers a missing keyring by creating `.statescope/secrets.json`
+A tool that answers a missing keyring by creating `.tuplescope/secrets.json`
 has kept the syntax and thrown away the only promise it makes. There is a test
 that fails if anything in the secrets package learns to write a file.
 
@@ -501,7 +501,7 @@ lookup` returns the same empty exit 1 for "nothing stored" and for "no
 collection has ever been unlocked", so believing the first would tell a
 developer on a headless machine to set a secret that cannot be set.
 
-A stored item carries a `statescope.v1:` marker. Without it, a credential typed
+A stored item carries a `tuplescope.v1:` marker. Without it, a credential typed
 into Keychain Access by hand decodes as eleven bytes of binary and every check
 reports it configured — measured — and the API then rejects a value nobody can
 see is wrong.
@@ -525,8 +525,8 @@ secrets:
 `secret list` shows only this workspace's, and says whose they are. Deleting one
 project's cannot touch another's.
 
-Because secrets belong to a workspace, `statescope secret …` needs one — run it
-from a directory with a `statescope.yaml`, or pass `--config`.
+Because secrets belong to a workspace, `tuplescope secret …` needs one — run it
+from a directory with a `tuplescope.yaml`, or pass `--config`.
 
 ### Not yet
 
@@ -538,8 +538,8 @@ message saying so rather than being sent verbatim.
 
 ## Capture engines
 
-How StateScope watches the database is pluggable, and the choice is one line of
-`statescope.yaml`. Everything downstream — assertions, the diff you read, the
+How TupleScope watches the database is pluggable, and the choice is one line of
+`tuplescope.yaml`. Everything downstream — assertions, the diff you read, the
 JUnit file, the MCP results — is written against the `ChangeSet` contract and
 never learns which engine produced it.
 
@@ -675,7 +675,7 @@ packages/
   conformance/       every engine, the same cases, the same answers
   handoff/           a row into Adminer or psql, and the grant file a repo cannot write
 apps/
-  cli/               statescope(1) — drives the engine in-process
+  cli/               tuplescope(1) — drives the engine in-process
   mcp/               the agent surface, over stdio
   runtime/           local HTTP API + static UI, 127.0.0.1 only
   web/               three-column UI, no bundler
@@ -712,7 +712,7 @@ behaves and a mock would only restate the assumptions back. Point it wherever
 you like:
 
 ```bash
-STATESCOPE_TEST_DATABASE_URL=postgresql://... pnpm test
+TUPLESCOPE_TEST_DATABASE_URL=postgresql://... pnpm test
 ```
 
 Those integration tests skip cleanly when no database is reachable, so the suite
@@ -748,7 +748,7 @@ Credentials the workspace refers to are held in the operating system's own
 store, never in the file that gets committed, and never written to disk by this
 tool — see [Credentials](#credentials).
 
-The token is also written to `~/.statescope/sessions/<port>.json`, mode 0600, so
+The token is also written to `~/.tuplescope/sessions/<port>.json`, mode 0600, so
 `pnpm url` can recover it after the terminal is gone. That file is deleted on a
 clean shutdown, and a stale one left by a crash is discarded on read rather than
 handed back as a dead URL.
@@ -756,7 +756,7 @@ handed back as a dead URL.
 ## For agents
 
 ```json
-{ "mcpServers": { "statescope": { "command": "statescope-mcp" } } }
+{ "mcpServers": { "tuplescope": { "command": "tuplescope-mcp" } } }
 ```
 
 Twelve tools over the same engine everything else uses: describe the workspace,
@@ -788,7 +788,7 @@ Not yet built: dashboard plugins, and any handoff preset beyond Adminer and
 
 Found by a release check and shipped knowingly, worst first.
 
-- **Two `statescope run` invocations against one workspace can deadlock.** The
+- **Two `tuplescope run` invocations against one workspace can deadlock.** The
   second's observer transaction holds a lock the first's `resetFirst` TRUNCATE
   waits on; one reports an unreachable backend and the other exits 1. Both
   blame the wrong thing. Run one at a time.
@@ -801,16 +801,16 @@ Found by a release check and shipped knowingly, worst first.
   backend that is answering.
 - **`--junit -` does not produce parseable XML** — the human summary is
   interleaved with it. Write to a path.
-- **`statescope runs show <id>` prints the stored run as JSON.** The README and
+- **`tuplescope runs show <id>` prints the stored run as JSON.** The README and
   `--help` both call it a re-render; the text is wrong, not the command.
-- **`statescope status` does not look at the scenarios directory,** so it can
+- **`tuplescope status` does not look at the scenarios directory,** so it can
   report a healthy workspace on which `ls`, `run` and `check` all exit 4. And
   `ls` over an empty directory prints the header and exits 0.
 - **A workspace file cannot name a handoff alias.** Every alias is bound by the
-  person at the keyboard. `statescope handoff --help` says otherwise; it is
+  person at the keyboard. `tuplescope handoff --help` says otherwise; it is
   wrong.
 - **`--config` works everywhere and appears in no help text.**
-  `statescope url --all` is suggested by `url` and not accepted.
+  `tuplescope url --all` is suggested by `url` and not accepted.
 - **The runtime serves no Content-Security-Policy.** The loopback `Host` and
   `Origin` allowlists and the per-session token are what stand in for it; CSP
   is a prerequisite for dashboard plugins, which do not exist yet.

@@ -20,9 +20,9 @@ import pg from 'pg';
 import { decodeStream, toWireText } from './decode.js';
 
 const BASE_URL =
-  process.env['STATESCOPE_TEST_DATABASE_URL'] ??
+  process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
   'postgresql://postgres:postgres@127.0.0.1:7432/postgres';
-const SCHEMA = 'statescope_decode_types';
+const SCHEMA = 'tuplescope_decode_types';
 const CONNECTION = `${BASE_URL}${BASE_URL.includes('?') ? '&' : '?'}options=${encodeURIComponent(
   `-c search_path=${SCHEMA}`,
 )}`;

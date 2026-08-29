@@ -72,7 +72,7 @@ gets the same clean-looking result, and concludes the iframe was fine.
 | `panels[].mod` — an **alias** | **Repo** | Inert until the user binds it. An unbound alias is a refusal, not an action. |
 | `panels[].sources` — **named expressions** | **Repo** | The repo knows its schema and should choose what a panel is *about*. Inert data selection, in the language assertions already use. |
 | `panels[].title`, `unit`, `hint` | **Repo** | Labels only ever describe. |
-| What the alias renders | **User**, `~/.statescope/mods/` | This is code, and that is the whole trust decision. |
+| What the alias renders | **User**, `~/.tuplescope/mods/` | This is code, and that is the whole trust decision. |
 | Which workspaces it may run in | **User**, per-workspace grant | `HandoffConfigV1`, `WorkspaceGrant`, `grantKey`, `isGranted`, `workspaceKey` already exist and generalise unchanged. |
 
 ---

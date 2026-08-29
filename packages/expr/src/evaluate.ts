@@ -28,8 +28,8 @@ import type {
   RowsRead,
   Value,
   VisibleValue,
-} from '@statescope/core';
-import { displayText, visible } from '@statescope/core';
+} from '@tuplescope/core';
+import { displayText, visible } from '@tuplescope/core';
 import { Decimal } from './decimal.js';
 
 /** Raised when an expression cannot be decided. Never collapses into `false`. */

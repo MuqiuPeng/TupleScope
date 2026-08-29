@@ -18,7 +18,7 @@
  * consumer needs to learn one more engine name.
  *
  * Point at any throwaway database:
- *   STATESCOPE_TEST_DATABASE_URL=postgresql://... pnpm --filter @statescope/conformance test
+ *   TUPLESCOPE_TEST_DATABASE_URL=postgresql://... pnpm --filter @tuplescope/conformance test
  * With nothing set it uses the demo cluster on :7432 and skips if it is absent.
  */
 
@@ -29,7 +29,7 @@ import {
   MvccPostgresAdapter,
   SnapshotPostgresAdapter,
   WalPostgresAdapter,
-} from '@statescope/db-postgres';
+} from '@tuplescope/db-postgres';
 import { CASES, SCHEMA, type Answer } from './cases.js';
 import {
   assertionsOf,
@@ -66,7 +66,7 @@ const ENGINES: EngineUnderTest[] = [
 // ─── wiring ───────────────────────────────────────────────────────────────────
 
 const BASE_URL =
-  process.env['STATESCOPE_TEST_DATABASE_URL'] ??
+  process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
   'postgresql://postgres:postgres@127.0.0.1:7432/postgres';
 
 const CONNECTION = `${BASE_URL}${BASE_URL.includes('?') ? '&' : '?'}options=${encodeURIComponent(

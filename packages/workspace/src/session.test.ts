@@ -27,8 +27,8 @@ scenariosDir: scenarios
 let root: string;
 
 before(async () => {
-  root = await mkdtemp(join(tmpdir(), 'statescope-session-'));
-  await writeFile(join(root, 'statescope.yaml'), CONFIG, 'utf8');
+  root = await mkdtemp(join(tmpdir(), 'tuplescope-session-'));
+  await writeFile(join(root, 'tuplescope.yaml'), CONFIG, 'utf8');
 });
 after(async () => {
   await rm(root, { recursive: true, force: true });
@@ -54,7 +54,7 @@ describe('a scenarios directory that is not there', () => {
           // The two things someone needs in order to act: where it looked, and
           // where the setting that sent it there lives.
           assert.match(error.message, /scenarios/);
-          assert.match(error.remedy ?? '', /statescope\.yaml/);
+          assert.match(error.remedy ?? '', /tuplescope\.yaml/);
           return true;
         },
       );

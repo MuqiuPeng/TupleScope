@@ -14,7 +14,7 @@
  *            | '{{' IDENT '}}' | IDENT '(' args ')' | IDENT | '(' or ')'
  */
 
-import type { Expr, CompareOp, Selector, SelectorKind, Temporal } from '@statescope/core';
+import type { Expr, CompareOp, Selector, SelectorKind, Temporal } from '@tuplescope/core';
 
 const SELECTOR_KINDS: ReadonlySet<string> = new Set([
   'changes',

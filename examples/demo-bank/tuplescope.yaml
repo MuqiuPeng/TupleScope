@@ -5,12 +5,12 @@
 # to write down anywhere. `${VAR:-default}` reads the environment and only the
 # environment; the default here is a location, never a secret.
 #
-# Two terminals from the repository root, then a third for StateScope:
+# Two terminals from the repository root, then a third for TupleScope:
 #
 #   pnpm demo:db     the database — embedded PostgreSQL, no Docker, no install
 #   pnpm demo:api    the API under test, on :7421
 #
-#   cd examples/demo-bank && statescope run
+#   cd examples/demo-bank && tuplescope run
 
 name: Demo Bank
 baseUrl: ${DEMO_BANK_BASE_URL:-http://127.0.0.1:7421}

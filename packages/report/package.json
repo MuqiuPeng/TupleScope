@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/report",
+  "name": "@tuplescope/report",
   "version": "0.0.0",
   "license": "MIT",
   "type": "module",
@@ -7,6 +7,6 @@
   "types": "./dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -b", "typecheck": "tsc -b", "test": "node --import tsx --test \"src/**/*.test.ts\"" },
-  "dependencies": { "@statescope/core": "workspace:*" },
+  "dependencies": { "@tuplescope/core": "workspace:*" },
   "devDependencies": { "tsx": "^4.19.2" }
 }

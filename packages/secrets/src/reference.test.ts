@@ -75,7 +75,7 @@ describe('what it refuses', () => {
     // A default would be a credential written into the file — the one thing
     // this syntax exists to avoid.
     refuses('${secret:db_password:-hunter2}', /default would be a credential written into/);
-    refuses('${secret:db_password:-hunter2}', /statescope secret set db_password/);
+    refuses('${secret:db_password:-hunter2}', /tuplescope secret set db_password/);
   });
 
   it('refuses an empty or unusable secret name', () => {
@@ -117,6 +117,6 @@ describe('naming a workspace slot', () => {
     assert.equal(unqualify('com.apple.something'), null);
     // Written before namespaces existed: guessing which workspace it belonged
     // to would be worse than leaving it alone.
-    assert.equal(unqualify('dev.statescope.secret.alice_token'), null);
+    assert.equal(unqualify('dev.tuplescope.secret.alice_token'), null);
   });
 });

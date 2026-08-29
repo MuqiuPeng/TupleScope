@@ -1,9 +1,9 @@
 /**
- * `statescope handoff …` — binding a name the repository chose to a program
+ * `tuplescope handoff …` — binding a name the repository chose to a program
  * on this machine.
  *
  * The command exists because the binding cannot be made any other way. A
- * project's `statescope.yaml` contributes one alias and nothing else; until
+ * project's `tuplescope.yaml` contributes one alias and nothing else; until
  * someone types this, that alias resolves to nothing and every attempt to use
  * it is a refusal. There is deliberately no flag, no environment variable and
  * no config key that skips it — a confirmation the mouse can complete, or that
@@ -17,7 +17,7 @@
 import { realpath } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { access, constants } from 'node:fs/promises';
-import { findWorkspaceConfig, loadWorkspaceConfig } from '@statescope/workspace';
+import { findWorkspaceConfig, loadWorkspaceConfig } from '@tuplescope/workspace';
 import {
   assertOrigin,
   HandoffConfigError,
@@ -33,17 +33,17 @@ import {
   withoutGrant,
   workspaceKey,
   type Binding,
-} from '@statescope/handoff';
+} from '@tuplescope/handoff';
 
 const EXIT_USAGE = 4;
 const EXIT_ERROR = 2;
 
-const USAGE = `statescope handoff — open an observed row in a database tool of yours
+const USAGE = `tuplescope handoff — open an observed row in a database tool of yours
 
-  statescope handoff list                     what is bound on this machine
-  statescope handoff enable <preset> --as <alias> [options]
-  statescope handoff disable <alias>          revoke it for this workspace
-  statescope handoff disable <alias> --everywhere
+  tuplescope handoff list                     what is bound on this machine
+  tuplescope handoff enable <preset> --as <alias> [options]
+  tuplescope handoff disable <alias>          revoke it for this workspace
+  tuplescope handoff disable <alias> --everywhere
 
 Presets
 
@@ -57,7 +57,7 @@ Presets
       --service <name>     an entry in your own pg_service.conf
 
 A repository can name an alias. It cannot create one, point one somewhere, or
-approve one — that is what this file is for. Written to ~/.statescope/handoff.json,
+approve one — that is what this file is for. Written to ~/.tuplescope/handoff.json,
 mode 0600, which no project can write.
 `;
 
@@ -179,7 +179,7 @@ async function enable(preset: string | undefined, values: HandoffValues): Promis
                     `              \`${own.fromContainer}\` if it runs in a container — loopback\n` +
                     '              inside one means the container, not this host\n') +
                 (own.username ? `  --username  probably \`${own.username}\`, the role this workspace connects as\n` : '') +
-                '\nStateScope will not choose for you: only you know where Adminer runs.\n'
+                '\nTupleScope will not choose for you: only you know where Adminer runs.\n'
               : 'If Adminer runs in a container, --server is its view of the database, not yours.\n'),
         );
         return EXIT_USAGE;
@@ -210,7 +210,7 @@ async function enable(preset: string | undefined, values: HandoffValues): Promis
       if (!found) {
         process.stderr.write(
           'No `psql` found on PATH.\n\n' +
-            'StateScope resolves it once, here, and stores the absolute path and its realpath — ' +
+            'TupleScope resolves it once, here, and stores the absolute path and its realpath — ' +
             'so that what runs later is what you approved now, and a substitution becomes a refusal ' +
             'rather than a surprise.\n',
         );
@@ -272,13 +272,13 @@ async function enable(preset: string | undefined, values: HandoffValues): Promis
         'psql is not bound by maskColumns.\n',
     );
   }
-  process.stdout.write('\nstatescope handoff list · statescope handoff disable\n');
+  process.stdout.write('\ntuplescope handoff list · tuplescope handoff disable\n');
   return 0;
 }
 
 async function disable(alias: string | undefined, values: HandoffValues): Promise<number> {
   if (!alias) {
-    process.stderr.write('Which alias? `statescope handoff disable <alias>`\n');
+    process.stderr.write('Which alias? `tuplescope handoff disable <alias>`\n');
     return EXIT_USAGE;
   }
   const config = await loadHandoffConfig(undefined, { allowRemote: true });
@@ -334,8 +334,8 @@ async function findPsql(): Promise<{ executable: string; realpath: string } | un
 /**
  * The workspace a grant is for: the one the config names, not the shell's cwd.
  *
- * These were the same thing right up until someone ran `statescope handoff
- * enable --config examples/shopfront/statescope.yaml` from the repository root,
+ * These were the same thing right up until someone ran `tuplescope handoff
+ * enable --config examples/shopfront/tuplescope.yaml` from the repository root,
  * and the grant landed on the repository root while the runtime — which
  * resolves it from `configDir` — went on refusing. A grant that names a
  * different directory from the one that checks it is a grant that silently
@@ -358,7 +358,7 @@ async function hereFor(values: HandoffValues): Promise<string> {
 /**
  * Where this workspace reaches PostgreSQL, as two candidates rather than a guess.
  *
- * The `--server` flag is the one address StateScope genuinely cannot derive —
+ * The `--server` flag is the one address TupleScope genuinely cannot derive —
  * it is the database *as Adminer sees it*, and Adminer may be in a container
  * whose view differs. But "go and find out" is a poor answer when the workspace
  * config already names the host and port, and when the container case has one

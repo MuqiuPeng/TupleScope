@@ -17,7 +17,7 @@
  * in one file is how a consumer comes to depend on the one it was not supposed
  * to see.
  */
-export const RUN_REPORT_SCHEMA = 'statescope.run-report/2' as const;
+export const RUN_REPORT_SCHEMA = 'tuplescope.run-report/2' as const;
 
 
 /** Just the major, for comparisons. */
@@ -28,13 +28,13 @@ export function schemaMajor(schema: string): number | null {
 
 /** Whether this build can read a stored report, and why not. */
 export function schemaReadable(schema: unknown): true | string {
-  if (typeof schema !== 'string' || !schema.startsWith('statescope.run-report/')) {
-    return 'it does not identify itself as a StateScope run report';
+  if (typeof schema !== 'string' || !schema.startsWith('tuplescope.run-report/')) {
+    return 'it does not identify itself as a TupleScope run report';
   }
   const found = schemaMajor(schema);
   const supported = schemaMajor(RUN_REPORT_SCHEMA)!;
   if (found === null) return `its schema version \`${schema}\` is unreadable`;
-  if (found > supported) return `it was written by a newer StateScope (${schema})`;
-  if (found < supported) return `it was written by an older StateScope (${schema})`;
+  if (found > supported) return `it was written by a newer TupleScope (${schema})`;
+  if (found < supported) return `it was written by an older TupleScope (${schema})`;
   return true;
 }

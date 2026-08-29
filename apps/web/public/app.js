@@ -1,6 +1,6 @@
-/* StateScope's browser UI is deliberately build-free: edit, refresh, done. */
-const TOKEN = new URLSearchParams(location.search).get('token') ?? sessionStorage.getItem('statescope-token') ?? '';
-if (TOKEN) sessionStorage.setItem('statescope-token', TOKEN);
+/* TupleScope's browser UI is deliberately build-free: edit, refresh, done. */
+const TOKEN = new URLSearchParams(location.search).get('token') ?? sessionStorage.getItem('tuplescope-token') ?? '';
+if (TOKEN) sessionStorage.setItem('tuplescope-token', TOKEN);
 if (location.search) history.replaceState({}, '', location.pathname);
 
 const $ = (selector) => document.querySelector(selector);
@@ -15,7 +15,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: { 'content-type': 'application/json', 'x-statescope-token': TOKEN, ...options.headers },
+    headers: { 'content-type': 'application/json', 'x-tuplescope-token': TOKEN, ...options.headers },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw apiError({ status: response.status, body, path });
@@ -1220,7 +1220,7 @@ async function boot() {
     }
     render();
   } catch (error) {
-    document.body.innerHTML = `<main class="fatal"><h1>StateScope could not start</h1><p>${String(error.message)}</p></main>`;
+    document.body.innerHTML = `<main class="fatal"><h1>TupleScope could not start</h1><p>${String(error.message)}</p></main>`;
   }
 }
 
@@ -1462,7 +1462,7 @@ function showDrawer(target, change) {
 
   drawer.appendChild(el('p', null,
     'Whatever opens it connects with its own credentials, as you, and is not bound by maskColumns — ' +
-    'it will show masked columns in full. StateScope cannot take that back once the row is open.'));
+    'it will show masked columns in full. TupleScope cannot take that back once the row is open.'));
 
   drawer.appendChild(el('p', 'drawer-lead', target
     ? `\`${target.alias}\` is a name this repository chose. Bind it yourself, once:`
@@ -1470,13 +1470,13 @@ function showDrawer(target, change) {
   const alias = target?.alias ?? 'adminer';
   const s = handoffState.suggest;
   const cmd = target?.preset === 'psql-service'
-    ? `statescope handoff enable psql-service --as ${alias} --service <your pg_service entry>`
-    : `statescope handoff enable adminer-url --as ${alias} \\\n` +
+    ? `tuplescope handoff enable psql-service --as ${alias} --service <your pg_service entry>`
+    : `tuplescope handoff enable adminer-url --as ${alias} \\\n` +
       `  --origin http://127.0.0.1:8080 \\\n` +
       `  --server ${s ? s.hostPort : '<db as adminer sees it>'}` +
       `${s?.username ? ` --username ${s.username}` : ' --username <role>'}`;
   drawer.appendChild(el('pre', 'drawer-cmd', cmd));
-  // The one address StateScope cannot derive, offered as the two candidates it
+  // The one address TupleScope cannot derive, offered as the two candidates it
   // can — rather than a placeholder that sends the reader to `docker inspect`.
   if (s && s.fromContainer !== s.hostPort && target?.preset !== 'psql-service') {
     drawer.appendChild(el('p', 'drawer-foot',
@@ -1484,7 +1484,7 @@ function showDrawer(target, change) {
       `use \`${s.fromContainer}\` if it runs in a container, where loopback means the container and not this host.`));
   }
   drawer.appendChild(el('p', 'drawer-foot',
-    'Written to ~/.statescope/handoff.json, which this repository cannot write.'));
+    'Written to ~/.tuplescope/handoff.json, which this repository cannot write.'));
 
   const dismiss = el('button', 'drawer-dismiss', 'Close');
   // Dismissing decides nothing. There is no affirmative control here at all.

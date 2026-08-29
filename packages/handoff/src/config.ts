@@ -1,8 +1,8 @@
 /**
- * `~/.statescope/handoff.json` — the file a repository cannot write.
+ * `~/.tuplescope/handoff.json` — the file a repository cannot write.
  *
  * The whole trust model of the row handoff lives in this split. A project's
- * `statescope.yaml` contributes exactly one string: an **alias**, which is
+ * `tuplescope.yaml` contributes exactly one string: an **alias**, which is
  * inert until the user binds it here. There is no `command:`, no `env:`, no
  * `url:`, no `service:`, no `path:`, no `server:` — a config key whose value is
  * a path to a program is a command-execution primitive, and a repo-committed
@@ -15,7 +15,7 @@
 export const HANDOFF_CONFIG_VERSION = 1;
 
 /**
- * Bumped when StateScope widens what a preset may do.
+ * Bumped when TupleScope widens what a preset may do.
  *
  * A grant records the version it was given under, so widening the capability
  * re-asks instead of silently inheriting an approval for something narrower.
@@ -24,7 +24,7 @@ export const HANDOFF_POLICY_VERSION = 1;
 
 export interface HandoffConfigV1 {
   readonly v: 1;
-  /** Keyed by alias — the one string `statescope.yaml` is allowed to contribute. */
+  /** Keyed by alias — the one string `tuplescope.yaml` is allowed to contribute. */
   readonly bindings: Readonly<Record<string, Binding>>;
 }
 
@@ -42,10 +42,10 @@ export interface AdminerBinding extends BindingCommon {
   /**
    * PostgreSQL **as Adminer reaches it** — `hostname[:port]`.
    *
-   * Not StateScope's DSN host, and not derivable from it. Measured with
-   * StateScope on the host and both Adminer and PostgreSQL in containers, three
+   * Not TupleScope's DSN host, and not derivable from it. Measured with
+   * TupleScope on the host and both Adminer and PostgreSQL in containers, three
    * independent addresses were in play: Adminer's HTTP origin `127.0.0.1:7442`,
-   * PostgreSQL as StateScope reaches it `127.0.0.1:7441`, and PostgreSQL as
+   * PostgreSQL as TupleScope reaches it `127.0.0.1:7441`, and PostgreSQL as
    * Adminer reaches it `172.17.0.3:5432`. The third means nothing to the first
    * two, and the divergence is the ordinary case for any Compose stack.
    */
@@ -56,7 +56,7 @@ export interface AdminerBinding extends BindingCommon {
    * Part of Adminer's session key `(driver, server, username, db)`. Measured: a
    * URL with the wrong username — or none — renders the login page, and that
    * page echoes the full request, key value included, into its own recent-links
-   * list. StateScope knows a username from its own DSN, but the DSN is the
+   * list. TupleScope knows a username from its own DSN, but the DSN is the
    * thing this design refuses to hand out.
    */
   readonly username: string;
@@ -64,7 +64,7 @@ export interface AdminerBinding extends BindingCommon {
 
 export interface PsqlServiceBinding extends BindingCommon {
   readonly preset: 'psql-service';
-  /** A key in `pg_service.conf`. StateScope never reads that file. */
+  /** A key in `pg_service.conf`. TupleScope never reads that file. */
   readonly service: string;
   /** Absolute, resolved once at enable time. */
   readonly executable: string;

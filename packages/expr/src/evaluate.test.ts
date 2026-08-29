@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ChangeSet, Detection, Row, RowChange, Value, VisibleValue } from '@statescope/core';
+import type { ChangeSet, Detection, Row, RowChange, Value, VisibleValue } from '@tuplescope/core';
 import { parse } from './parse.js';
 import {
   Unevaluable,
@@ -8,7 +8,7 @@ import {
   predicateColumnsIn,
   valuesEqual,
 } from './evaluate.js';
-import { textIfVisible, visible } from '@statescope/core';
+import { textIfVisible, visible } from '@tuplescope/core';
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 

@@ -289,14 +289,14 @@ describe('fencing the window by commit', () => {
 
 describe('what a replication-slot failure tells you', () => {
   const fail = (code: string, message = 'boom') =>
-    slotFailure(Object.assign(new Error(message), { code }), 'statescope_abc123_0');
+    slotFailure(Object.assign(new Error(message), { code }), 'tuplescope_abc123_0');
 
   it('names a transaction pooler when the slot vanishes between statements', () => {
     // The bare message says the slot does not exist, which reads as a bug in
     // this tool. A temporary slot belongs to one backend, so a pooler that
     // moves the second statement elsewhere produces exactly this — and it is
     // intermittent, which is the worst kind of thing to debug without a hint.
-    const error = fail('42704', 'replication slot "statescope_abc123_0" does not exist');
+    const error = fail('42704', 'replication slot "tuplescope_abc123_0" does not exist');
     assert.match(error.message, /transaction-mode connection pooler/);
     assert.match(error.message, /PgBouncer|Supavisor/);
     assert.match(error.message, /mvcc-xmin engine, which needs no/);
@@ -304,9 +304,9 @@ describe('what a replication-slot failure tells you', () => {
     assert.match(error.message, /does not exist/);
   });
 
-  it('suggests another StateScope when the name is taken', () => {
+  it('suggests another TupleScope when the name is taken', () => {
     // The name is random per capture, so a collision is not chance.
-    assert.match(fail('42710').message, /another StateScope is running/);
+    assert.match(fail('42710').message, /another TupleScope is running/);
   });
 
   it('points at the slot list when the server is out of them', () => {

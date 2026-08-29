@@ -1,6 +1,6 @@
-# StateScope workspace — copy to statescope.yaml and point it at your backend.
+# TupleScope workspace — copy to tuplescope.yaml and point it at your backend.
 #
-#   cp statescope.example.yaml statescope.yaml
+#   cp tuplescope.example.yaml tuplescope.yaml
 #   pnpm start
 #
 # The runtime prints a URL carrying a per-session access token. Open that.
@@ -9,13 +9,13 @@ name: My API
 baseUrl: http://127.0.0.1:8000
 
 database:
-  # A development database. StateScope holds a real connection to it and reads
+  # A development database. TupleScope holds a real connection to it and reads
   # what your API writes, so never point this at anything you care about.
   #
   # The password is a `${secret:…}` reference, not a value. This file is meant
   # to be committed, and a template that spells a password inline teaches the
   # one pattern the rest of this document argues against. Set it once with
-  # `statescope secret set db_password`; it goes to your OS keychain and never
+  # `tuplescope secret set db_password`; it goes to your OS keychain and never
   # to disk here. `${PGPASSWORD}` or a plain `${VAR}` works too — anything but
   # a literal.
   connectionString: postgresql://user:${secret:db_password}@127.0.0.1:5432/myapp_dev
@@ -51,7 +51,7 @@ maskColumns:
 # report says so instead of blaming your API. Set to 0 to skip.
 baselineWindowMs: 400
 
-# Stored runs live in .statescope/runs next to this file, newest 50 kept.
-# `statescope runs` lists them; `--from` and `--only` read a previous run's
+# Stored runs live in .tuplescope/runs next to this file, newest 50 kept.
+# `tuplescope runs` lists them; `--from` and `--only` read a previous run's
 # variables from there, which is the only reason the store exists.
 # Disable with --no-save.

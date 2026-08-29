@@ -14,12 +14,12 @@ import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { visible } from '@statescope/core';
+import { visible } from '@tuplescope/core';
 import { psqlScript, runPsql, PsqlRefused } from './psql.js';
 import type { PsqlServiceBinding } from './config.js';
 
 const DATABASE_URL =
-  process.env['STATESCOPE_TEST_DATABASE_URL'] ??
+  process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
   'postgresql://postgres:postgres@127.0.0.1:7432/postgres';
 
 /** Only the parts of the DSN libpq needs, so the service file can be written. */
@@ -65,22 +65,22 @@ let ready = false;
 before(async () => {
   if (!psqlPath) return;
   const dsn = parseDsn(DATABASE_URL);
-  home = await mkdtemp(join(tmpdir(), 'statescope-psql-'));
+  home = await mkdtemp(join(tmpdir(), 'tuplescope-psql-'));
   // The default locations, found through HOME. `PGSERVICEFILE` is deliberately
   // *not* in the child's environment allow-list, so this is the supported way
   // to point psql at a service — and testing any other way would test a path
   // no user has.
   await writeFile(
     join(home, '.pg_service.conf'),
-    `[statescope-test]\nhost=${dsn.host}\nport=${dsn.port}\ndbname=statescope_psql\nuser=${dsn.user}\n\n` +
-      `[statescope-other]\nhost=${dsn.host}\nport=${dsn.port}\ndbname=postgres\nuser=${dsn.user}\n`,
+    `[tuplescope-test]\nhost=${dsn.host}\nport=${dsn.port}\ndbname=tuplescope_psql\nuser=${dsn.user}\n\n` +
+      `[tuplescope-other]\nhost=${dsn.host}\nport=${dsn.port}\ndbname=postgres\nuser=${dsn.user}\n`,
   );
   await writeFile(join(home, '.pgpass'), `${dsn.host}:${dsn.port}:*:${dsn.user}:${dsn.password}\n`);
   await chmod(join(home, '.pgpass'), 0o600);
 
   binding = {
     preset: 'psql-service',
-    service: 'statescope-test',
+    service: 'tuplescope-test',
     executable: psql!.executable,
     realpath: psql!.realpath,
     grants: [],
@@ -88,14 +88,14 @@ before(async () => {
 
   // Bootstrap through a service pointing at the maintenance database, so the
   // test needs no client library of its own.
-  const bootstrap: PsqlServiceBinding = { ...binding, service: 'statescope-other' };
+  const bootstrap: PsqlServiceBinding = { ...binding, service: 'tuplescope-other' };
   process.env['HOME'] = home;
   const created = await runPsql(
     bootstrap,
     // `WITH (FORCE)` because this suite deliberately kills a child mid-query;
     // a connection left behind by that makes every later run fail to create the
     // database and skip, silently, forever.
-    `DROP DATABASE IF EXISTS statescope_psql WITH (FORCE);\nCREATE DATABASE statescope_psql;\n`,
+    `DROP DATABASE IF EXISTS tuplescope_psql WITH (FORCE);\nCREATE DATABASE tuplescope_psql;\n`,
   );
   if (!created.ok) return;
   const seeded = await runPsql(
@@ -109,13 +109,13 @@ before(async () => {
 after(async () => {
   if (!psqlPath || !home) return;
   await runPsql(
-    { ...binding, service: 'statescope-other' },
-    'DROP DATABASE IF EXISTS statescope_psql WITH (FORCE);\n',
+    { ...binding, service: 'tuplescope-other' },
+    'DROP DATABASE IF EXISTS tuplescope_psql WITH (FORCE);\n',
   ).catch(() => undefined);
   await rm(home, { recursive: true, force: true });
 });
 
-const location = { database: 'statescope_psql', schema: 'public' };
+const location = { database: 'tuplescope_psql', schema: 'public' };
 const aliceKey = [{ name: 'id', value: visible('text', 'wal_alice') }];
 
 describe('running a locator through psql', () => {
@@ -133,7 +133,7 @@ describe('running a locator through psql', () => {
     // thing the user picked blind, and dev clusters routinely hold `shop`,
     // `shop_test` and `shop_shadow` with identical schemas.
     const result = await runPsql(
-      { ...binding, service: 'statescope-other' },
+      { ...binding, service: 'tuplescope-other' },
       psqlScript(location, 'wallets', aliceKey),
     );
     assert.equal(result.ok, false);

@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { secretMarker, Secret, type SecretStore } from '@statescope/secrets';
+import { secretMarker, Secret, type SecretStore } from '@tuplescope/secrets';
 import { assertResolved, resolveWorkspaceSecrets, secretsReferencedBy } from './credentials.js';
 
 /**
@@ -44,7 +44,7 @@ const base = (over: Partial<ResolvedWorkspaceConfig> = {}): ResolvedWorkspaceCon
     baseUrl: 'http://127.0.0.1:7421',
     database: { connectionString: 'postgresql://app@localhost/x' },
     scenariosDir: '/repo/scenarios',
-    configFile: '/repo/statescope.yaml',
+    configFile: '/repo/tuplescope.yaml',
     configDir: '/repo',
     ...over,
   }) as ResolvedWorkspaceConfig;

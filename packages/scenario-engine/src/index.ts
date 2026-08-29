@@ -14,10 +14,10 @@ import {
   rowsSelectorsIn,
   Unevaluable,
   ExprSyntaxError,
-} from '@statescope/expr';
-import { HttpRunner, HttpRunnerError } from '@statescope/http-runner';
+} from '@tuplescope/expr';
+import { HttpRunner, HttpRunnerError } from '@tuplescope/http-runner';
 import { promoteCandidates } from './promote.js';
-import { ValueUnavailable } from '@statescope/core';
+import { ValueUnavailable } from '@tuplescope/core';
 import type {
   AssertionResult,
   CaptureScope,
@@ -30,7 +30,7 @@ import type {
   Selector,
   Step,
   StepResult,
-} from '@statescope/core';
+} from '@tuplescope/core';
 
 export interface EngineOptions {
   adapter: DatabaseAdapter;

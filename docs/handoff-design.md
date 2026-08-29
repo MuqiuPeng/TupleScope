@@ -23,19 +23,19 @@ Interaction design was judged 50–60% complete. §7 is new.
 
 | Field | Who | Why |
 |---|---|---|
-| `handoff.target` — an **alias string** (`adminer`, `dev-psql`) | **Repo** (`statescope.yaml`) | A name is inert: it resolves to nothing until the user binds it, so an unbound alias is a refusal, not an action. |
+| `handoff.target` — an **alias string** (`adminer`, `dev-psql`) | **Repo** (`tuplescope.yaml`) | A name is inert: it resolves to nothing until the user binds it, so an unbound alias is a refusal, not an action. |
 | Which tables/rows the scenario touches | **Repo** | It is the repo's database and the repo's scenario; the locator is built only from what the API actually wrote. |
 | `maskColumns`, `ignoreColumns`, `visibleColumns` | **Repo** | Redaction and noise policy are properties of the schema, and both only ever *remove* information. |
-| Target **preset id** (`adminer-url` \| `psql-service`) | **User** (`~/.statescope/handoff.json`) | Which mechanism runs is the whole trust decision; a repo naming a preset directly is a repo choosing a program. |
+| Target **preset id** (`adminer-url` \| `psql-service`) | **User** (`~/.tuplescope/handoff.json`) | Which mechanism runs is the whole trust decision; a repo naming a preset directly is a repo choosing a program. |
 | `executable` (resolved absolute path) | **User** | A config key whose value is a path to a program is a command-execution primitive (CVE-2022-24765). |
 | `args` | **Neither — fixed literals in the preset** | Nothing interpolated into argv means a re-parsing `.exe` shim on Windows has nothing to inject. |
 | `origin`, `server`, `username` for `adminer-url` | **User** | ▲ Three separate addresses, none derivable from the others — §4. |
 | `service` for `psql-service` | **User** | This chooses which server the user's `~/.pgpass` credentials open. |
 | Environment variables passed to the child | **User only, allow-listed** | `PSQLRC`, `PAGER`, `PGOPTIONS`, `LD_PRELOAD` each turn a child into an interpreter or a liar. |
 | `confirmOutsideMasking` or any consent flag | **Nobody — the key does not exist** | A repo-committed consent flag is the repo author consenting on the user's behalf. |
-| The grant record itself | **User**, `~/.statescope/handoff.json`, mode 0600 | Protected configuration, exactly as `git safe.directory` is ignored outside system/global scope. |
+| The grant record itself | **User**, `~/.tuplescope/handoff.json`, mode 0600 | Protected configuration, exactly as `git safe.directory` is ignored outside system/global scope. |
 
-`statescope.yaml` therefore contributes **one string that is a key into user-level
+`tuplescope.yaml` therefore contributes **one string that is a key into user-level
 config, and nothing else.** There is no `command:`, no `env:`, no `url:`, no
 `service:`, no `path:`, no `server:`.
 
@@ -253,7 +253,7 @@ row the watch predicate now excludes.
 
 **Capture must be pinned or the text is not portable**: every capture connection
 sets `DateStyle=ISO,MDY TimeZone=UTC bytea_output=hex IntervalStyle=iso_8601
-extra_float_digits=1`. StateScope pins none of these today. §4 has the
+extra_float_digits=1`. TupleScope pins none of these today. §4 has the
 measurement that makes this load-bearing rather than defensive.
 
 ---
@@ -261,14 +261,14 @@ measurement that makes this load-bearing rather than defensive.
 ## 4. Targets, and the three addresses
 
 ▲ The r1 example URL contained `pgsql=127.0.0.1:5432` and the design never said
-where that came from. It is not `origin`, and it is not StateScope's own DSN
-host. Measured, with StateScope on the host and both Adminer and PostgreSQL in
+where that came from. It is not `origin`, and it is not TupleScope's own DSN
+host. Measured, with TupleScope on the host and both Adminer and PostgreSQL in
 containers:
 
 | | Address | Who knows it |
 |---|---|---|
 | Adminer's HTTP origin — where the browser goes | `http://127.0.0.1:7442` | user |
-| PostgreSQL **as StateScope reaches it** | `127.0.0.1:7441` | StateScope's DSN |
+| PostgreSQL **as TupleScope reaches it** | `127.0.0.1:7441` | TupleScope's DSN |
 | PostgreSQL **as Adminer reaches it** → `pgsql=` | `172.17.0.3:5432` | **user only** |
 
 The third is not derivable from the second. `127.0.0.1:7441` means nothing
@@ -277,7 +277,7 @@ Docker Compose stack, not an edge one. So `server` is a user-config field.
 
 Measured on the same stack, so is `username`: Adminer keys its session on
 `(driver, server, username, db)`, and a URL with the wrong username — or none —
-renders the **login page**. StateScope knows a username from its own DSN, but
+renders the **login page**. TupleScope knows a username from its own DSN, but
 the role Adminer is logged in as may differ, and the DSN is the thing this
 design refuses to hand out. It comes from the binding.
 
@@ -309,7 +309,7 @@ predicate is **not a type allow-list**. It is one requirement and two limits:
 spliced into the WHERE clause. A URL builder that can reach it is an injection
 primitive. The renderer's `op` type has two members and neither is it.
 
-**`psql-service`** is unchanged in kind: not an interactive session. StateScope
+**`psql-service`** is unchanged in kind: not an interactive session. TupleScope
 spawns, sends SQL on stdin, and renders captured stdout. Interpolated into
 **argv: nothing.** Into **env: the service name only.** Into **stdin:**
 identifiers via `quoteIdent`, values via `quoteLiteral` (single quotes doubled;
@@ -332,14 +332,14 @@ Stdout/stderr consumers attach **before** the first stdin byte; `stdin` has an
 `'error'` handler (`EPIPE` is information, not a crash); 15 s timeout, `SIGTERM`
 then `SIGKILL` to the process **group**; output capped and truncated-with-kill;
 kill in `finally`. Windows: resolved path must end `.exe`, refused otherwise.
-Executable resolved **once, at `handoff enable`**, against a PATH StateScope
+Executable resolved **once, at `handoff enable`**, against a PATH TupleScope
 builds (system dirs + user-named dirs, never `node_modules/.bin`, never the
 workspace); the absolute path and its `realpath` are stored and re-checked at
 spawn.
 
 ---
 
-## 5. `~/.statescope/handoff.json` — normative
+## 5. `~/.tuplescope/handoff.json` — normative
 
 ▲ r1 showed a JSON example and no type.
 
@@ -349,7 +349,7 @@ export const HANDOFF_POLICY_VERSION = 1;
 
 export interface HandoffConfigV1 {
   readonly v: 1;
-  /** Keyed by alias — the one string statescope.yaml is allowed to contribute. */
+  /** Keyed by alias — the one string tuplescope.yaml is allowed to contribute. */
   readonly bindings: Readonly<Record<string, Binding>>;
 }
 
@@ -364,7 +364,7 @@ export interface AdminerBinding extends BindingCommon {
   readonly preset: 'adminer-url';
   /** Where the browser goes. Origin only: scheme + host + port, no path, no query. */
   readonly origin: string;
-  /** ▲ PostgreSQL as *Adminer* reaches it — `hostname[:port]`. Not StateScope's DSN host. */
+  /** ▲ PostgreSQL as *Adminer* reaches it — `hostname[:port]`. Not TupleScope's DSN host. */
   readonly server: string;
   /** ▲ The role Adminer is logged in as. Part of Adminer's session key. */
   readonly username: string;
@@ -372,7 +372,7 @@ export interface AdminerBinding extends BindingCommon {
 
 export interface PsqlServiceBinding extends BindingCommon {
   readonly preset: 'psql-service';
-  /** A key in pg_service.conf. StateScope never reads the file. */
+  /** A key in pg_service.conf. TupleScope never reads the file. */
   readonly service: string;
   /** Absolute, resolved at enable time. */
   readonly executable: string;
@@ -385,7 +385,7 @@ export interface WorkspaceGrant {
   readonly workspace: string;
   readonly approvedAt: string;   // ISO 8601
   readonly approvedBy: string;   // os.userInfo().username
-  /** Bumped when StateScope widens what a preset may do. A bump re-refuses. */
+  /** Bumped when TupleScope widens what a preset may do. A bump re-refuses. */
   readonly policyVersion: number;
 }
 ```
@@ -397,7 +397,7 @@ matches `/^[a-z][a-z0-9-]{0,31}$/`; `service` matches
 `/^[^\x00-\x1f\/?#&=]{1,63}$/`; `origin` parses as a URL with empty path, no
 query, no fragment, and a loopback host unless `--i-know-this-is-not-local` was
 given, which also prints a banner on every use. An unknown `preset` is a
-refusal, not a skip. The file is written only by `statescope handoff enable`,
+refusal, not a skip. The file is written only by `tuplescope handoff enable`,
 mode 0600, via write-temp-then-rename.
 
 **A grant is keyed on the whole tuple**
@@ -409,7 +409,7 @@ of which are repo-written.
 **Invalidated by:** the alias being absent or bound differently; a changed
 origin, server, username, service, executable path, or executable realpath; a
 different workspace path; a `policyVersion` bump. **Not** invalidated by editing
-`statescope.yaml` — a changed target name is an *unbound alias*, which re-refuses
+`tuplescope.yaml` — a changed target name is an *unbound alias*, which re-refuses
 by absence. No hash of the project config, so editing a scenario, an assertion,
 or `maskColumns` re-asks nothing.
 
@@ -452,11 +452,11 @@ missing schema. Measured: `to_regclass('"public"."wallets"')` → `public.wallet
 ```sql
 DO $$ BEGIN
   IF current_database() IS DISTINCT FROM 'demobank' THEN
-    RAISE EXCEPTION 'StateScope: this connection is database %, but the locator names demobank',
+    RAISE EXCEPTION 'TupleScope: this connection is database %, but the locator names demobank',
       current_database();
   END IF;
   IF to_regclass('"public"."wallets"') IS NULL THEN
-    RAISE EXCEPTION 'StateScope: database % has no table public.wallets', current_database();
+    RAISE EXCEPTION 'TupleScope: database % has no table public.wallets', current_database();
   END IF;
 END $$;
 SELECT * FROM "public"."wallets" WHERE "id" = 'wal_alice';
@@ -536,17 +536,17 @@ Open in Adminer  ·  not enabled on this machine
       &select=wallets&where[0][col]=id&where[0][op]==&where[0][val]=wal_alice
 
   The key is in that URL, and the browser keeps it: history, address-bar
-  autocomplete, and whatever this profile syncs. StateScope cannot take that
+  autocomplete, and whatever this profile syncs. TupleScope cannot take that
   back. Adminer connects with its own credentials, as you, and is not bound
   by maskColumns — it will show card_number in full.
 
   `adminer` is a name this repository chose. Bind it yourself, once:
 
-    statescope handoff enable adminer-url --as adminer \
+    tuplescope handoff enable adminer-url --as adminer \
       --origin http://127.0.0.1:7442 --server 172.17.0.3 --username postgres
 
-  Written to ~/.statescope/handoff.json, which this repository cannot write.
-  statescope handoff list · statescope handoff disable
+  Written to ~/.tuplescope/handoff.json, which this repository cannot write.
+  tuplescope handoff list · tuplescope handoff disable
 ```
 
 The `psql-service` variant names the resolved absolute executable, the service,
@@ -578,8 +578,8 @@ answering itself.
 - **Masking does not survive the jump. Say it in the prompt, the README, and the
   docs.** Every target connects as the user's own role and renders
   `card_number` in full. `maskColumns` is a capture-time control inside
-  StateScope's boundary; no second tool can inherit it. The handoff reverses
-  `README.md:293` ("StateScope does not launch a database browser") and that
+  TupleScope's boundary; no second tool can inherit it. The handoff reverses
+  `README.md:293` ("TupleScope does not launch a database browser") and that
   reversal belongs in the README, not in a surprise banner.
 - **A refused handoff still leaks the key.** Measured: a URL with the wrong
   `username` renders Adminer's login page — and that page echoes the full
@@ -590,7 +590,7 @@ answering itself.
   the locator from capture output rather than config, and by rendering the table
   on the card. Accepted, because per-row gating is the fatigue machine that
   drives users to the un-gated clipboard.
-- **The row key already reaches sinks StateScope cannot reach into**: browser
+- **The row key already reaches sinks TupleScope cannot reach into**: browser
   history, address-bar autocomplete, browser *sync* (loopback is not excluded),
   extensions with `tabs` permission, the target's access log, the clipboard and
   its managers, EDR/SIEM exec records, and — for every target including the copy
@@ -604,7 +604,7 @@ answering itself.
   does not prevent one.
 - **The trust store is writable by anything running as the user.** Anyone with
   that access already has code execution. 0600, and a note not to sync
-  `~/.statescope` in dotfiles.
+  `~/.tuplescope` in dotfiles.
 - **A `.exe` that is really a shim** (Chocolatey, scoop, App Execution Aliases)
   can re-derive a command line internally. Undetectable; neutralised only by
   argv containing zero variable elements, which is why that rule is absolute.
@@ -657,7 +657,7 @@ a row whose reported history is fiction is worse than no address at all.
    old implementations are gone.
 7. **`DatabaseLocator`** with `explain()`, and `handoffFor` composing locator +
    statement + portability for every surface.
-8. **`statescope handoff enable / list / disable`** and `~/.statescope/handoff.json`
+8. **`tuplescope handoff enable / list / disable`** and `~/.tuplescope/handoff.json`
    at 0600, with `HandoffConfigV1`, per-workspace grants keyed on the whole
    tuple, and refusals rather than coercions.
 9. **`adminer-url`** — every URL verified against a live Adminer 5 by opening it
@@ -815,7 +815,7 @@ otherwise opening a row also collapses the diff the reader was looking at.
 **And a grant bug that made it fail silently for a second reason.** `handoff
 enable` keyed the grant on `process.cwd()`; the runtime checks it against the
 workspace's own `configDir`. Identical directories, right up until someone runs
-`statescope handoff enable --config examples/shopfront/statescope.yaml` from the
+`tuplescope handoff enable --config examples/shopfront/tuplescope.yaml` from the
 repository root — measured, the grant landed on the repository root, and the
 runtime went on reporting `granted: false` for shopfront with nothing anywhere
 explaining why. A grant recorded in one place and checked in another is a grant
@@ -1009,7 +1009,7 @@ it to look. That is still open.
 
 ## 17. "Can we configure the database address in the YAML to avoid connecting every time?"
 
-The address is already there — `database.connectionString` in `statescope.yaml`
+The address is already there — `database.connectionString` in `tuplescope.yaml`
 — and nothing asks for it per run. But the premise underneath the question was
 worth measuring, and measuring it found something else entirely.
 
@@ -1028,7 +1028,7 @@ than `ls`, which never touches the database at all. Connecting was two per cent
 of the time.
 
 **The other 98% was a timer nobody was waiting for.** Instrumented,
-`statescope ls` finished its work at **16ms** and the process then sat for
+`tuplescope ls` finished its work at **16ms** and the process then sat for
 **2,250ms** before exiting. The cause:
 
 ```ts
@@ -1046,9 +1046,9 @@ loop kept alive by something else, the race still resolves at 2,004ms.
 
 | | before | after |
 |---|---|---|
-| `statescope ls` | 2,167ms | **247ms** |
-| `statescope check` | 2,214ms | **185ms** |
-| `statescope run checkout/happy` | 2,833ms | **817ms** |
+| `tuplescope ls` | 2,167ms | **247ms** |
+| `tuplescope check` | 2,214ms | **185ms** |
+| `tuplescope run checkout/happy` | 2,833ms | **817ms** |
 
 A sweep for the same shape found one sibling: `apps/mcp/src/server.ts` races an
 identical un-`unref`'d deadline on shutdown. It is harmless today because
@@ -1065,18 +1065,18 @@ naming the connection string and the config file. That split is right as it is.
 
 ## 18. The one address you still had to go and find
 
-Ports are pinned — `database.connectionString` in `statescope.yaml` fixes host,
+Ports are pinned — `database.connectionString` in `tuplescope.yaml` fixes host,
 port and database, and nothing asks per run. One address was the exception, and
 it is the one that had to be discovered with `docker inspect` while testing this
 very feature: `--server` on `handoff enable`, the database **as Adminer reaches
 it**.
 
-§4 established that StateScope cannot derive it: three independent addresses are
+§4 established that TupleScope cannot derive it: three independent addresses are
 in play and only the user knows where Adminer runs. That reasoning is intact.
 What it did not license was the message, which offered a made-up example —
 `e.g. postgres:5432` — and left the reader to go and find the real one.
 
-StateScope does know its *own* address. It now says so, as candidates rather
+TupleScope does know its *own* address. It now says so, as candidates rather
 than a guess:
 
 ```
@@ -1086,7 +1086,7 @@ This workspace reaches PostgreSQL at `127.0.0.1:7432`.
               inside one means the container, not this host
   --username  probably `postgres`, the role this workspace connects as
 
-StateScope will not choose for you: only you know where Adminer runs.
+TupleScope will not choose for you: only you know where Adminer runs.
 ```
 
 The second candidate appears **only for a loopback DSN**, because loopback is
@@ -1144,7 +1144,7 @@ command is now copy-pasteable, with the container alternative offered underneath
 when — and only when — the DSN is loopback:
 
 ```
-statescope handoff enable adminer-url --as adminer \
+tuplescope handoff enable adminer-url --as adminer \
   --origin http://127.0.0.1:8080 \
   --server 127.0.0.1:7432 --username postgres
 ```

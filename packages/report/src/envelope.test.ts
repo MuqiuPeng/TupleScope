@@ -8,9 +8,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ChangeSet } from '@statescope/core';
+import type { ChangeSet } from '@tuplescope/core';
 import { summariseChanges } from './envelope.js';
-import { visible } from '@statescope/core';
+import { visible } from '@tuplescope/core';
 
 const CHANGES: ChangeSet = {
   captureMethod: 'mvcc-xmin',

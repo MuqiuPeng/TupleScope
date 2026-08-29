@@ -1,5 +1,5 @@
 /**
- * The StateScope local runtime.
+ * The TupleScope local runtime.
  *
  * A thin HTTP shell over the engine. Everything it exposes, the CLI and MCP
  * will need too, so no logic lives here that they would have to reimplement —
@@ -15,23 +15,23 @@ import { withHandoffs } from './handoff-payload.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerResetRoute } from './reset-route.js';
 import { openUrl } from './open-url.js';
-import { addAssertion, removeAssertion, ScenarioSaveError } from '@statescope/scenario-engine';
+import { addAssertion, removeAssertion, ScenarioSaveError } from '@tuplescope/scenario-engine';
 import {
   loadWorkspaceConfig,
   openWorkspace,
-  } from '@statescope/workspace';
-import type { CaptureScope, Run, Scenario } from '@statescope/core';
+  } from '@tuplescope/workspace';
+import type { CaptureScope, Run, Scenario } from '@tuplescope/core';
 import { createGuard, mintToken } from './security.js';
 import { removeSession, writeSession } from './session.js';
 import { withRequestOverrides } from './request-overrides.js';
 import type { RequestOverride } from './request-overrides.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env['STATESCOPE_PORT'] ?? 7420);
+const PORT = Number(process.env['TUPLESCOPE_PORT'] ?? 7420);
 
 async function main(): Promise<void> {
   const config = await loadWorkspaceConfig();
-  const token = process.env['STATESCOPE_TOKEN'] ?? mintToken();
+  const token = process.env['TUPLESCOPE_TOKEN'] ?? mintToken();
 
   const workspace = openWorkspace(config);
   const { adapter, engine } = workspace;
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
    */
   const lastVariables = new Map<string, Readonly<Record<string, string>>>();
 
-  app.get('/health', async () => ({ ok: true, service: 'statescope' }));
+  app.get('/health', async () => ({ ok: true, service: 'tuplescope' }));
 
   app.get('/api/workspace', async () => ({
     name: config.name,
@@ -329,13 +329,13 @@ async function main(): Promise<void> {
   });
 
   console.log(`
-  StateScope runtime
+  TupleScope runtime
   ------------------
   UI        ${url}
   Workspace ${config.name}  ->  ${config.baseUrl}
   Capture   ${adapter.captureMethod} (${adapter.detection} detection)
   Scenarios ${scenarios.length} loaded from ${config.scenariosDir}
-${sessionFile ? `  Lost it?  statescope url  (reads ${sessionFile})` : ''}
+${sessionFile ? `  Lost it?  tuplescope url  (reads ${sessionFile})` : ''}
 `);
 
   const shutdown = async (): Promise<void> => {
@@ -349,6 +349,6 @@ ${sessionFile ? `  Lost it?  statescope url  (reads ${sessionFile})` : ''}
 }
 
 void main().catch((error: unknown) => {
-  console.error('[statescope] failed to start:', error);
+  console.error('[tuplescope] failed to start:', error);
   process.exit(1);
 });

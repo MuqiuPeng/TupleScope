@@ -1,7 +1,7 @@
 /**
  * The two things the browser cannot do for itself.
  *
- * A page cannot read `~/.statescope/handoff.json` and cannot spawn `psql`, so
+ * A page cannot read `~/.tuplescope/handoff.json` and cannot spawn `psql`, so
  * both live here. What the page gets is deliberately thin: a list of what is
  * bound, and the result of opening one row through one target.
  *
@@ -14,8 +14,8 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { ChangeSet, Run, RowChange } from '@statescope/core';
-import { handoffFor } from '@statescope/core';
+import type { ChangeSet, Run, RowChange } from '@tuplescope/core';
+import { handoffFor } from '@tuplescope/core';
 import {
   adminerUrl,
   isGranted,
@@ -24,7 +24,7 @@ import {
   runPsql,
   workspaceKey,
   type Binding,
-} from '@statescope/handoff';
+} from '@tuplescope/handoff';
 
 export interface HandoffRouteOptions {
   /** Where the workspace is, for matching grants. */

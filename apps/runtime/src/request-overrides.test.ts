@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { Scenario } from '@statescope/core';
+import type { Scenario } from '@tuplescope/core';
 import { withRequestOverrides } from './request-overrides.js';
 
 const scenario: Scenario = {

@@ -55,7 +55,7 @@ app.setErrorHandler((error: Error & Partial<ApiError>, _request, reply) => {
 app.get('/health', async () => ({ ok: true }));
 
 app.get('/', async (request, reply) => {
-  const uiPort = process.env['STATESCOPE_PORT'] ?? '7420';
+  const uiPort = process.env['TUPLESCOPE_PORT'] ?? '7420';
   const routes = [
     'POST /carts — open a cart',
     'POST /carts/:id/items — add a line',
@@ -76,7 +76,7 @@ app.get('/', async (request, reply) => {
  li{border-bottom:1px solid #26332f;padding:7px 0;font:13px/1.5 "SFMono-Regular",ui-monospace,Menlo,monospace;color:#869b96}
 </style></head><body><main>
  <h1>Shopfront API</h1>
- <p>The second example backend StateScope watches. It shares no code and no vocabulary
+ <p>The second example backend TupleScope watches. It shares no code and no vocabulary
     with Demo Bank — that is the point of it. UI at
     <a href="http://127.0.0.1:${uiPort}">127.0.0.1:${uiPort}</a>.</p>
  <ul>${routes.map((r) => `<li>${r}</li>`).join('')}</ul>

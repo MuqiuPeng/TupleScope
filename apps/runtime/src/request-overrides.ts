@@ -1,4 +1,4 @@
-import type { HttpRequest, Scenario } from '@statescope/core';
+import type { HttpRequest, Scenario } from '@tuplescope/core';
 
 export interface RequestOverride {
   method: HttpRequest['method'];

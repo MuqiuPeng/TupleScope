@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { ENGINE_NAMES } from '@statescope/db-postgres';
+import { ENGINE_NAMES } from '@tuplescope/db-postgres';
 import { secretsReferencedBy } from './credentials.js';
 import {
   findWorkspaceConfig,
@@ -28,14 +28,14 @@ baselineWindowMs: 400
 
 let dir: string;
 before(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'statescope-ws-'));
+  dir = await mkdtemp(join(tmpdir(), 'tuplescope-ws-'));
 });
 after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
 const parse = (source: string, env: Record<string, string | undefined> = {}) =>
-  parseWorkspaceConfig(source, join(dir, 'statescope.yaml'), env);
+  parseWorkspaceConfig(source, join(dir, 'tuplescope.yaml'), env);
 
 const rejects = (source: string, pattern: RegExp, env: Record<string, string | undefined> = {}) =>
   assert.throws(() => parse(source, env), (error: unknown) => {
@@ -253,36 +253,36 @@ describe('findWorkspaceConfig', () => {
     );
   });
 
-  it('reads STATESCOPE_CONFIG when no path is given', async () => {
+  it('reads TUPLESCOPE_CONFIG when no path is given', async () => {
     const path = join(dir, 'from-env.yaml');
     await writeFile(path, VALID, 'utf8');
-    assert.equal(await findWorkspaceConfig({ env: { STATESCOPE_CONFIG: path } }), path);
+    assert.equal(await findWorkspaceConfig({ env: { TUPLESCOPE_CONFIG: path } }), path);
   });
 
   it('walks up from the working directory', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'statescope-walk-'));
+    const root = await mkdtemp(join(tmpdir(), 'tuplescope-walk-'));
     try {
-      await writeFile(join(root, 'statescope.yaml'), VALID, 'utf8');
+      await writeFile(join(root, 'tuplescope.yaml'), VALID, 'utf8');
       const deep = join(root, 'a', 'b', 'c');
       await mkdir(deep, { recursive: true });
-      assert.equal(await findWorkspaceConfig({ from: deep, env: {} }), join(root, 'statescope.yaml'));
+      assert.equal(await findWorkspaceConfig({ from: deep, env: {} }), join(root, 'tuplescope.yaml'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
   it('stops at the repository root rather than escaping into a parent', async () => {
-    // A stray statescope.yaml above someone's checkout is a surprising thing to
+    // A stray tuplescope.yaml above someone's checkout is a surprising thing to
     // silently pick up.
-    const outer = await mkdtemp(join(tmpdir(), 'statescope-outer-'));
+    const outer = await mkdtemp(join(tmpdir(), 'tuplescope-outer-'));
     try {
-      await writeFile(join(outer, 'statescope.yaml'), VALID, 'utf8');
+      await writeFile(join(outer, 'tuplescope.yaml'), VALID, 'utf8');
       const repo = join(outer, 'repo');
       await mkdir(join(repo, '.git'), { recursive: true });
       await mkdir(join(repo, 'src'), { recursive: true });
       await assert.rejects(
         findWorkspaceConfig({ from: join(repo, 'src'), env: {} }),
-        /no statescope\.yaml found/,
+        /no tuplescope\.yaml found/,
       );
     } finally {
       await rm(outer, { recursive: true, force: true });
@@ -290,12 +290,12 @@ describe('findWorkspaceConfig', () => {
   });
 
   it('lists everywhere it looked', async () => {
-    const empty = await mkdtemp(join(tmpdir(), 'statescope-empty-'));
+    const empty = await mkdtemp(join(tmpdir(), 'tuplescope-empty-'));
     try {
       await mkdir(join(empty, '.git'), { recursive: true });
       await assert.rejects(findWorkspaceConfig({ from: empty, env: {} }), (error: unknown) => {
         assert.match((error as Error).message, new RegExp(empty.replace(/[/\\]/g, '.')));
-        assert.match((error as Error).message, /statescope\.example\.yaml/);
+        assert.match((error as Error).message, /tuplescope\.example\.yaml/);
         return true;
       });
     } finally {
@@ -306,10 +306,10 @@ describe('findWorkspaceConfig', () => {
   it('never resolves relative to the installed location of the code', async () => {
     // The runtime used to anchor discovery to `resolve(here, '../../../')`,
     // which under npx resolves into the pnpm store.
-    const elsewhere = await mkdtemp(join(tmpdir(), 'statescope-none-'));
+    const elsewhere = await mkdtemp(join(tmpdir(), 'tuplescope-none-'));
     try {
       await mkdir(join(elsewhere, '.git'), { recursive: true });
-      await assert.rejects(findWorkspaceConfig({ from: elsewhere, env: {} }), /no statescope\.yaml found/);
+      await assert.rejects(findWorkspaceConfig({ from: elsewhere, env: {} }), /no tuplescope\.yaml found/);
     } finally {
       await rm(elsewhere, { recursive: true, force: true });
     }
@@ -318,10 +318,10 @@ describe('findWorkspaceConfig', () => {
 
 describe('loadWorkspaceConfig', () => {
   it('finds, interpolates and validates in one call', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'statescope-load-'));
+    const root = await mkdtemp(join(tmpdir(), 'tuplescope-load-'));
     try {
       await writeFile(
-        join(root, 'statescope.yaml'),
+        join(root, 'tuplescope.yaml'),
         VALID.replace('http://127.0.0.1:8000', '${API_URL}'),
         'utf8',
       );
@@ -330,7 +330,7 @@ describe('loadWorkspaceConfig', () => {
         env: { API_URL: 'http://example.test:9000' },
       });
       assert.equal(config.baseUrl, 'http://example.test:9000');
-      assert.equal(config.configFile, join(root, 'statescope.yaml'));
+      assert.equal(config.configFile, join(root, 'tuplescope.yaml'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

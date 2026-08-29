@@ -1,7 +1,7 @@
 /**
  * The address hint that travels to the browser.
  *
- * `--server` is the one address StateScope cannot derive, and the page used to
+ * `--server` is the one address TupleScope cannot derive, and the page used to
  * hand the reader a placeholder — `<db as adminer sees it>` — which means "go
  * and run `docker inspect`". The workspace config already names a host and a
  * port, so the page can offer candidates instead.

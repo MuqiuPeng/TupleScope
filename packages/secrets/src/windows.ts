@@ -43,7 +43,7 @@ const REMEDY =
   'not available in every environment.';
 
 /** `TargetName` prefix. `CredEnumerate` filters by prefix plus a single asterisk. */
-const TARGET = 'StateScope_secret_';
+const TARGET = 'TupleScope_secret_';
 
 /** Documented Win32 codes. The messages are localized; the numbers are not. */
 const ERROR_NOT_FOUND = 1168;
@@ -100,8 +100,8 @@ public static class SsCred {
     c.Type = 1;                       // CRED_TYPE_GENERIC
     c.Persist = 2;                    // CRED_PERSIST_LOCAL_MACHINE
     c.TargetName = Marshal.StringToCoTaskMemUni(target);
-    c.UserName = Marshal.StringToCoTaskMemUni("statescope");
-    c.Comment = Marshal.StringToCoTaskMemUni("StateScope secret referenced from statescope.yaml");
+    c.UserName = Marshal.StringToCoTaskMemUni("tuplescope");
+    c.Comment = Marshal.StringToCoTaskMemUni("TupleScope secret referenced from tuplescope.yaml");
     c.CredentialBlob = Marshal.AllocCoTaskMem(blob.Length);
     Marshal.Copy(blob, 0, c.CredentialBlob, blob.Length);
     c.CredentialBlobSize = (uint)blob.Length;

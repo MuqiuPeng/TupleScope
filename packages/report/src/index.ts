@@ -1,5 +1,5 @@
 /**
- * @statescope/report — the machine-readable shapes.
+ * @tuplescope/report — the machine-readable shapes.
  *
  * One envelope and one JUnit writer serve `--json`, stored runs and (in v0.3)
  * MCP. Human rendering is not here: it belongs to whichever surface has a

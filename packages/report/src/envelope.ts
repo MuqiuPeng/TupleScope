@@ -13,7 +13,7 @@
  * the change that would otherwise ship a silent green into somebody's CI.
  */
 
-import { keyLabel } from '@statescope/core';
+import { keyLabel } from '@tuplescope/core';
 import type {
   AssertionCandidate,
   AssertionResult,
@@ -30,16 +30,16 @@ import type {
   StepOutcome,
   SuiteVerdict,
   VerdictPolicy,
-} from '@statescope/core';
+} from '@tuplescope/core';
 
 /** Bumped on removal, rename, or a semantic change. Never on an added field. */
-import { RUN_REPORT_SCHEMA } from '@statescope/core';
-export { RUN_REPORT_SCHEMA } from '@statescope/core';
+import { RUN_REPORT_SCHEMA } from '@tuplescope/core';
+export { RUN_REPORT_SCHEMA } from '@tuplescope/core';
 
 export type SchemaId = typeof RUN_REPORT_SCHEMA;
 
 export interface Producer {
-  tool: 'statescope';
+  tool: 'tuplescope';
   version: string;
   /** Which consumer produced this. Two surfaces, one shape. */
   surface: 'cli' | 'runtime' | 'mcp';
@@ -93,7 +93,7 @@ export interface StepReport {
   /**
    * Assertions this step's own changes imply, ready to be kept.
    *
-   * Carried in the envelope so `statescope keep` can work on a run that already
+   * Carried in the envelope so `tuplescope keep` can work on a run that already
    * finished. Promoting only what is still in memory would mean the loop only
    * closes if you noticed in the same breath as the run.
    */

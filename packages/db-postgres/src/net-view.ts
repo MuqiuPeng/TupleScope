@@ -9,7 +9,7 @@ import type {
   CaptureWarning,
   Row,
   RowChange,
-} from '@statescope/core';
+} from '@tuplescope/core';
 import { readKeySets, readRowsByKey } from './images.js';
 import type { TableIdentity } from './introspect.js';
 import { quoteIdent, RowReader, serializeKey, valuesLookEqual } from './rows.js';

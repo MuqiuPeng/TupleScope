@@ -4,7 +4,7 @@
  */
 
 import type { PoolClient } from 'pg';
-import type { KeyStrategy } from '@statescope/core';
+import type { KeyStrategy } from '@tuplescope/core';
 
 export interface TableIdentity {
   table: string;

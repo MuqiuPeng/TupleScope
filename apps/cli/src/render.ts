@@ -21,7 +21,7 @@ import {
   MASKED_TEXT,
   UNKNOWN_TEXT,
   visible,
-} from '@statescope/core';
+} from '@tuplescope/core';
 import type {
   AssertionResult,
   ChangeSet,
@@ -30,7 +30,7 @@ import type {
   RunVerdict,
   StepResult,
   Value,
-} from '@statescope/core';
+} from '@tuplescope/core';
 
 // ─── style ────────────────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
  * Demo Bank — a fictional bank with fictional customers.
  *
  * Nothing here is modelled on any real institution's schema. It exists to give
- * StateScope something honest to observe: money that moves, a state machine
+ * TupleScope something honest to observe: money that moves, a state machine
  * that advances, an audit trail that must balance, and a guard that refuses.
  *
  * Money is `numeric`, never `float`. The whole product is about being able to

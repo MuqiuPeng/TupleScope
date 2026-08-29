@@ -3,11 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import type { ChangeSet, Detection, RowChange, Row, Value } from '@statescope/core';
-import { parse } from '@statescope/expr';
+import type { ChangeSet, Detection, RowChange, Row, Value } from '@tuplescope/core';
+import { parse } from '@tuplescope/expr';
 import { promoteCandidates } from './promote.js';
 import { addAssertion, removeAssertion, ScenarioSaveError } from './save.js';
-import { masked, textIfVisible, visible } from '@statescope/core';
+import { masked, textIfVisible, visible } from '@tuplescope/core';
 
 const v = (text: string | null, pgType = 'text'): Value => visible(pgType, text);
 const money = (text: string): Value => v(text, 'numeric');
@@ -296,7 +296,7 @@ datasets:
 
 describe('addAssertion', () => {
   const withFile = async (fn: (path: string) => Promise<void>): Promise<void> => {
-    const dir = await mkdtemp(join(tmpdir(), 'statescope-save-'));
+    const dir = await mkdtemp(join(tmpdir(), 'tuplescope-save-'));
     const path = join(dir, 's.yaml');
     await writeFile(path, FILE, 'utf8');
     try {

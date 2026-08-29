@@ -1,5 +1,5 @@
-import type { Run } from '@statescope/core';
-import { handoffFor } from '@statescope/core';
+import type { Run } from '@tuplescope/core';
+import { handoffFor } from '@tuplescope/core';
 
 /**
  * Attaches the row handoff to every change on the way out.

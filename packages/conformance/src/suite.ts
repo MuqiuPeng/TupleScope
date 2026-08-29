@@ -16,16 +16,16 @@
  */
 
 import pg from 'pg';
-import type { CaptureScope, ChangeSet, DatabaseAdapter, RowChange, RowsRead } from '@statescope/core';
+import type { CaptureScope, ChangeSet, DatabaseAdapter, RowChange, RowsRead } from '@tuplescope/core';
 import {
   evaluateAssertion,
   parse,
   predicateClauses,
   rowsSelectorsIn,
   Unevaluable,
-} from '@statescope/expr';
+} from '@tuplescope/expr';
 import type { Answer, Capability, ConformanceCase } from './cases.js';
-import { keyLabel } from '@statescope/core';
+import { keyLabel } from '@tuplescope/core';
 
 export interface EngineUnderTest {
   /** For the test title only. Nothing in the suite may branch on it. */

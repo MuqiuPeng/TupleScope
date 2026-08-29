@@ -432,7 +432,7 @@ export function mergeVerdicts(
    *
    * This used to borrow `deciding.reason` — the *first* dataset that reached
    * the worst outcome — and paste it after a run-wide count. On the demo's own
-   * `statescope run`, the first command the README asks anyone to type, that
+   * `tuplescope run`, the first command the README asks anyone to type, that
    * produced two numbers about different things on adjacent lines:
    *
    *     outcome  clean · 2 of 2 datasets passed cleanly: 15 assertions …

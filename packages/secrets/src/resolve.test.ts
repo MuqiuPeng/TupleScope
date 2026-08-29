@@ -140,7 +140,7 @@ describe('the reserved profile indirection', () => {
   });
 
   it('names the stored id, not just the logical one, when a binding points nowhere', async () => {
-    // Otherwise the advice is `statescope secret set customer_token`, which
+    // Otherwise the advice is `tuplescope secret set customer_token`, which
     // would set the wrong thing and appear to fix nothing.
     const store = fakeStore({});
     await assert.rejects(

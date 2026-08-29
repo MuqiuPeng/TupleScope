@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 // The module reads homedir() at import time, so redirect HOME before loading it.
-const fakeHome = mkdtempSync(join(tmpdir(), 'statescope-home-'));
+const fakeHome = mkdtempSync(join(tmpdir(), 'tuplescope-home-'));
 const realHome = process.env['HOME'];
 process.env['HOME'] = fakeHome;
 
@@ -53,11 +53,11 @@ describe('session file', () => {
     writeSession({ ...base, port: 9999, pid: 999_999, url: 'http://dead' });
     const ports = listSessions().map((s) => s.port);
     assert.ok(!ports.includes(9999));
-    assert.equal(existsSync(join(fakeHome, '.statescope', 'sessions', '9999.json')), false);
+    assert.equal(existsSync(join(fakeHome, '.tuplescope', 'sessions', '9999.json')), false);
   });
 
   it('drops a corrupt entry too', () => {
-    const path = join(fakeHome, '.statescope', 'sessions', '9998.json');
+    const path = join(fakeHome, '.tuplescope', 'sessions', '9998.json');
     writeFileSync(path, 'not json');
     listSessions();
     assert.equal(existsSync(path), false);
@@ -80,8 +80,8 @@ describe('session file', () => {
 
   it('does not leak the token into the filename', () => {
     writeSession({ ...base, pid: process.pid });
-    const names = readdirSync(join(fakeHome, '.statescope', 'sessions'));
+    const names = readdirSync(join(fakeHome, '.tuplescope', 'sessions'));
     for (const name of names) assert.doesNotMatch(name, /sekrit/);
-    assert.match(readFileSync(join(fakeHome, '.statescope', 'sessions', '7420.json'), 'utf8'), /sekrit/);
+    assert.match(readFileSync(join(fakeHome, '.tuplescope', 'sessions', '7420.json'), 'utf8'), /sekrit/);
   });
 });

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * `statescope` — the headless surface.
+ * `tuplescope` — the headless surface.
  *
  * It drives the engine in-process and never speaks to the HTTP runtime. CI has
  * no server to talk to, and requiring one would mean starting a web server,
  * waiting on a health check and managing a token for a localhost process the
- * job just launched. The composition root in `@statescope/workspace` is what
+ * job just launched. The composition root in `@tuplescope/workspace` is what
  * makes that possible; this file is argument parsing, ordering and output.
  *
  * Two process rules, both load-bearing:
@@ -27,8 +27,8 @@ import {
   verdictOf,
   type RunVerdict,
   type VerdictPolicy,
-} from '@statescope/core';
-import { RUN_REPORT_SCHEMA, buildEnvelope, toJUnit, type Envelope } from '@statescope/report';
+} from '@tuplescope/core';
+import { RUN_REPORT_SCHEMA, buildEnvelope, toJUnit, type Envelope } from '@tuplescope/report';
 import {
   StaleRunError,
   WorkspaceConfigError,
@@ -38,9 +38,9 @@ import {
   openWorkspace,
   resolveWorkspaceSecrets,
   secretsReferencedBy,
-} from '@statescope/workspace';
-import { addAssertion } from '@statescope/scenario-engine';
-import { parse, predicateColumnsIn } from '@statescope/expr';
+} from '@tuplescope/workspace';
+import { addAssertion } from '@tuplescope/scenario-engine';
+import { parse, predicateColumnsIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
 import {
@@ -49,7 +49,7 @@ import {
   secretIdFor,
   SecretStoreUnavailable,
   tryOpenSecretStore,
-} from '@statescope/secrets';
+} from '@tuplescope/secrets';
 import { commandHandoff } from './handoff.js';
 import { commandSecret } from './secrets.js';
 
@@ -94,22 +94,22 @@ const OPTIONS = {
   'i-know-this-is-not-local': { type: 'boolean' },
 } as const;
 
-const HELP = `statescope — run backend scenarios, see exactly what changed
+const HELP = `tuplescope — run backend scenarios, see exactly what changed
 
-  statescope run [target…]     run scenarios and report what the API wrote
-  statescope ls                every scenario and dataset in this workspace
-  statescope show <target>     one scenario or dataset, in detail
-  statescope check [target]    what this suite can and cannot prove, without running it
-  statescope runs [n]          stored runs, newest first
-  statescope runs show <id>    re-render a stored run (an id, or 'last')
-  statescope keep <sel> <step> [n…]
+  tuplescope run [target…]     run scenarios and report what the API wrote
+  tuplescope ls                every scenario and dataset in this workspace
+  tuplescope show <target>     one scenario or dataset, in detail
+  tuplescope check [target]    what this suite can and cannot prove, without running it
+  tuplescope runs [n]          stored runs, newest first
+  tuplescope runs show <id>    re-render a stored run (an id, or 'last')
+  tuplescope keep <sel> <step> [n…]
                                turn what a run observed into assertions in the
                                scenario file. With no numbers, lists them.
-  statescope report <file…>    re-render stored envelopes as text or JUnit
-  statescope secret <cmd>      credentials a workspace refers to but does not contain
-  statescope handoff <cmd>     open an observed row in a database tool of yours
-  statescope status            what this workspace points at, and whether it answers
-  statescope url               the URL of a running runtime, token and all
+  tuplescope report <file…>    re-render stored envelopes as text or JUnit
+  tuplescope secret <cmd>      credentials a workspace refers to but does not contain
+  tuplescope handoff <cmd>     open an observed row in a database tool of yours
+  tuplescope status            what this workspace points at, and whether it answers
+  tuplescope url               the URL of a running runtime, token and all
 
 A target is scenario[/dataset]. With none, every dataset runs.
 
@@ -119,7 +119,7 @@ Run options
       --only <stepId>          run this step alone
       --continue-from <id>     reuse a stored run's variables; 'last' for the
                                newest full run of the same dataset
-      --no-save                do not record this run in .statescope/runs
+      --no-save                do not record this run in .tuplescope/runs
       --unevaluable <mode>     error | warn        whether an undecided check
                                reaches the exit code                 (error)
       --warnings <mode>        default | strict | off                (default)
@@ -164,7 +164,7 @@ async function main(argv: string[]): Promise<number> {
     // Imported, not typed out. This line said `/1` for as long as the constant
     // did, and would have gone on saying it after the bump — TypeScript cannot
     // object to a string that happens to be wrong.
-    process.stdout.write(`statescope ${VERSION} (schema ${RUN_REPORT_SCHEMA})\n`);
+    process.stdout.write(`tuplescope ${VERSION} (schema ${RUN_REPORT_SCHEMA})\n`);
     return 0;
   }
   const command = positionals[0] ?? (values.help ? 'help' : undefined);
@@ -211,7 +211,7 @@ function commandUrl(args: string[]): number {
   const sessions = listSessions();
   if (sessions.length === 0) {
     process.stderr.write(
-      'No StateScope runtime is running.\nStart one with `pnpm start`; it prints its URL and records it for next time.\n',
+      'No TupleScope runtime is running.\nStart one with `pnpm start`; it prints its URL and records it for next time.\n',
     );
     return 1;
   }
@@ -223,7 +223,7 @@ function commandUrl(args: string[]): number {
   }
   process.stdout.write(`${sessions[0]!.url}\n`);
   if (sessions.length > 1) {
-    process.stderr.write(`(${sessions.length - 1} other instance(s) running — statescope url --all)\n`);
+    process.stderr.write(`(${sessions.length - 1} other instance(s) running — tuplescope url --all)\n`);
   }
   return 0;
 }
@@ -293,7 +293,7 @@ async function withWorkspace<T>(
       return EXIT_USAGE;
     }
     // A workspace that is misconfigured is an ordinary outcome with a remedy,
-    // not a crash. `statescope status` had always rendered its own properly;
+    // not a crash. `tuplescope status` had always rendered its own properly;
     // every other command answered a missing `scenariosDir` with a Node stack
     // trace — on the second command in the README, on a machine that had done
     // nothing wrong.
@@ -346,7 +346,7 @@ async function open(values: Values) {
  *
  * It is used as the losing half of `Promise.race([close(), sleep(2000)])`, and
  * a `setTimeout` holds the event loop open until it fires whether or not
- * anybody is still waiting on it. Measured: `statescope ls` finished its work
+ * anybody is still waiting on it. Measured: `tuplescope ls` finished its work
  * in 16ms and the process then sat for another 2,250ms — every invocation of
  * every command paying two seconds for a deadline that had already been beaten.
  */
@@ -414,7 +414,7 @@ async function reportSecrets(values: Values): Promise<{ lines: string[]; allConf
     if (!present) allConfigured = false;
     lines.push(
       `  ${lines.length === 0 ? 'secrets ' : '        '}  ${present ? '\u2713' : '\u2717'} ${name}` +
-        (present ? '' : ` \u2014 not configured; \`statescope secret set ${id}\``),
+        (present ? '' : ` \u2014 not configured; \`tuplescope secret set ${id}\``),
     );
   }
   return { lines, allConfigured };
@@ -434,7 +434,7 @@ async function commandStatus(values: Values): Promise<number> {
   }
   if (!secretsOk) {
     // The workspace cannot open without them, so this is the whole report.
-    process.stdout.write('statescope\n');
+    process.stdout.write('tuplescope\n');
     for (const line of secretLines) process.stdout.write(`${line}\n`);
     return 2;
   }
@@ -596,7 +596,7 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     }
 
     const out = [
-      `statescope · ${session.config.name}`,
+      `tuplescope · ${session.config.name}`,
       `  selected   ${selected.length} dataset(s), ${assertions} assertion(s)`,
       `  database   ${tables.length} tables`,
     ];
@@ -654,7 +654,7 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
       }
       const stored = id === 'last' ? await store.latest() : await store.get(id);
       if (!stored) {
-        process.stderr.write(`No stored run \`${id}\`. \`statescope runs\` lists what is there.\n`);
+        process.stderr.write(`No stored run \`${id}\`. \`tuplescope runs\` lists what is there.\n`);
         return EXIT_USAGE;
       }
       process.stdout.write(`${JSON.stringify(stored, null, 2)}\n`);
@@ -694,7 +694,7 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
 async function commandKeep(args: string[], values: Values): Promise<number> {
   const [selector, stepId, ...picked] = args;
   if (!selector || !stepId) {
-    process.stderr.write('keep needs a target and a step: statescope keep refund/happy create_payment\n');
+    process.stderr.write('keep needs a target and a step: tuplescope keep refund/happy create_payment\n');
     return EXIT_USAGE;
   }
   const [scenarioId, datasetId] = selector.split('/');
@@ -761,7 +761,7 @@ async function commandKeep(args: string[], values: Values): Promise<number> {
       process.stdout.write(
         `${found.scenario.id}/${targetDataset}/${stepId}  ·  from run ${stored.run.id}\n\n` +
           `${out.join('\n')}\n\n` +
-          `  statescope keep ${selector} ${stepId} 1 2   keeps those two\n`,
+          `  tuplescope keep ${selector} ${stepId} 1 2   keeps those two\n`,
       );
       return 0;
     }
@@ -809,7 +809,7 @@ async function commandKeep(args: string[], values: Values): Promise<number> {
  */
 async function commandReport(files: string[], values: Values): Promise<number> {
   if (files.length === 0) {
-    process.stderr.write('report needs at least one stored envelope: statescope report run.json\n');
+    process.stderr.write('report needs at least one stored envelope: tuplescope report run.json\n');
     return EXIT_USAGE;
   }
   const { readFile } = await import('node:fs/promises');
@@ -817,8 +817,8 @@ async function commandReport(files: string[], values: Values): Promise<number> {
   for (const file of files) {
     try {
       const parsed = JSON.parse(await readFile(file, 'utf8')) as Envelope;
-      if (typeof parsed.schema !== 'string' || !parsed.schema.startsWith('statescope.run-report/')) {
-        process.stderr.write(`${file}: not a StateScope run report.\n`);
+      if (typeof parsed.schema !== 'string' || !parsed.schema.startsWith('tuplescope.run-report/')) {
+        process.stderr.write(`${file}: not a TupleScope run report.\n`);
         return EXIT_USAGE;
       }
       const major = Number(parsed.schema.split('/')[1]);
@@ -832,7 +832,7 @@ async function commandReport(files: string[], values: Values): Promise<number> {
         // is that an unknown value degrades to undecided, and silently reading
         // a format we do not know would be the opposite of that.
         process.stderr.write(
-          `${file}: written by a newer StateScope (${parsed.schema}); this build reads version ${supported}.\n`,
+          `${file}: written by a newer TupleScope (${parsed.schema}); this build reads version ${supported}.\n`,
         );
         return EXIT_USAGE;
       }
@@ -842,7 +842,7 @@ async function commandReport(files: string[], values: Values): Promise<number> {
         // /1 file's column values carry `text` with no `state`, which reads as
         // neither visible nor masked — every value would print as unknown.
         process.stderr.write(
-          `${file}: written by an older StateScope (${parsed.schema}); this build reads version ${supported}. ` +
+          `${file}: written by an older TupleScope (${parsed.schema}); this build reads version ${supported}. ` +
             `Re-run the scenario to produce a current report.\n`,
         );
         return EXIT_USAGE;
@@ -967,7 +967,7 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
             source === 'last'
               ? `--from/--only continue a previous run, and there is no stored full run of ` +
                 `\`${scenario.id}/${dataset.id}\` to continue. Run the whole dataset once first.\n`
-              : `No stored run \`${source}\`. \`statescope runs\` lists what is there.\n`,
+              : `No stored run \`${source}\`. \`tuplescope runs\` lists what is there.\n`,
           );
           return EXIT_USAGE;
         }
@@ -1025,7 +1025,7 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
     const exitCode = values['exit-zero'] && (natural === 1 || natural === 3) ? 0 : natural;
 
     const envelope = buildEnvelope(reports, suite, {
-      producer: { tool: 'statescope', version: VERSION, surface: 'cli' },
+      producer: { tool: 'tuplescope', version: VERSION, surface: 'cli' },
       workspace: {
         name: session.config.name,
         configPath: session.config.configFile,

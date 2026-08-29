@@ -5,8 +5,8 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ChangeSet, RowChange, Value } from '@statescope/core';
-import { visible } from '@statescope/core';
+import type { ChangeSet, RowChange, Value } from '@tuplescope/core';
+import { visible } from '@tuplescope/core';
 import {
   jsonLeaves,
   renderDiff,

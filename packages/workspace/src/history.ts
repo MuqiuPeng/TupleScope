@@ -22,7 +22,7 @@
  */
 
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { schemaReadable } from '@statescope/core';
+import { schemaReadable } from '@tuplescope/core';
 import { join } from 'node:path';
 
 /** The stored artifact: whatever the report layer produced for a single run. */

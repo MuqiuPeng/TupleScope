@@ -82,7 +82,7 @@ function parseInside(inside: string, whole: string): Part {
       throw new ReferenceSyntaxError(
         `\`${whole}\` gives a secret a default value. A default would be a credential ` +
           `written into the workspace file, which is what \`\${secret:…}\` exists to avoid. ` +
-          `Set the secret instead: \`statescope secret set ${name.split(':-')[0]}\`.`,
+          `Set the secret instead: \`tuplescope secret set ${name.split(':-')[0]}\`.`,
         whole,
       );
     }
@@ -155,11 +155,11 @@ export function isLiteral(parts: ReadonlyArray<Part>): boolean {
  * `\u0000` delimits it because a YAML scalar cannot contain one.
  */
 export function secretMarker(nonce: string, name: string): string {
-  return `\u0000statescope:${nonce}:${name}\u0000`;
+  return `\u0000tuplescope:${nonce}:${name}\u0000`;
 }
 
 export function markerPattern(nonce: string): RegExp {
-  return new RegExp(`\u0000statescope:${nonce}:([a-z0-9][a-z0-9_-]*)\u0000`, 'g');
+  return new RegExp(`\u0000tuplescope:${nonce}:([a-z0-9][a-z0-9_-]*)\u0000`, 'g');
 }
 
 /** Every secret named by markers of this nonce, in order, without duplicates. */

@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/workspace",
+  "name": "@tuplescope/workspace",
   "version": "0.0.0",
   "license": "MIT",
   "type": "module",
@@ -17,11 +17,11 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@statescope/core": "workspace:*",
-    "@statescope/db-postgres": "workspace:*",
-    "@statescope/http-runner": "workspace:*",
-    "@statescope/scenario-engine": "workspace:*",
-    "@statescope/secrets": "workspace:*",
+    "@tuplescope/core": "workspace:*",
+    "@tuplescope/db-postgres": "workspace:*",
+    "@tuplescope/http-runner": "workspace:*",
+    "@tuplescope/scenario-engine": "workspace:*",
+    "@tuplescope/secrets": "workspace:*",
     "yaml": "^2.6.1"
   },
   "devDependencies": {

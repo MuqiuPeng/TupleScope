@@ -4,7 +4,7 @@
  * The bug this exists for: `handoff enable` keyed the grant on `process.cwd()`
  * while the runtime checks it against the workspace's own `configDir`. They are
  * the same directory right up until someone runs
- * `statescope handoff enable --config examples/shopfront/statescope.yaml` from
+ * `tuplescope handoff enable --config examples/shopfront/tuplescope.yaml` from
  * the repository root — and then the grant lands on the repository root while
  * the thing that checks it goes on refusing, with nothing anywhere saying why.
  * A grant that names a different directory from the one that checks it is a
@@ -24,11 +24,11 @@ let elsewhere: string;
 let cwd: string;
 
 before(async () => {
-  home = await mkdtemp(join(tmpdir(), 'statescope-cli-handoff-'));
+  home = await mkdtemp(join(tmpdir(), 'tuplescope-cli-handoff-'));
   elsewhere = join(home, 'a-workspace');
   await mkdir(join(elsewhere, 'scenarios'), { recursive: true });
   await writeFile(
-    join(elsewhere, 'statescope.yaml'),
+    join(elsewhere, 'tuplescope.yaml'),
     'name: Elsewhere\nbaseUrl: http://127.0.0.1:1\nscenariosDir: scenarios\n' +
       'database:\n  connectionString: postgresql://postgres:postgres@127.0.0.1:1/x\n',
   );
@@ -42,19 +42,19 @@ after(async () => {
 });
 
 async function grantsFor(alias: string): Promise<string[]> {
-  const text = await readFile(join(home, '.statescope', 'handoff.json'), 'utf8');
+  const text = await readFile(join(home, '.tuplescope', 'handoff.json'), 'utf8');
   const config = JSON.parse(text) as {
     bindings: Record<string, { grants: { workspace: string }[] }>;
   };
   return (config.bindings[alias]?.grants ?? []).map((g) => g.workspace);
 }
 
-describe('statescope handoff enable', () => {
+describe('tuplescope handoff enable', () => {
   it('records the grant against the workspace --config names, not the shell', async () => {
     // Run from somewhere that is deliberately *not* the workspace.
     process.chdir(home);
     const code = await commandHandoff(['enable', 'adminer-url'], {
-      config: join(elsewhere, 'statescope.yaml'),
+      config: join(elsewhere, 'tuplescope.yaml'),
       as: 'adminer',
       origin: 'http://127.0.0.1:8080',
       server: 'db:5432',
@@ -67,7 +67,7 @@ describe('statescope handoff enable', () => {
   it('revokes the same workspace the enable named', async () => {
     process.chdir(home);
     const code = await commandHandoff(['disable', 'adminer'], {
-      config: join(elsewhere, 'statescope.yaml'),
+      config: join(elsewhere, 'tuplescope.yaml'),
     });
     assert.equal(code, 0);
     assert.deepEqual(await grantsFor('adminer'), []);
@@ -75,7 +75,7 @@ describe('statescope handoff enable', () => {
 
   it('falls back to the working directory when there is no workspace to find', async () => {
     // `handoff list` is run from anywhere, and must not fail for want of a
-    // statescope.yaml.
+    // tuplescope.yaml.
     process.chdir(home);
     const code = await commandHandoff(['list'], {});
     assert.equal(code, 0);
@@ -88,7 +88,7 @@ describe('the address hint', () => {
     const dir = await mkdtemp(join(home, 'ws-'));
     await mkdir(join(dir, 'scenarios'), { recursive: true });
     await writeFile(
-      join(dir, 'statescope.yaml'),
+      join(dir, 'tuplescope.yaml'),
       `name: Hinted\nbaseUrl: http://127.0.0.1:1\nscenariosDir: scenarios\n` +
         `database:\n  connectionString: ${dsn}\n`,
     );
@@ -100,7 +100,7 @@ describe('the address hint', () => {
     };
     try {
       await commandHandoff(['enable', 'adminer-url'], {
-        config: join(dir, 'statescope.yaml'),
+        config: join(dir, 'tuplescope.yaml'),
         as: 'adminer',
       });
     } finally {

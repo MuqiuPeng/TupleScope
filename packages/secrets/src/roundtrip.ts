@@ -30,7 +30,7 @@ import { SecretStoreUnavailable, type SecretStore } from './store.js';
  * markup this touches, and is long enough that a truncating store shows it.
  */
 function canaryValue(): string {
-  return `statescope-probe ${randomBytes(24).toString('base64')} 'q" \\ üñ`;
+  return `tuplescope-probe ${randomBytes(24).toString('base64')} 'q" \\ üñ`;
 }
 
 export async function verifyRoundTrip(

@@ -1,5 +1,5 @@
 /**
- * Reading and writing `~/.statescope/handoff.json`.
+ * Reading and writing `~/.tuplescope/handoff.json`.
  *
  * Mode 0600 and write-temp-then-rename, the same as any credential store — not
  * because it holds credentials (it holds none) but because it holds *decisions
@@ -24,9 +24,9 @@ import {
   type WorkspaceGrant,
 } from './config.js';
 
-/** `~/.statescope/handoff.json`, unless the caller is a test. */
+/** `~/.tuplescope/handoff.json`, unless the caller is a test. */
 export function defaultConfigPath(): string {
-  return join(homedir(), '.statescope', 'handoff.json');
+  return join(homedir(), '.tuplescope', 'handoff.json');
 }
 
 const EMPTY: HandoffConfigV1 = { v: HANDOFF_CONFIG_VERSION, bindings: {} };

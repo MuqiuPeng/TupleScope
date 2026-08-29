@@ -36,7 +36,7 @@ const adminer = (over: Record<string, unknown> = {}) => ({
 describe('an adminer binding', () => {
   it('keeps the three addresses apart', () => {
     // The measurement this field exists for: the origin the browser opens, the
-    // host StateScope's own DSN names, and the host Adminer reaches PostgreSQL
+    // host TupleScope's own DSN names, and the host Adminer reaches PostgreSQL
     // on are three different things in any Compose stack, and only the user
     // knows the third.
     const config = parseHandoffConfig(adminer());

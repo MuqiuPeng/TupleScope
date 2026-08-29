@@ -10,16 +10,16 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
-import type { CaptureWarning } from '@statescope/core';
+import type { CaptureWarning } from '@tuplescope/core';
 import { absorbIdleErrors, PINNED_SETTINGS, readRendering, renderingDrift, verifyRendering } from './pinning.js';
 import { MvccPostgresAdapter } from './mvcc-adapter.js';
-import { textIfVisible } from '@statescope/core';
+import { textIfVisible } from '@tuplescope/core';
 
 const BASE_URL =
-  process.env['STATESCOPE_TEST_DATABASE_URL'] ??
+  process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
   'postgresql://postgres:postgres@127.0.0.1:7432/postgres';
 
-const SCHEMA = 'statescope_pin_test';
+const SCHEMA = 'tuplescope_pin_test';
 const CONNECTION = `${BASE_URL}${BASE_URL.includes('?') ? '&' : '?'}options=${encodeURIComponent(
   `-c search_path=${SCHEMA}`,
 )}`;

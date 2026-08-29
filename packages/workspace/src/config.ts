@@ -1,7 +1,7 @@
 /**
- * The workspace file: what StateScope points at, and how it is found.
+ * The workspace file: what TupleScope points at, and how it is found.
  *
- * StateScope's entire interface to the outside world is two strings — an HTTP
+ * TupleScope's entire interface to the outside world is two strings — an HTTP
  * base URL and a database connection string. It deliberately knows nothing
  * about how either of those came to exist: no process supervisor, no container
  * runtime, no service registry. Whoever brings the backend up supplies the
@@ -17,7 +17,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import YAML from 'yaml';
-import { parseTemplate, ReferenceSyntaxError, secretMarker } from '@statescope/secrets';
+import { parseTemplate, ReferenceSyntaxError, secretMarker } from '@tuplescope/secrets';
 import { randomBytes } from 'node:crypto';
 
 /**
@@ -30,8 +30,8 @@ import { randomBytes } from 'node:crypto';
 const SECRET_NONCE = randomBytes(16).toString('hex');
 
 export { SECRET_NONCE };
-import { ENGINE_NAMES, type EngineName } from '@statescope/db-postgres';
-import { NAMESPACE, namespaceFor, type Namespace } from '@statescope/secrets';
+import { ENGINE_NAMES, type EngineName } from '@tuplescope/db-postgres';
+import { NAMESPACE, namespaceFor, type Namespace } from '@tuplescope/secrets';
 
 export class WorkspaceConfigError extends Error {
   constructor(
@@ -96,7 +96,7 @@ export interface ResolvedWorkspaceConfig extends WorkspaceConfig {
 
 // ─── discovery ────────────────────────────────────────────────────────────────
 
-const FILE_NAME = 'statescope.yaml';
+const FILE_NAME = 'tuplescope.yaml';
 
 export interface DiscoveryOptions {
   /** Explicit path, highest precedence. */
@@ -107,7 +107,7 @@ export interface DiscoveryOptions {
 }
 
 /**
- * Finds the workspace file: explicit path, then `STATESCOPE_CONFIG`, then a
+ * Finds the workspace file: explicit path, then `TUPLESCOPE_CONFIG`, then a
  * walk up from the working directory.
  *
  * Resolving relative to the *installed location of the code* — which is what an
@@ -117,7 +117,7 @@ export interface DiscoveryOptions {
  */
 export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promise<string> {
   const env = options.env ?? process.env;
-  const explicit = options.configPath ?? env['STATESCOPE_CONFIG'];
+  const explicit = options.configPath ?? env['TUPLESCOPE_CONFIG'];
   if (explicit) {
     const path = resolve(explicit);
     if (!(await readable(path))) {
@@ -133,7 +133,7 @@ export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promi
     searched.push(candidate);
     if (await readable(candidate)) return candidate;
     // Stop at the repository root: past it we are searching someone else's
-    // directories, and a stray statescope.yaml in a parent would be a
+    // directories, and a stray tuplescope.yaml in a parent would be a
     // surprising thing to silently pick up.
     if (await readable(join(dir, '.git'))) break;
     const parent = dirname(dir);
@@ -144,7 +144,7 @@ export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promi
   throw new WorkspaceConfigError(
     `no ${FILE_NAME} found. Looked in:\n` +
       searched.map((p) => `  ${p}`).join('\n') +
-      `\n\nCopy statescope.example.yaml to ${FILE_NAME}, or pass --config.`,
+      `\n\nCopy tuplescope.example.yaml to ${FILE_NAME}, or pass --config.`,
   );
 }
 
@@ -168,7 +168,7 @@ async function readable(path: string): Promise<boolean> {
  * at a line the user did not write. `$${` is a literal `${`.
  *
  * This is how a workspace file stays portable across a laptop and CI without
- * StateScope knowing anything about either. It is also the reason there is no
+ * TupleScope knowing anything about either. It is also the reason there is no
  * service-discovery integration: whoever knows the real port can put it in the
  * environment.
  */

@@ -10,7 +10,7 @@
  * engine adds a key, and nothing anywhere else learns its name.
  */
 
-import type { CaptureMethod, DatabaseAdapter, CaptureScope, TableScope } from '@statescope/core';
+import type { CaptureMethod, DatabaseAdapter, CaptureScope, TableScope } from '@tuplescope/core';
 import { MvccPostgresAdapter } from './mvcc-adapter.js';
 import { SnapshotPostgresAdapter } from './snapshot-adapter.js';
 import { WalPostgresAdapter } from './wal-adapter.js';

@@ -1,7 +1,7 @@
 /**
  * Demo Bank's database: a real PostgreSQL, embedded.
  *
- * Run as its own process so StateScope can keep observing across an API
+ * Run as its own process so TupleScope can keep observing across an API
  * restart, and so the stack has a database service that means something. No
  * Docker required — the point of the example is that `pnpm demo` is the whole
  * setup.
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     // Trust auth, on a loopback-only cluster of fictional data that `rm -rf
     // .pgdata` throws away. `password` below is still required by the type and
     // still written to the pwfile — it just stops being something anyone has
-    // to know, which is what keeps it out of statescope.yaml, out of the
+    // to know, which is what keeps it out of tuplescope.yaml, out of the
     // README, and out of the reader's shell.
     //
     // These reach initdb *after* its own `--auth=`, so they win. Passed as

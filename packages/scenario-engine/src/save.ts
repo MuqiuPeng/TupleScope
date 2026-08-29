@@ -15,7 +15,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import YAML from 'yaml';
-import { parse as parseExpr } from '@statescope/expr';
+import { parse as parseExpr } from '@tuplescope/expr';
 
 export class ScenarioSaveError extends Error {
   constructor(

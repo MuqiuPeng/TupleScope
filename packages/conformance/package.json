@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/conformance",
+  "name": "@tuplescope/conformance",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,10 +17,10 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@statescope/core": "workspace:*",
-    "@statescope/db-postgres": "workspace:*",
-    "@statescope/expr": "workspace:*",
-    "@statescope/report": "workspace:*",
+    "@tuplescope/core": "workspace:*",
+    "@tuplescope/db-postgres": "workspace:*",
+    "@tuplescope/expr": "workspace:*",
+    "@tuplescope/report": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": {

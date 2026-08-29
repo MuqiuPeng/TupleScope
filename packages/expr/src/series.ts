@@ -19,7 +19,7 @@
  * only be built from what each step actually observed.
  */
 
-import type { ChangeSet, Value } from '@statescope/core';
+import type { ChangeSet, Value } from '@tuplescope/core';
 import { evaluateExpr, Unevaluable } from './evaluate.js';
 import { ExprSyntaxError, parse } from './parse.js';
 

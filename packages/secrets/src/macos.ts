@@ -44,7 +44,7 @@ import {
 const NOT_FOUND = 44;
 
 /** One account for everything, so the service name alone identifies an item. */
-const ACCOUNT = 'statescope';
+const ACCOUNT = 'tuplescope';
 
 /**
  * The longest value that fits down the safe path.

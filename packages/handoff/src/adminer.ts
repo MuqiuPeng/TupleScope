@@ -6,12 +6,12 @@
  * `maskColumns` — which is the thing to say out loud rather than bury, because
  * it is the whole shape of the trade.
  *
- * Every measurement below is against Adminer 5, with StateScope on the host and
+ * Every measurement below is against Adminer 5, with TupleScope on the host and
  * both Adminer and PostgreSQL in containers.
  */
 
-import type { KnownLocation } from '@statescope/core';
-import { isVisible, type Value } from '@statescope/core';
+import type { KnownLocation } from '@tuplescope/core';
+import { isVisible, type Value } from '@tuplescope/core';
 import type { AdminerBinding } from './config.js';
 
 /**
@@ -134,7 +134,7 @@ export function adminerDisclosure(binding: AdminerBinding): {
         `    ${url}`,
         ``,
         `  The key is in that URL, and the browser keeps it: history, address-bar`,
-        `  autocomplete, and whatever this profile syncs. StateScope cannot take that`,
+        `  autocomplete, and whatever this profile syncs. TupleScope cannot take that`,
         `  back. Adminer connects with its own credentials, as you, and is not bound`,
         maskedColumns.length > 0
           ? `  by maskColumns — it will show ${maskedColumns.join(', ')} in full.`
@@ -142,11 +142,11 @@ export function adminerDisclosure(binding: AdminerBinding): {
         ``,
         `  \`${alias}\` is a name this repository chose. Bind it yourself, once:`,
         ``,
-        `    statescope handoff enable adminer-url --as ${alias} \\`,
+        `    tuplescope handoff enable adminer-url --as ${alias} \\`,
         `      --origin ${binding.origin} --server ${binding.server} --username ${binding.username}`,
         ``,
-        `  Written to ~/.statescope/handoff.json, which this repository cannot write.`,
-        `  statescope handoff list · statescope handoff disable`,
+        `  Written to ~/.tuplescope/handoff.json, which this repository cannot write.`,
+        `  tuplescope handoff list · tuplescope handoff disable`,
       ].join('\n'),
   };
 }

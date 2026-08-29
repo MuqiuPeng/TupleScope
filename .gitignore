@@ -14,9 +14,13 @@ docs/technical-review.md
 # The root workspace file points at your backend and your development database,
 # so it is yours, not the project's. The leading slash is load-bearing: without
 # it this pattern matches at every depth and silently swallows
-# examples/*/statescope.yaml, which are part of the published demo.
-/statescope.yaml
+# examples/*/tuplescope.yaml, which are part of the published demo.
+/tuplescope.yaml
 
 # Stored runs. Values are masked at capture, but this is still a record of
 # what your development database contained.
+.tuplescope/
+# The pre-rename name, so a working copy that predates it does not have its
+# stored runs swept into a commit the moment this file stops ignoring them —
+# which is exactly what happened when the rename landed.
 .statescope/

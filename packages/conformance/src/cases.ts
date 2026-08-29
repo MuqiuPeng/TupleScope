@@ -17,7 +17,7 @@
  * `if (engine === 'wal')` out of the consumers and into their test suite.
  */
 
-import type { Detection, Fidelity } from '@statescope/core';
+import type { Detection, Fidelity } from '@tuplescope/core';
 
 /**
  * A capability profile: the two axes together.

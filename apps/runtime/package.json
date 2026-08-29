@@ -1,5 +1,5 @@
 {
-  "name": "@statescope/runtime",
+  "name": "@tuplescope/runtime",
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
@@ -12,14 +12,14 @@
   },
   "dependencies": {
     "@fastify/static": "^8.0.3",
-    "@statescope/core": "workspace:*",
-    "@statescope/db-postgres": "workspace:*",
-    "@statescope/http-runner": "workspace:*",
-    "@statescope/scenario-engine": "workspace:*",
+    "@tuplescope/core": "workspace:*",
+    "@tuplescope/db-postgres": "workspace:*",
+    "@tuplescope/http-runner": "workspace:*",
+    "@tuplescope/scenario-engine": "workspace:*",
     "fastify": "^5.2.0",
     "yaml": "^2.6.1",
-    "@statescope/workspace": "workspace:*",
-    "@statescope/handoff": "workspace:*"
+    "@tuplescope/workspace": "workspace:*",
+    "@tuplescope/handoff": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"
