@@ -10,6 +10,7 @@ import type { Run, RunVerdict } from '@tuplescope/core';
 import type { ResolvedWorkspaceConfig } from '@tuplescope/workspace';
 import {
   glyph,
+  paint,
   renderAssertion,
   renderDiff,
   renderWriteOrder,
@@ -46,6 +47,52 @@ export function renderWorkspaceLine(style: Style, config: ResolvedWorkspaceConfi
     `tuplescope · ${config.name} → ${config.baseUrl}\n` +
     `  config    ${config.configFile}`
   );
+}
+
+/**
+ * The boundary of what was looked at, said out loud.
+ *
+ * Everything this tool claims rests on having watched the right rows, and it
+ * narrows three times without being asked: one schema, ordinary tables only,
+ * and nothing whose name starts with an underscore. Each of those turned a real
+ * write into "Nothing was written. Not a single row was touched" — clean, exit
+ * 0, no warning. A gap the reader can see is a gap they can close.
+ *
+ * Silent when there is nothing to disclose, so it costs an ordinary workspace
+ * one short line and never becomes furniture the eye skips.
+ */
+export interface ScopeReport {
+  schema: string;
+  watched: number;
+  otherSchemas: ReadonlyArray<{ schema: string; tables: number }>;
+  nameFiltered: ReadonlyArray<string>;
+  partitionedParents: ReadonlyArray<string>;
+  foreignTables: ReadonlyArray<string>;
+}
+
+export function renderScope(style: Style, scope: ScopeReport, indent = '            '): string[] {
+  const out: string[] = [];
+  const gaps: string[] = [];
+  for (const other of scope.otherSchemas) {
+    gaps.push(`${other.schema} (${other.tables} ${other.tables === 1 ? 'table' : 'tables'}, another schema)`);
+  }
+  for (const name of scope.nameFiltered) gaps.push(`${name} (name begins with _)`);
+  for (const name of scope.foreignTables) gaps.push(`${name} (foreign table)`);
+  if (gaps.length > 0) {
+    out.push(paint(style, 'dim', `${indent}not watched · ${gaps.join(' · ')}`));
+  }
+  if (scope.partitionedParents.length > 0) {
+    // Not a gap — the partitions themselves are watched — but an assertion
+    // against the parent's name refuses, and saying so saves the trip.
+    out.push(
+      paint(
+        style,
+        'dim',
+        `${indent}watched through their partitions · ${scope.partitionedParents.join(', ')}`,
+      ),
+    );
+  }
+  return out;
 }
 
 export function renderRun(

@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
-import { readTableIdentities } from './introspect.js';
+import { describeScope, readTableIdentities } from './introspect.js';
 
 const BASE_URL =
   process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
@@ -172,5 +172,53 @@ describe('what counts as a row identity', () => {
       [],
       'a key over these two rows would give them the same identity',
     );
+  });
+});
+
+describe('describeScope', () => {
+  /**
+   * The three narrowings `listBaseTables` performs in one WHERE clause, each of
+   * which used to turn a real write into "Nothing was written. Not a single row
+   * was touched" — outcome clean, exit 0, no warning, all three engines.
+   */
+  it('names what it is not watching, and why', async (t) => {
+    if (!available) return t.skip('no database');
+
+    await client.query(`CREATE SCHEMA IF NOT EXISTS scope_probe_other`);
+    await client.query(`CREATE TABLE IF NOT EXISTS scope_probe_other.hidden (id int PRIMARY KEY)`);
+    await client.query(`CREATE TABLE IF NOT EXISTS _scope_probe_under (id int PRIMARY KEY)`);
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS scope_probe_parent (id int, at timestamptz) PARTITION BY RANGE (at)`,
+    );
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS scope_probe_part PARTITION OF scope_probe_parent
+         FOR VALUES FROM ('2020-01-01') TO ('2030-01-01')`,
+    );
+    try {
+      const scope = await describeScope(client as unknown as pg.PoolClient);
+
+      assert.equal(scope.schema, SCHEMA, 'the schema it watches must be named');
+      assert.ok(
+        scope.otherSchemas.some((s) => s.schema === 'scope_probe_other' && s.tables >= 1),
+        'a table in another schema is not watched at all, and must be counted',
+      );
+      assert.ok(
+        scope.nameFiltered.includes('_scope_probe_under'),
+        'a leading underscore excludes the table, so name it',
+      );
+      assert.ok(
+        scope.partitionedParents.includes('scope_probe_parent'),
+        'nothing writes to the parent; its partitions are what is watched',
+      );
+      // The partition itself is an ordinary table and *is* watched, so it must
+      // not be reported as a gap.
+      assert.equal(scope.nameFiltered.includes('scope_probe_part'), false);
+      assert.equal(scope.partitionedParents.includes('scope_probe_part'), false);
+      assert.ok(scope.watched >= 1, 'the count of what is watched must be real');
+    } finally {
+      await client.query(`DROP TABLE IF EXISTS scope_probe_parent CASCADE`).catch(() => undefined);
+      await client.query(`DROP TABLE IF EXISTS _scope_probe_under`).catch(() => undefined);
+      await client.query(`DROP SCHEMA IF EXISTS scope_probe_other CASCADE`).catch(() => undefined);
+    }
   });
 });

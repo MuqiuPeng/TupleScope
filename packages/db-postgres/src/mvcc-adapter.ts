@@ -44,9 +44,10 @@ import type {
   TableScope,
   } from '@tuplescope/core';
 import {
-  listBaseTables, listColumnsByTable,
+  describeScope, listBaseTables, listColumnsByTable,
   readLocation,
   readTableIdentities,
+  type ScopeReport,
   type TableIdentity,
 } from './introspect.js';
 import { readCurrentRows, readKeySets } from './images.js';
@@ -116,6 +117,16 @@ export class MvccPostgresAdapter implements DatabaseAdapter {
     const client = await this.metaPool.connect();
     try {
       return await listColumnsByTable(client);
+    } finally {
+      client.release();
+    }
+  }
+
+  /** What is watched, and what is not. Reported so a gap can never be silent. */
+  async describeScope(): Promise<ScopeReport> {
+    const client = await this.metaPool.connect();
+    try {
+      return await describeScope(client);
     } finally {
       client.release();
     }

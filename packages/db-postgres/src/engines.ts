@@ -11,6 +11,7 @@
  */
 
 import type { CaptureMethod, DatabaseAdapter, CaptureScope, TableScope } from '@tuplescope/core';
+import type { ScopeReport } from './introspect.js';
 import { MvccPostgresAdapter } from './mvcc-adapter.js';
 import { SnapshotPostgresAdapter } from './snapshot-adapter.js';
 import { WalPostgresAdapter } from './wal-adapter.js';
@@ -29,6 +30,8 @@ export type PostgresAdapter = DatabaseAdapter & {
   fullScope(overrides?: Partial<TableScope>): Promise<CaptureScope>;
   /** Every base table's columns, so `check` can resolve a predicate's names. */
   listColumns(): Promise<Map<string, Set<string>>>;
+  /** What is watched and what is not, so a gap is never silent. */
+  describeScope(): Promise<ScopeReport>;
 };
 
 export const ENGINES = {

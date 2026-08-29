@@ -129,6 +129,84 @@ export async function listBaseTables(client: PoolClient): Promise<string[]> {
 }
 
 /**
+ * What is in scope, and — the part that matters — what is not.
+ *
+ * `listBaseTables` narrows three times in one WHERE clause, and until this
+ * existed it narrowed silently. A write to another schema, to a table whose
+ * name begins with an underscore, or through a foreign table produced the most
+ * emphatic sentence this tool prints: "Nothing was written. Not a single row
+ * was touched." Outcome clean, exit 0, no warning, all three engines.
+ *
+ * The envelope already carried `scope.schema`; nothing ever printed it, and the
+ * field beside it is called `allTables: true`. Reporting the boundary is what
+ * makes that sentence mean what it says.
+ *
+ * Partitioned parents are listed but not a gap: their partitions are ordinary
+ * tables and are watched individually. They are named because an assertion
+ * against the parent's name refuses, and knowing why saves the reader a trip.
+ */
+export interface ScopeReport {
+  schema: string;
+  watched: number;
+  /** Tables in other non-system schemas, which are not watched at all. */
+  otherSchemas: Array<{ schema: string; tables: number }>;
+  /** Excluded by the `\_%` name filter. */
+  nameFiltered: string[];
+  /** Watched through their partitions, not under this name. */
+  partitionedParents: string[];
+  /** Not readable by this capture at all. */
+  foreignTables: string[];
+}
+
+export async function describeScope(client: PoolClient): Promise<ScopeReport> {
+  const { rows } = await client.query<{
+    schema: string;
+    table_name: string;
+    relkind: string;
+    here: boolean;
+  }>(
+    `SELECT n.nspname::text AS schema,
+            c.relname::text AS table_name,
+            c.relkind::text AS relkind,
+            (n.nspname = current_schema()) AS here
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'p', 'f')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        AND n.nspname NOT LIKE 'pg_temp%'
+        AND n.nspname NOT LIKE 'pg_toast_temp%'
+      ORDER BY n.nspname, c.relname`,
+  );
+
+  const report: ScopeReport = {
+    schema: '',
+    watched: 0,
+    otherSchemas: [],
+    nameFiltered: [],
+    partitionedParents: [],
+    foreignTables: [],
+  };
+  const elsewhere = new Map<string, number>();
+
+  for (const row of rows) {
+    if (!row.here) {
+      // A partition of a table in another schema is still not ours; count the
+      // schema once and move on rather than itemising someone else's tables.
+      elsewhere.set(row.schema, (elsewhere.get(row.schema) ?? 0) + 1);
+      continue;
+    }
+    report.schema = row.schema;
+    if (row.relkind === 'p') report.partitionedParents.push(row.table_name);
+    else if (row.relkind === 'f') report.foreignTables.push(row.table_name);
+    else if (row.table_name.startsWith('_')) report.nameFiltered.push(row.table_name);
+    else report.watched++;
+  }
+
+  report.otherSchemas = [...elsewhere].map(([schema, tables]) => ({ schema, tables }));
+  return report;
+}
+
+/**
  * Every base table's column names, in one query.
  *
  * For `check`, which resolves the names an assertion uses against the database

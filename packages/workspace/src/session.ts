@@ -13,7 +13,7 @@
  * instead of it surfacing as a stack trace from the first query.
  */
 
-import { createAdapter, type PostgresAdapter } from '@tuplescope/db-postgres';
+import { createAdapter, type PostgresAdapter, type ScopeReport } from '@tuplescope/db-postgres';
 import { assertResolved } from './credentials.js';
 import { HttpRunner } from '@tuplescope/http-runner';
 import { ScenarioEngine, loadScenario } from '@tuplescope/scenario-engine';
@@ -60,7 +60,7 @@ export interface WorkspaceSession {
   /** The capture scope a scenario asks for, resolved against the live schema. */
   scopeFor(scenario: Scenario): Promise<CaptureScope>;
   /** Touches the database once so an unreachable one is reported, not thrown at. */
-  preflight(): Promise<{ tables: string[]; columns: Map<string, Set<string>> }>;
+  preflight(): Promise<{ tables: string[]; columns: Map<string, Set<string>>; scope: ScopeReport }>;
   /**
    * Puts the database back to its declared baseline, and nothing else.
    *
@@ -251,8 +251,12 @@ export function openWorkspace(
         // Both in one trip. `check` needs the columns to resolve a predicate,
         // and asking for them separately would be a second connection for a
         // question the same catalogue already answered.
-        const [tables, columns] = await Promise.all([adapter.listTables(), adapter.listColumns()]);
-        return { tables: [...tables], columns };
+        const [tables, columns, scope] = await Promise.all([
+          adapter.listTables(),
+          adapter.listColumns(),
+          adapter.describeScope(),
+        ]);
+        return { tables: [...tables], columns, scope };
       } catch (error) {
         throw new WorkspaceError(
           'DATABASE_UNREACHABLE',

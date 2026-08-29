@@ -51,9 +51,10 @@ import type { RowsRead } from '@tuplescope/core';
 import { absorbIdleErrors, pinPool, verifyRendering, type Rendering } from './pinning.js';
 import { collectNetChanges, readRelfilenodes, reportRewrites } from './net-view.js';
 import {
-  listBaseTables, listColumnsByTable,
+  describeScope, listBaseTables, listColumnsByTable,
   readLocation,
   readTableIdentities,
+  type ScopeReport,
   type TableIdentity,
 } from './introspect.js';
 import { RAW_TEXT_TYPES, RowReader, ROWS_LIMIT } from './rows.js';
@@ -125,6 +126,16 @@ export class WalPostgresAdapter implements DatabaseAdapter {
     const client = await this.metaPool.connect();
     try {
       return await listColumnsByTable(client);
+    } finally {
+      client.release();
+    }
+  }
+
+  /** What is watched, and what is not. Reported so a gap can never be silent. */
+  async describeScope(): Promise<ScopeReport> {
+    const client = await this.metaPool.connect();
+    try {
+      return await describeScope(client);
     } finally {
       client.release();
     }

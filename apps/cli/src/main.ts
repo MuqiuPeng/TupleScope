@@ -42,7 +42,7 @@ import {
 import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
 import { parse, predicateColumnsIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
-import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
+import { renderRun, renderWorkspaceLine, renderScope, styleFor } from './output.js';
 import {
   DEFAULT_CONTEXT,
   SecretNotConfigured,
@@ -454,8 +454,11 @@ async function commandStatus(values: Values): Promise<number> {
     process.stdout.write(`${renderWorkspaceLine(style, session.config)}\n`);
     for (const line of secretLines) process.stdout.write(`${line}\n`);
     try {
-      const { tables } = await session.preflight();
-      process.stdout.write(`  database  reachable · ${tables.length} tables\n`);
+      const { tables, scope } = await session.preflight();
+      process.stdout.write(
+        `  database  reachable · ${tables.length} tables in \`${scope.schema}\`\n`,
+      );
+      for (const line of renderScope(style, scope)) process.stdout.write(`${line}\n`);
     } catch (error) {
       const message = error instanceof WorkspaceError ? error.message : String(error);
       const remedy = error instanceof WorkspaceError ? error.remedy : undefined;
@@ -542,8 +545,9 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     }
     let tables: string[];
     let columns: Map<string, Set<string>>;
+    let scope: { schema: string; watched: number; otherSchemas: ReadonlyArray<{ schema: string; tables: number }>; nameFiltered: ReadonlyArray<string>; partitionedParents: ReadonlyArray<string>; foreignTables: ReadonlyArray<string> };
     try {
-      ({ tables, columns } = await session.preflight());
+      ({ tables, columns, scope } = await session.preflight());
     } catch (error) {
       const workspaceError = error instanceof WorkspaceError ? error : undefined;
       process.stderr.write(`${workspaceError?.message ?? String(error)}\n`);
@@ -608,7 +612,11 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     const out = [
       `tuplescope · ${session.config.name}`,
       `  selected   ${selected.length} dataset(s), ${assertions} assertion(s)`,
-      `  database   ${tables.length} tables`,
+      `  database   ${tables.length} tables in \`${scope.schema}\``,
+      // The boundary belongs here more than anywhere: `check` is what a reader
+      // runs before trusting a suite, and a table outside the scope is a
+      // question this suite will answer wrongly and silently.
+      ...renderScope(styleFor(values), scope, '             '),
     ];
     if (problems.length > 0) {
       out.push('', ...problems);
