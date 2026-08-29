@@ -39,7 +39,7 @@ import {
   resolveWorkspaceSecrets,
   secretsReferencedBy,
 } from '@tuplescope/workspace';
-import { addAssertion } from '@tuplescope/scenario-engine';
+import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
 import { parse, predicateColumnsIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, styleFor } from './output.js';
@@ -300,6 +300,16 @@ async function withWorkspace<T>(
     if (error instanceof WorkspaceError) {
       process.stderr.write(`${error.message}\n`);
       if (error.remedy) process.stderr.write(`${error.remedy}\n`);
+      return EXIT_USAGE;
+    }
+    // A scenario file that will not load is a file the user can fix, and the
+    // message already names the file, the step and the offset in the
+    // expression. It was reaching the top as an unhandled throw — a stack
+    // trace and exit 2, "the workspace is not ready", for a typo in a function
+    // name. Exit 4 is what the rest of this file uses for "you wrote something
+    // this cannot accept".
+    if (error instanceof ScenarioLoadError) {
+      process.stderr.write(`${error.message}\n`);
       return EXIT_USAGE;
     }
     throw error;

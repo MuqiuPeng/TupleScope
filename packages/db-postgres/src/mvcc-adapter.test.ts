@@ -192,8 +192,25 @@ describe('MvccPostgresAdapter', { skip: available ? false : 'no PostgreSQL reach
   it('reports nothing when nothing happened', async () => {
     const changes = await observe(async () => {});
     assert.deepEqual(changes.changes, []);
-    assert.deepEqual(changes.warnings, []);
     assert.equal(changes.detection, 'write');
+  });
+
+  it('says a keyless table cannot be fully read, even when nothing happened', () => {
+    // The fixture has `audit`, which has no key. This warning used to be
+    // emitted only when that table had rows in the capture — so the branch that
+    // knows the table cannot be read properly stayed silent precisely when it
+    // had nothing else to say, and a DELETE there left no trace at all:
+    // "Nothing was written. Not a single row was touched", clean, exit 0, over
+    // rows that were really deleted.
+    //
+    // It is a fact about the scope, not about the step, so it holds on a step
+    // that did nothing.
+    return observe(async () => {}).then((changes) => {
+      const degraded = changes.warnings.filter((w) => w.code === 'degraded-row-identity');
+      assert.equal(degraded.length, 1);
+      assert.equal(degraded[0]!.table, 'audit');
+      assert.match(degraded[0]!.message, /delete cannot be seen/);
+    });
   });
 
   it('handles a composite primary key', async () => {
@@ -306,7 +323,12 @@ describe('MvccPostgresAdapter', { skip: available ? false : 'no PostgreSQL reach
   it('reports a quiet database as quiet', async () => {
     const noise = await adapter.probeBaselineNoise(await scope(), 120);
     assert.deepEqual(noise.changes, []);
-    assert.deepEqual(noise.warnings, []);
+    // `degraded-row-identity` for the keyless `audit` table is a standing fact
+    // about the scope, not noise the probe found. Quiet means nothing *wrote*.
+    assert.deepEqual(
+      noise.warnings.filter((w) => w.code !== 'degraded-row-identity'),
+      [],
+    );
   });
 
   it('flags a database that writes on its own', async () => {

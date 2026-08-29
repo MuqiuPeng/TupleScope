@@ -569,8 +569,6 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
           guardSelectionQuestion(expr.source, ctx.changes, 'any()');
           return { kind: 'scalar', value: rows.length > 0 };
         }
-        case 'all':
-          throw new Unevaluable('all() is not available yet');
       }
       break;
     }

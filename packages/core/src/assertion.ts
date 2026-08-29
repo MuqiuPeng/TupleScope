@@ -52,7 +52,15 @@ export type Temporal = 'before' | 'after' | 'delta';
  * matched and fails otherwise, which is almost always the intent and is what
  * the old shorthand silently guessed at.
  */
-export type Aggregate = 'single' | 'count' | 'sum' | 'min' | 'max' | 'any' | 'all';
+/**
+ * `all` was here and is gone. It parsed, `check` blessed the assertion, and the
+ * evaluator answered `undecided — all() is not available yet` — poisoning the
+ * whole run to exit 3 over a form that could never do anything else. A grammar
+ * that accepts what nothing can evaluate is the same promise-without-evidence
+ * this contract exists to refuse; an unknown name is now a syntax error naming
+ * the forms that do exist.
+ */
+export type Aggregate = 'single' | 'count' | 'sum' | 'min' | 'max' | 'any';
 
 export type Expr =
   | { node: 'literal'; value: string | number | boolean | null }

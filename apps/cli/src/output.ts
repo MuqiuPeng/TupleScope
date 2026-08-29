@@ -106,10 +106,29 @@ export function renderRun(
         }),
       );
       if (step.changes.changes.length === 0 && step.assertions.length > 0) {
+        // The strongest sentence this tool prints, and it is only true when the
+        // run actually looked everywhere. A `scope-truncated`, `reduced-fidelity`
+        // or `degraded-row-identity` warning means some part of the schema could
+        // not be read — a keyless table whose deletes leave no trace, a
+        // TRUNCATE that took the before-images with it — and "not a single row
+        // was touched" then claims something the capture never established.
+        //
+        // This is the same failure the expression layer refuses: finding
+        // nothing is not proof. Saying so out loud is cheaper than being wrong.
+        const blind = verdict.warnings.filter(
+          (w) =>
+            w.stepId === step.stepId &&
+            (w.code === 'scope-truncated' ||
+              w.code === 'reduced-fidelity' ||
+              w.code === 'degraded-row-identity'),
+        );
         out.push(
-          `      ${step.changes.detection === 'write'
-            ? 'Nothing was written. Not a single row was touched, including rows whose values would not have changed.'
-            : 'No values differ. A write that changed nothing would not show up here.'}`,
+          blind.length > 0
+            ? `      Nothing was seen to change — but this step could not read everything (see below), ` +
+              `so this is not the same as nothing having happened.`
+            : `      ${step.changes.detection === 'write'
+              ? 'Nothing was written. Not a single row was touched, including rows whose values would not have changed.'
+              : 'No values differ. A write that changed nothing would not show up here.'}`,
         );
       }
     }

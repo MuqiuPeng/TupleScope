@@ -18,8 +18,29 @@ import type { AssertionCandidate, ChangeSet, RowChange, Value, VisibleValue } fr
 import { displayText, isVisible } from '@tuplescope/core';
 import { Decimal } from '@tuplescope/expr';
 
-/** Columns that are never worth asserting on: they differ every run by design. */
+/**
+ * Columns that are never worth asserting on, by name.
+ *
+ * A last resort, not the guard. Names are a guess, and this list guessed wrong
+ * on every timestamp it had not been told about — `paid_at`, `started_at`,
+ * `expires_at`, `completed_at`, `deleted_at`, `sent_at`. Measured: `keep`
+ * offered `single(updated(orders, id = "o1")).after.paid_at ==
+ * "2026-08-29 06:52:14.54342+00"`, wrote it into the user's committed suite,
+ * and the immediate re-run exited **1** — "the system under test is wrong" —
+ * over a system that was working. This file's own header warns that exactly
+ * that "teaches people that the feature is broken".
+ */
 const VOLATILE = /^(created_at|updated_at|inserted_at|modified_at|touched|last_seen|version|etag)$/i;
+
+/**
+ * And by type, which is the guard that actually holds.
+ *
+ * Anything carrying a wall clock differs on the next run by construction, and
+ * the type says so where a name only hints. `time` and `timetz` are here for
+ * completeness; `date` is deliberately absent — "this booking is for the 3rd"
+ * is a fact worth asserting, and it does not move when the run does.
+ */
+const VOLATILE_TYPES = new Set(['timestamp', 'timestamptz', 'time', 'timetz', 'xid', 'xid8']);
 
 const NUMERIC = new Set(['numeric', 'decimal', 'int2', 'int4', 'int8', 'float4', 'float8']);
 
@@ -207,6 +228,9 @@ function forChange(
     const before = change.before?.[column];
     const after = change.after?.[column];
     if (!after) continue;
+    // The type, after the name, because the name list guesses and the type does
+    // not. A wall clock differs on the next run by construction.
+    if (VOLATILE_TYPES.has(after.pgType ?? '')) continue;
     // The hole this closes: the key guard above covered the *predicate*, and
     // this loop went on turning the column's own value into a literal. An
     // update to a masked column offered
@@ -333,6 +357,7 @@ export function promoteCandidates(
     if (change.kind !== 'update') continue;
     for (const column of change.visibleColumns) {
       if (VOLATILE.test(column)) continue;
+      if (VOLATILE_TYPES.has(change.after?.[column]?.pgType ?? '')) continue;
       if (!NUMERIC.has(change.after?.[column]?.pgType ?? '')) continue;
       if (!numericByTable.has(change.table)) numericByTable.set(change.table, new Set());
       numericByTable.get(change.table)!.add(column);

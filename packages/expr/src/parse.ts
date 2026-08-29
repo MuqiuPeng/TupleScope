@@ -30,7 +30,6 @@ const AGGREGATES: ReadonlySet<string> = new Set([
   'min',
   'max',
   'any',
-  'all',
 ]);
 const TEMPORALS: ReadonlySet<string> = new Set(['before', 'after', 'delta']);
 const COMPARE_OPS: ReadonlySet<string> = new Set(['==', '!=', '<=', '>=', '<', '>']);

@@ -67,15 +67,27 @@ export async function collectNetChanges(
 
     if (identity.keyColumns.length === 0) {
       // No usable identity: rows can be counted but not paired, so an update
-      // is indistinguishable from a delete plus an insert. Say so.
+      // is indistinguishable from a delete plus an insert. Say so — and say it
+      // whether or not anything turned up.
+      //
+      // This warning used to be inside the `touched.rows.length > 0` branch
+      // below, which meant the one branch that *knows* this table cannot be
+      // read properly stayed silent exactly when it had nothing else to
+      // report. A DELETE from a keyless table leaves no trace here at all —
+      // `readKeySets` skips the table, so there is no before-set to subtract
+      // from — and the run then printed "Nothing was written. Not a single row
+      // was touched", clean, exit 0, over rows that were really deleted.
+      // `hasWrite(changes(*))` returned false, so the idempotency guard this
+      // tool exists for passed green.
+      warnings.push({
+        code: 'degraded-row-identity',
+        table: table.table,
+        message:
+          `\`${table.table}\` has no primary key or unique index, so rows here can be counted ` +
+          `but not matched to a previous version. Changes are reported as inserts, and a ` +
+          `delete cannot be seen at all.`,
+      });
       if (touched.rows.length > 0) {
-        warnings.push({
-          code: 'degraded-row-identity',
-          table: table.table,
-          message:
-            `\`${table.table}\` has no primary key or unique index, so changed rows cannot be ` +
-            `matched to their previous version. Reporting them as inserts.`,
-        });
         for (const raw of touched.rows) {
           const after = reader.toRow(touched.fields, raw, masked);
           changes.push({
