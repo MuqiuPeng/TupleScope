@@ -138,7 +138,12 @@ export class ScenarioEngine {
     const steps: StepResult[] = [];
     mutable.steps = steps;
 
-    for (const step of selectSteps(dataset, options)) {
+    const declared = selectSteps(dataset, options);
+    // Recorded before the loop, so halting early cannot shrink the denominator
+    // along with the numerator.
+    mutable.declaredSteps = declared.map((step) => step.id);
+
+    for (const step of declared) {
       const result = await this.runStep(step, scope, mutable, now);
       steps.push(result);
       onProgress?.({ type: 'step-finished', run, step: result });

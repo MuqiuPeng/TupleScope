@@ -292,6 +292,58 @@ describe('outcomeOfStep', () => {
 
 // ─── suites ───────────────────────────────────────────────────────────────────
 
+describe('steps that never ran', () => {
+  /**
+   * `steps.total` was `run.steps.length` — the number *attempted* — so a
+   * dataset that halted on step 2 of 5 reported `total: 2, notRun: 0`,
+   * `coverage: "full"`, `proves: "full"`. A step that was never reached could
+   * not be counted as missing, because the denominator moved with the
+   * numerator. A tool built to stop overclaiming, overclaiming in its own
+   * machine-readable output.
+   */
+  const halted = run({
+    declaredSteps: ['one', 'two', 'three', 'four', 'five'],
+    steps: [
+      step({ stepId: 'one', assertions: [pass()] }),
+      step({ stepId: 'two', assertions: [fail()] }),
+    ],
+  });
+
+  it('counts what was declared, not what was reached', () => {
+    const v = verdictOf(halted);
+    assert.equal(v.steps.total, 5);
+    assert.equal(v.steps.passed, 1);
+    assert.equal(v.steps.failed, 1);
+    assert.equal(v.steps.notRun, 3);
+  });
+
+  it('says so in `proves`, and names them', () => {
+    const v = verdictOf(halted);
+    assert.equal(v.proves, 'bounded');
+    const said = v.boundedBy.find((b) => /never ran/.test(b));
+    assert.ok(said, 'a run that stopped early must say what it did not reach');
+    assert.match(said, /three, four, five/);
+  });
+
+  it('leaves a complete run alone', () => {
+    const whole = run({
+      declaredSteps: ['one', 'two'],
+      steps: [step({ stepId: 'one', assertions: [pass()] }), step({ stepId: 'two', assertions: [pass()] })],
+    });
+    const v = verdictOf(whole);
+    assert.equal(v.steps.total, 2);
+    assert.equal(v.steps.notRun, 0);
+    assert.equal(v.proves, 'full');
+  });
+
+  it('falls back to what ran when nothing declared it', () => {
+    // Runs stored before this field existed still have to render.
+    const legacy = run({ steps: [step({ stepId: 'one', assertions: [pass()] })] });
+    assert.equal(verdictOf(legacy).steps.total, 1);
+    assert.equal(verdictOf(legacy).steps.notRun, 0);
+  });
+});
+
 describe('mergeVerdicts', () => {
   const clean = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass()] })] }));
   const failed = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [fail()] })] }));

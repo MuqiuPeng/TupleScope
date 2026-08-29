@@ -312,6 +312,34 @@ export interface BuildOptions {
   now?: () => Date;
 }
 
+/**
+ * The steps a run declared and never reached, as reports of their own.
+ *
+ * A dataset that halts on step 2 of 5 produced a JUnit file reading
+ * `tests="2" skipped="0"` — a CI system saw a suite of two, one failing, with
+ * nothing to say three more had been declared. `mapStep` has understood
+ * `not-run` all along; the steps simply were not there to map, because the
+ * envelope walked what executed rather than what was asked for.
+ *
+ * Deliberately thin: no request, no response, no assertions. There is nothing
+ * to report about them beyond their existence, and inventing more would be the
+ * overclaiming this exists to stop.
+ */
+function unreachedSteps(run: Run): StepReport[] {
+  const attempted = new Set(run.steps.map((step) => step.stepId));
+  return (run.declaredSteps ?? [])
+    .filter((id) => !attempted.has(id))
+    .map((id) => ({
+      id,
+      name: id,
+      outcome: 'not-run' as const,
+      engineStatus: 'pending' as const,
+      request: { method: '', url: '' },
+      assertions: [],
+      durationMs: 0,
+    }));
+}
+
 export function buildEnvelope(
   reports: ReadonlyArray<{
     selector: string;
@@ -390,7 +418,7 @@ export function buildEnvelope(
         ...(step.error !== undefined ? { error: step.error } : {}),
         ...(step.candidates?.length ? { candidates: step.candidates } : {}),
         durationMs: stepDuration(step),
-      })),
+      })).concat(unreachedSteps(run)),
     })),
   };
 }

@@ -267,8 +267,15 @@ function locateWarnings(run: Run, policy: VerdictPolicy): LocatedWarning[] {
 export function verdictOf(run: Run, policy: VerdictPolicy = DEFAULT_POLICY): RunVerdict {
   const assertions = countAssertions(run.steps.flatMap((step) => step.assertions));
 
+  // The steps the run set out to execute, not the ones it reached. A dataset
+  // that halts on step 2 of 5 has three steps nobody looked at, and reporting
+  // `total: 2` makes them disappear rather than count.
+  const declared = run.declaredSteps ?? run.steps.map((s) => s.stepId);
+  const attempted = new Set(run.steps.map((s) => s.stepId));
+  const unreached = declared.filter((id) => !attempted.has(id));
+
   const steps: StepCounts = {
-    total: run.steps.length,
+    total: declared.length,
     passed: 0,
     failed: 0,
     errored: 0,
@@ -285,6 +292,7 @@ export function verdictOf(run: Run, policy: VerdictPolicy = DEFAULT_POLICY): Run
     else steps.notRun++;
     if (outcome !== 'not-run' && step.assertions.length === 0) steps.unchecked++;
   }
+  steps.notRun += unreached.length;
 
   const warnings = locateWarnings(run, policy);
   const escalating = warnings.filter((w) => w.severity === 'error');
@@ -337,6 +345,15 @@ export function verdictOf(run: Run, policy: VerdictPolicy = DEFAULT_POLICY): Run
   if (run.coverage === 'partial') {
     boundedBy.push(
       'this run started mid-dataset, so earlier steps left the database in whatever state the previous run did',
+    );
+  }
+  if (unreached.length > 0) {
+    // Stopping early is not the same as passing. The suite says nothing about
+    // these steps, and a verdict that does not say so is claiming their silence
+    // as agreement.
+    boundedBy.push(
+      `${unreached.length} step${unreached.length === 1 ? '' : 's'} never ran, so nothing here ` +
+        `establishes anything about ${unreached.length === 1 ? 'it' : 'them'}: ${unreached.join(', ')}`,
     );
   }
   if (!baseline.probed) {

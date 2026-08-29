@@ -22,6 +22,18 @@ export interface Run {
    * because a green partial run proves less than a green full one.
    */
   coverage: 'full' | 'partial';
+  /**
+   * The steps this run set out to execute, after `--from` / `--only` narrowed
+   * the dataset. Present so a verdict can count what never ran.
+   *
+   * Without it `steps.total` was `steps.length` — the number *attempted* — so
+   * a run that halted on step 2 of 5 reported `total: 2, notRun: 0`,
+   * `coverage: "full"`, `proves: "full"`. A step that was never reached could
+   * not be counted as missing, because the denominator moved with the numerator.
+   * That is a tool built to stop overclaiming, overclaiming in its
+   * machine-readable output.
+   */
+  declaredSteps?: ReadonlyArray<string>;
   startedAt: string;
   finishedAt?: string;
   status: RunStatus;
