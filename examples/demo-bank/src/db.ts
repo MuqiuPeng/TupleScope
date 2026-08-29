@@ -72,7 +72,14 @@ async function main(): Promise<void> {
   const pg = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "postgres",
-    password: "postgres",
+    // Required by the type, written to a pwfile, and never consulted: the
+    // cluster below initialises with trust auth, so no connection ever
+    // authenticates. Spelled out rather than left as `"postgres"`, which read
+    // to a secret scanner — correctly, on the shape alone — as a hardcoded
+    // credential, and would have gone on reading that way on every pull
+    // request forever. A value that says what it is beats one that has to be
+    // explained.
+    password: "unused-trust-auth-see-initdbFlags-below",
     port: PORT,
     persistent: true,
     // The `wal` capture engine reads logical decoding, which is a postmaster
