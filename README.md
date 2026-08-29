@@ -390,6 +390,21 @@ pass or a fail. Counting mutations against a value-comparing engine, a
 `single()` that matched three rows, a table outside the watch scope — each says
 so. A green run that could not have caught the failure is worse than no check.
 
+A step that never ran is the same problem one level up, and it used to be
+invisible: an early step failed, the scenario stopped, and the summary counted
+the steps it had *reached* — two of seven, reported as a total of two.
+Steps are now counted against what the file declares, the ones never reached are
+listed by name, and the run says what it did not establish:
+
+```
+5 steps never ran, so nothing here establishes anything about them:
+refund, settle, reconcile, close, audit
+```
+
+The same list reaches JUnit as `<skipped type="tuplescope.not-run">`, which is
+the one place `skipped` means what CI thinks it means, so the dashboard shows
+the gap rather than a shorter green run.
+
 ### Money is exact
 
 Values are carried as text with their Postgres type and compared under that
@@ -438,6 +453,34 @@ Before each run it watches an idle window. Background jobs, session sweepers and
 outbox pollers are ordinary in a running dev stack, and rows they write would
 otherwise be blamed on your API. If anything writes during that window, the
 report says so.
+
+### It tells you what it was looking at
+
+"Nothing was written" is the strongest sentence here, and it is only true if the
+run looked everywhere. It narrows three times without being asked — one schema,
+ordinary tables only, nothing whose name begins with an underscore — so `status`
+and `check` name the schema and every gap in it:
+
+```
+tuplescope · shop
+  selected   3 dataset(s), 11 assertion(s)
+  database   7 tables in `public`
+             not watched · billing (2 tables, another schema) · _jobs (name begins with _)
+             watched through their partitions · events
+```
+
+`events` is not a gap — its partitions *are* watched — but an assertion naming
+the parent refuses, and saying so here saves the trip.
+
+A table with no primary key and no unique index is a gap of its own, and it says
+so on every run rather than only when it happens to have rows. Its changes can
+be counted but not paired to a previous version, and a deletion there cannot be
+seen at all — which without the warning read as "nothing was written", clean,
+exit 0, over rows that were really deleted.
+
+Where a step carries any of these, the report stops claiming nothing happened
+and says it could not read everything instead. Silence about a blind spot is
+the one thing this tool is built not to do.
 
 ---
 
@@ -621,6 +664,25 @@ watched table for the whole window, and a `TRUNCATE` inside the step then waits
 for it — measured, the capture died on its idle-in-transaction timeout instead
 of reporting anything. The snapshot is frozen either way, so reading afterwards
 gives the same answer and lets the step do what it came to do.
+
+A deletion leaves nothing behind to find, so it is found by what it leaves *on*
+the row: `xmax`, the transaction that removed it, still readable through the
+observer because that snapshot predates the removal. Every row carrying any
+`xmax` is a candidate — an update's superseded version, a lock, a rolled-back
+delete — and one keyed read decides which are actually gone.
+
+The candidate scan deliberately does **not** filter on whether that transaction
+is visible, which would be the obvious narrowing. `xmax` holds a multixact id
+once more than one transaction has touched the row, and reading that as a
+transaction id is meaningless; the conversion is also blind to the transaction
+id epoch. Both would silently drop real deletions. Over-including costs one
+keyed lookup; under-including reports a deleted row as nothing at all.
+
+This is what makes the cost column true. Until recently the same answer came
+from reading every key of every watched table twice and subtracting, which cost
+the schema rather than the change: measured on one 800,000-row table, a step
+that touched two rows took **1230 ms and 226 MB** of heap. The same step now
+takes **107 ms and no measurable heap**.
 
 A table rewritten mid-step — `TRUNCATE`, `VACUUM FULL`, `CLUSTER`, a rewriting
 `ALTER TABLE` — takes the observer's view of it along: PostgreSQL hands an older
