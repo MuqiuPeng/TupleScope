@@ -36,6 +36,18 @@ export interface Selector {
   kind: SelectorKind;
   /** Omitted for schema-wide forms such as `changes(*)`. */
   table?: string;
+  /**
+   * `changes(* except payments, ledger_entries)` — everything watched, minus
+   * these. Only meaningful with `*`.
+   *
+   * The containment question — "nothing outside these tables changed" — has no
+   * other spelling. Enumerating the rest of the schema is what people did
+   * instead, and it fails open: the day someone adds a table, the assertion
+   * keeps passing while the new table changes freely. That is the opposite
+   * failure direction from everything else here, so it needed a form of its
+   * own rather than a documentation note.
+   */
+  exceptTables?: ReadonlyArray<string>;
   /** `id = {{payment_id}}`, `type = 'REVERSAL'`. Templated before evaluation. */
   predicate?: string;
   /** Restricts to one step's changes; defaults to the step being evaluated. */

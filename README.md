@@ -341,6 +341,27 @@ language makes you say:
 The same expressions will drive declarative dashboards, so there is one
 evaluator, not two.
 
+### Nothing outside these tables changed
+
+The question a diff raises and a value comparison cannot answer: what else did
+this endpoint touch? `changes(*)` is every watched table, and `except` names the
+ones you meant to write to.
+
+```yaml
+- hasWrite(changes(* except payments, ledger_entries, wallets)) == false
+```
+
+One line, and it stays true as the schema grows. Written the other way — an
+`isEmpty` per remaining table — it fails open: add a table next month and the
+assertion keeps passing while the new table changes freely. That is the opposite
+failure direction from everything else here, which is why it has a form rather
+than a paragraph.
+
+An `except` naming a table that is not watched is refused, not ignored. An
+exclusion that resolves to nothing excludes nothing, and the assertion would
+then quietly cover a table you believed you had carved out — this form's own
+failure, arriving through the form.
+
 ### `rows()` reads the rows, not the changes
 
 Four selectors ask about what a request did — `changes`, `inserted`, `updated`,

@@ -504,7 +504,21 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
     }
 
     case 'select': {
-      const { kind, table, predicate } = expr.selector;
+      const { kind, table, predicate, exceptTables } = expr.selector;
+      // `changes(* except a, b)`. Every excluded name is resolved first: an
+      // exclusion that names nothing removes nothing, so the assertion silently
+      // widens to cover a table the author believed they had carved out — which
+      // is the failure this form exists to prevent, arriving through the form
+      // itself.
+      for (const excluded of exceptTables ?? []) {
+        if (inScope(ctx.changes, excluded)) continue;
+        const known = knownTables(ctx.changes);
+        const near = known.find((t) => close(t, excluded));
+        throw new Unevaluable(
+          `\`except\` names \`${excluded}\`, which is not being watched, so it excludes nothing` +
+            (near ? ` — did you mean \`${near}\`?` : ` (watched: ${known.join(', ') || 'none'})`),
+        );
+      }
       if (table && !inScope(ctx.changes, table)) {
         const known = knownTables(ctx.changes);
         const near = known.find((t) => close(t, table));
@@ -516,7 +530,10 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
               (near ? ` — did you mean \`${near}\`?` : ''),
         );
       }
-      let rows = ctx.changes.changes.filter((c) => !table || c.table === table);
+      const excluded = new Set(exceptTables ?? []);
+      let rows = ctx.changes.changes.filter(
+        (c) => (!table || c.table === table) && !excluded.has(c.table),
+      );
       if (kind === 'inserted') rows = rows.filter((c) => c.kind === 'insert' || c.kind === 'entered-scope');
       else if (kind === 'updated') rows = rows.filter((c) => c.kind === 'update');
       else if (kind === 'deleted') rows = rows.filter((c) => c.kind === 'delete' || c.kind === 'left-scope');
@@ -1001,6 +1018,48 @@ export function predicateColumnsIn(expr: Expr): Array<{ table: string; column: s
     }
   };
 
+  walk(expr);
+  return found;
+}
+
+/**
+ * Every table an `except` list names, for `check` to resolve before a run.
+ *
+ * `tablesNamedIn` in the CLI is a regex over a selector's first argument, and
+ * `changes(* except a, b)` puts `*` there — so the excluded names were
+ * invisible to it. An exclusion that names nothing excludes nothing, which
+ * quietly widens the assertion to cover a table the author believed they had
+ * carved out. The evaluator refuses it at runtime; catching it before the run
+ * is the same courtesy a misspelled table already gets.
+ */
+export function exceptedTablesIn(expr: Expr): string[] {
+  const found: string[] = [];
+  const walk = (node: Expr): void => {
+    switch (node.node) {
+      case 'select':
+        found.push(...(node.selector.exceptTables ?? []));
+        return;
+      case 'predicate':
+      case 'column':
+      case 'aggregate':
+      case 'hasWrite':
+      case 'isEmpty':
+      case 'atomic':
+      case 'writeCount':
+        walk(node.source);
+        return;
+      case 'compare':
+      case 'logical':
+        walk(node.left);
+        walk(node.right);
+        return;
+      case 'not':
+        walk(node.operand);
+        return;
+      default:
+        return;
+    }
+  };
   walk(expr);
   return found;
 }

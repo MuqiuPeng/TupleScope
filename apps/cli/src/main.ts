@@ -40,7 +40,7 @@ import {
   secretsReferencedBy,
 } from '@tuplescope/workspace';
 import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
-import { parse, predicateColumnsIn } from '@tuplescope/expr';
+import { exceptedTablesIn, parse, predicateColumnsIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import { renderRun, renderWorkspaceLine, renderScope, styleFor } from './output.js';
 import {
@@ -595,6 +595,16 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
           } catch {
             // Unparseable: `run` will say so in its own words, with position.
             named = [];
+          }
+          // `except` names live where `tablesNamedIn`'s regex cannot see them:
+          // the selector's first argument is `*`. One that resolves to nothing
+          // excludes nothing, silently widening the assertion.
+          for (const excluded of exceptedTablesIn(parse(assertion))) {
+            if (known.has(excluded)) continue;
+            problems.push(
+              `  ${scenario.id}/${dataset.id}/${step.id}  excepts \`${excluded}\`, ` +
+                `which is not a table here — so it excludes nothing`,
+            );
           }
           for (const { table, column } of named) {
             const have = columns.get(table);

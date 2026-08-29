@@ -795,3 +795,47 @@ describe('a predicate that cannot be answered', () => {
     ]);
   });
 });
+
+describe('changes(* except …)', () => {
+  /**
+   * The containment question — "nothing outside these tables changed" — had no
+   * spelling. What people wrote instead was one `isEmpty` per remaining table,
+   * and that fails open: add a table and the assertion keeps passing while the
+   * new table changes freely. Every other hole in this language errs the other
+   * way.
+   */
+  const twoTables = changeSet([
+    change({ table: 'payments', kind: 'insert', after: row({ id: v('p1') }) }),
+    change({ table: 'audit_log', kind: 'insert', after: row({ id: v('a1') }) }),
+  ]);
+
+  it('leaves out the tables it names', () => {
+    assert.ok(check('count(changes(* except audit_log)) == 1', twoTables).passed);
+    assert.ok(check('count(changes(*)) == 2', twoTables).passed);
+  });
+
+  it('catches a table the author did not carve out', () => {
+    // The whole point: it has to notice a write nobody told it to expect.
+    // `payments` alone leaves `audit_log` inside the complement.
+    assert.equal(check('hasWrite(changes(* except payments)) == false', twoTables).passed, false);
+    assert.ok(check('hasWrite(changes(* except payments, audit_log)) == false', twoTables).passed);
+  });
+
+  it('refuses an exclusion that names nothing, rather than widening', () => {
+    // An `except` resolving to no table excludes no rows, so the assertion
+    // silently covers a table the author believed they had removed — the
+    // failure this form exists to prevent, arriving through the form itself.
+    assert.throws(
+      () => check('hasWrite(changes(* except nosuch)) == false', twoTables),
+      /excludes nothing/,
+    );
+  });
+
+  it('needs `*` on its left', () => {
+    assert.throws(() => parse('count(changes(payments except audit_log)) == 0'), /needs `\*`/);
+  });
+
+  it('wants a table name after it', () => {
+    assert.throws(() => parse('count(changes(* except)) == 0'), /expected a table name/);
+  });
+});

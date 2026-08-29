@@ -325,6 +325,36 @@ export function parse(source: string): Expr {
         pos++;
         // `changes(*)` means every table in scope.
         if (table.text !== '*') selector.table = table.text;
+        // `changes(* except a, b)` — every watched table but these. Only after
+        // `*`: `changes(payments except x)` would be asking for the complement
+        // of one table, which is the whole schema minus one, spelled
+        // misleadingly.
+        const after = peek();
+        if (after && after.type === 'ident' && after.text.toLowerCase() === 'except') {
+          if (table.text !== '*') {
+            throw new ExprSyntaxError(
+              '`except` needs `*` on its left — it names what to leave out of everything watched',
+              source,
+              after.pos,
+            );
+          }
+          pos++;
+          const excluded: string[] = [];
+          for (;;) {
+            const name = peek();
+            if (!name || name.type !== 'ident') {
+              throw new ExprSyntaxError(
+                'expected a table name after `except`',
+                source,
+                name?.pos ?? source.length,
+              );
+            }
+            pos++;
+            excluded.push(name.text);
+            if (!eat(',')) break;
+          }
+          selector.exceptTables = excluded;
+        }
         if (eat(',')) {
           const raw = rawUntilClose(source, tokens, pos);
           pos = raw.next;
