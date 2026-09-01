@@ -388,7 +388,7 @@ describe('a masked key', { skip: !available }, () => {
   });
 });
 
-describe('finding what left', () => {
+describe('finding what left', { skip: !available }, () => {
   /**
    * The candidate scan is deliberately wider than it needs to be — every row
    * carrying any `xmax`, with no visibility filter — because narrowing it would
