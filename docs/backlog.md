@@ -164,24 +164,34 @@ before the fix.
   inside them have been moved out instead, which is the shape this codebase
   already uses.
 
-- [~] **25. The Windows and Linux secret backends have no test files.** Windows
-  now has one, and writing it found that the backend **had never compiled**: the
-  PowerShell shim passed its C# through an expandable here-string and joined
-  with `` `n ``, PowerShell's newline escape where C#'s `\n` was meant, so
-  `Add-Type` failed as a unit and `probe()` reported the store unavailable on
-  every Windows machine there has ever been (`946ead1`). Fixed, and pinned by
-  four tests that check the *boundary* rather than the runner — the one thing
-  about this backend decidable from a Mac. Three more Windows-only defects fixed
-  with it: the unchecked `CredWrite` ceiling, `URL.pathname` used as a filesystem
-  path in two tests, and `testdb.ts` swallowing every `initialise()` failure.
+- [x] **25. The Windows and Linux secret backends have no test files** — Windows
+  now runs in CI, and getting it green found five defects, four of which had
+  never run anywhere.
 
-  **Still open, and now measurable:** whether the shim compiles *on a runner*,
-  whether the session has a credential set, and whether the embedded PostgreSQL
-  starts under an administrator token. Five separate audits all returned "cannot
-  tell from a Mac", so `.github/workflows/windows-probe.yml` asks the runner
-  instead. It needs a manual dispatch from someone with admin rights; its answers
-  decide whether a `windows-latest` matrix row is worth writing or whether
-  `pnpm testdb` needs a different launcher first.
+  The credential backend **had never compiled**: the PowerShell shim joined with
+  `` `n `` inside an expandable here-string, where C#'s `\n` was meant, so
+  `Add-Type` failed as a unit and `probe()` reported the store unavailable on
+  every Windows machine there has ever been (`946ead1`). A probe run then proved
+  the fix on a real runner — full round trip, byte-exact through trailing
+  whitespace.
+
+  `handoff enable` could not work either: three validators tested
+  `startsWith('/')`, so a Windows absolute path was refused and the writer
+  rejected the grant it had been asked to make. Plus the unchecked `CredWrite`
+  ceiling, `URL.pathname` used as a filesystem path in two tests, and
+  `testdb.ts` swallowing every `initialise()` failure.
+
+  And one thing that is not a defect but a false claim: four files are written
+  at mode 0600 with a comment saying nothing else on the machine can read them.
+  Windows has no such permission bits. Named once in core, skipped with the
+  reason printed, and disclosed in the README.
+
+  *Not covered, and recorded rather than hidden:* the database. `postgres.exe`
+  refuses to run under an administrator token and a GitHub runner is one, so the
+  Windows leg runs everything that needs no database and lets the rest skip.
+  `embedded-postgres` spawns `postgres` directly instead of the `pg_ctl` its own
+  package exports — and `pg_ctl` creates the restricted token that would make it
+  work. That is a change to `scripts/testdb.ts`, not to CI.
 
 ---
 
