@@ -145,7 +145,7 @@ before the fix.
   escape from `EADDRINUSE` on a second `pnpm start`.
 - [x] **22. `release-prep` is fully merged** (0 commits not in `main`) and can be
   deleted.
-- [ ] **23. The working directory is still `StateScope`.** Content and remote are
+- [x] **23. The working directory is still `StateScope`.** Content and remote are
   both TupleScope.
 
 ---
@@ -207,6 +207,9 @@ decision rather than a guess.
 - [x] Departure tests crashed on a machine with no database, contradicting the
   README, on a path CI never exercises (`c231304`).
 - [x] GitGuardian finding on `7b85aae` — dismissed by the author.
+- [x] The `runtime` service was registered with `STATESCOPE_PORT`, a name nothing
+  has read since the rename. It worked only because 7420 is also the default.
+  Found while re-registering the project under its new path; now `TUPLESCOPE_PORT`.
 - [x] `junit.ts` held its control-character class as literal bytes, so `file`
   and grep treated the whole file as binary and skipped it silently (`fe09ffa`).
   Found by three greps for symbols that were plainly there coming back empty.
