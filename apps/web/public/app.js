@@ -363,7 +363,7 @@ function renderRequestWorkspace() {
   heading.append(title, el('span', 'expectation-badge', expectedStatus(step)));
   host.appendChild(heading);
 
-  const dependencies = dependenciesFor(step);
+  const dependencies = stepDependencies(step);
   if (dependencies.length) host.appendChild(renderDependencies(dependencies));
 
   const custom = el('div', `custom-run-note${draftFor(step).dirty ? ' visible' : ''}`);
@@ -389,22 +389,12 @@ function renderRequestWorkspace() {
   host.appendChild(renderContract(step, result));
 }
 
-function expectedStatus(step) {
-  if (step.expectStatus !== undefined) return `expects HTTP ${step.expectStatus}`;
-  const exact = step.assert?.map((source) => source.match(/^response\.status\s*==\s*(\d+)$/)?.[1]).find(Boolean);
-  return exact ? `expects HTTP ${exact}` : 'expects success (<400)';
-}
-
-function dependenciesFor(step) {
-  const source = JSON.stringify({ path: step.request.path, body: step.request.body, idempotencyKey: step.request.idempotencyKey });
-  const names = [...new Set([...source.matchAll(/\{\{(\w+)\}\}/g)].map((match) => match[1]))]
-    .filter((name) => !['run', 'now'].includes(name));
-  return names.map((name) => ({
-    name,
-    available: state.knownVariables[name] !== undefined,
-    producer: dataset().steps.find((candidate) => Object.hasOwn(candidate.capture ?? {}, name))?.name,
-  }));
-}
+// `expectedStatus`, `dependenciesFor` and `assertionRank` live in steps.js, so
+// the sentences printed beside a control can be checked by something other than
+// a person looking at the screen. This wrapper is all that is left of them here:
+// the state they read is passed in rather than reached for.
+const stepDependencies = (step) =>
+  dependenciesFor(step, { known: state.knownVariables, steps: dataset()?.steps ?? [] });
 
 function renderDependencies(dependencies) {
   const block = el('div', 'dependency-strip');
@@ -563,10 +553,6 @@ function renderContract(step, result) {
   });
   details.appendChild(list);
   return details;
-}
-
-function assertionRank(status) {
-  return ({ failed: 0, unevaluable: 1, passed: 2, planned: 3 })[status] ?? 4;
 }
 
 function draftFor(step) {

@@ -152,8 +152,13 @@ before the fix.
 
 ## P3 — coverage
 
-- [ ] **24. `apps/web` has no client-side tests.** 1,574 lines; the runtime is
-  covered, the page is not.
+- [~] **24. `apps/web` has no client-side tests.** The three pure functions
+  behind the sentences printed next to a control — `expectedStatus`,
+  `dependenciesFor`, `assertionRank` — are extracted into `steps.js` with 16
+  tests, joining `runs.js` and `api-error.js`. **Still open:** the rendering
+  itself. Every `render*` function builds DOM directly and none is covered; that
+  needs either a DOM shim or a further extraction of the view models, and is a
+  bigger decision than this.
 - [~] **25. The Windows and Linux secret backends have no test files.** Windows
   now has one for its wire format — the part testable from a Mac — and it found
   no bug: the `.trim()` that would have corrupted a trailing-whitespace value is
