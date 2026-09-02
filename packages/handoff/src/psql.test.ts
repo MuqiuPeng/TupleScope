@@ -89,7 +89,11 @@ before(async () => {
   // Bootstrap through a service pointing at the maintenance database, so the
   // test needs no client library of its own.
   const bootstrap: PsqlServiceBinding = { ...binding, service: 'tuplescope-other' };
+  // `homedir()` reads HOME on POSIX and USERPROFILE on Windows, so a test
+  // that sets only one of them redirects the module on one platform and
+  // silently does not on the other.
   process.env['HOME'] = home;
+  process.env['USERPROFILE'] = home;
   const created = await runPsql(
     bootstrap,
     // `WITH (FORCE)` because this suite deliberately kills a child mid-query;

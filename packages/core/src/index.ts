@@ -17,3 +17,4 @@ export * from './scenario.js';
 export * from './assertion.js';
 export * from './run.js';
 export * from './verdict.js';
+export * from './platform.js';

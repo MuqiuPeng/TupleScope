@@ -606,6 +606,14 @@ wrapper claiming otherwise would be theatre.
 | Linux | `secret-tool` (libsecret) | yes, in a Debian container |
 | Windows | PowerShell + a `CredReadW` shim | yes, on a GitHub Actions runner |
 
+**Mode 0600 is a POSIX promise, and this page makes it twice** — for
+`~/.tuplescope/handoff.json` and for the session file. Windows has no such
+permission bits: `chmod` there toggles the read-only attribute, and a file
+written this way reports `0666`. What protects those files on Windows is the
+inherited ACL of your user profile, which is real but is a default this code did
+not choose and does not check. The tests say so rather than asserting a property
+the platform does not have, and this line exists so the README does too.
+
 Nothing shipped with Windows can read a stored password back: `cmdkey` writes
 and deletes but its documentation says outright that passwords are not
 displayed afterwards, and there is no Credential Manager API in the .NET base

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { RUN_REPORT_SCHEMA } from '@tuplescope/core';
+import { RUN_REPORT_SCHEMA, OWNER_ONLY_BASIS, OWNER_ONLY_MODE_IS_ENFORCED } from '@tuplescope/core';
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +34,11 @@ function stored(id: string, extra: Partial<StoredRun['run']> = {}, outcome = 'cl
 }
 
 describe('the run store', () => {
-  it('writes one file per run, readable only by its owner', async () => {
+  it('writes one file per run, readable only by its owner', async (t) => {
+    // Windows has no POSIX mode bits; see @tuplescope/core's platform module.
+    if (!OWNER_ONLY_MODE_IS_ENFORCED) {
+      return t.skip(`mode bits are not enforced here — protection is ${OWNER_ONLY_BASIS}`);
+    }
     const store = openStore(join(dir, 'a'));
     await store.save(stored('run_aaaa0001'));
     const files = await readdir(join(dir, 'a'));

@@ -3,11 +3,17 @@ import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { OWNER_ONLY_BASIS, OWNER_ONLY_MODE_IS_ENFORCED } from '@tuplescope/core';
 
 // The module reads homedir() at import time, so redirect HOME before loading it.
 const fakeHome = mkdtempSync(join(tmpdir(), 'tuplescope-home-'));
 const realHome = process.env['HOME'];
+const realProfile = process.env['USERPROFILE'];
+// `homedir()` reads HOME on POSIX and USERPROFILE on Windows, so a test
+// that sets only one of them redirects the module on one platform and
+// silently does not on the other.
 process.env['HOME'] = fakeHome;
+process.env['USERPROFILE'] = fakeHome;
 
 const { listSessions, removeSession, writeSession } = await import('./session.js');
 
@@ -23,6 +29,8 @@ before(() => {});
 after(() => {
   if (realHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = realHome;
+  if (realProfile === undefined) delete process.env['USERPROFILE'];
+  else process.env['USERPROFILE'] = realProfile;
 });
 
 describe('session file', () => {
@@ -33,14 +41,21 @@ describe('session file', () => {
     assert.equal(found?.token, 'sekrit');
   });
 
-  it('is readable only by its owner', () => {
+  it('is readable only by its owner', (t) => {
+    // Windows has no POSIX mode bits; see @tuplescope/core's platform module.
+    if (!OWNER_ONLY_MODE_IS_ENFORCED) {
+      return t.skip(`mode bits are not enforced here — protection is ${OWNER_ONLY_BASIS}`);
+    }
     const path = writeSession({ ...base, pid: process.pid });
     assert.ok(path);
     // The token is in here. 0600, not whatever umask happened to be.
     assert.equal(statSync(path!).mode & 0o777, 0o600);
   });
 
-  it('re-tightens permissions on an existing file', () => {
+  it('re-tightens permissions on an existing file', (t) => {
+    if (!OWNER_ONLY_MODE_IS_ENFORCED) {
+      return t.skip(`mode bits are not enforced here — protection is ${OWNER_ONLY_BASIS}`);
+    }
     // writeFileSync only applies `mode` when it creates the file, so a second
     // start must not inherit looser permissions from the first.
     const path = writeSession({ ...base, pid: process.pid })!;

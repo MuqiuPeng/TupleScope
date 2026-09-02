@@ -33,7 +33,11 @@ before(async () => {
       'database:\n  connectionString: postgresql://postgres:postgres@127.0.0.1:1/x\n',
   );
   cwd = process.cwd();
+  // `homedir()` reads HOME on POSIX and USERPROFILE on Windows, so a test
+  // that sets only one of them redirects the module on one platform and
+  // silently does not on the other.
   process.env['HOME'] = home;
+  process.env['USERPROFILE'] = home;
 });
 
 after(async () => {

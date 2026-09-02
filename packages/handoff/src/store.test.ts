@@ -14,6 +14,7 @@ import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { OWNER_ONLY_BASIS, OWNER_ONLY_MODE_IS_ENFORCED } from '@tuplescope/core';
 import {
   HANDOFF_POLICY_VERSION,
   HandoffConfigError,
@@ -67,7 +68,15 @@ describe('reading', () => {
 });
 
 describe('writing', () => {
-  it('lands at 0600, so nothing else on the machine reads what you approved', async () => {
+  it('lands at 0600 where that means something, and says so where it does not', async (t) => {
+    // Windows has no POSIX permission bits: `chmod` toggles the read-only
+    // attribute and a file written this way reports 0666. Asserting 0600 there
+    // tests nothing, and deleting the assertion would quietly drop a security
+    // property on the platform where it is *not* delivered. The constant names
+    // which is which; the README says what stands in its place.
+    if (!OWNER_ONLY_MODE_IS_ENFORCED) {
+      return t.skip(`mode bits are not enforced here — protection is ${OWNER_ONLY_BASIS}`);
+    }
     await saveHandoffConfig({ v: 1, bindings: { adminer: binding } }, path());
     const mode = (await stat(path())).mode & 0o777;
     assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
