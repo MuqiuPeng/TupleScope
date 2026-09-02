@@ -181,7 +181,10 @@ async function main(argv: string[]): Promise<number> {
   const command = positionals[0] ?? (values.help ? 'help' : undefined);
   if (!command || command === 'help' || values.help) {
     process.stdout.write(HELP);
-    return command && command !== 'help' ? EXIT_USAGE : 0;
+    // Asking for help and receiving it is not a usage error. `run --help`
+    // printed the whole help text and then exited 4, so a script that checked
+    // the status of its own `--help` probe concluded the command was wrong.
+    return 0;
   }
 
   switch (command) {
@@ -253,6 +256,17 @@ function policyFrom(values: Values): VerdictPolicy | string {
   const warnings = values.warnings ?? DEFAULT_POLICY.warnings;
   if (warnings !== 'default' && warnings !== 'strict' && warnings !== 'off') {
     return `--warnings must be \`default\`, \`strict\` or \`off\`, not \`${warnings}\``;
+  }
+  // Validated here with its siblings rather than at the point of use, where
+  // `Number('abc')` produced NaN, the probe was skipped, and the run exited 0 —
+  // a flag whose whole job is detecting concurrent writes, silently doing
+  // nothing. The two flags either side of it in HELP both refuse and exit 4.
+  const baseline = values.baseline;
+  if (baseline !== undefined && baseline !== 'off') {
+    const ms = Number(baseline);
+    if (!Number.isFinite(ms) || ms < 0) {
+      return `--baseline must be a number of milliseconds or \`off\`, not \`${baseline}\``;
+    }
   }
   return {
     unevaluable,

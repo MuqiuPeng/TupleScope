@@ -323,6 +323,20 @@ export function parse(source: string): Expr {
           throw new ExprSyntaxError('expected a table name', source, table?.pos ?? source.length);
         }
         pos++;
+        // `rows(*)` parses and can never be answered: the engine's pre-fetch
+        // skips any selector with no table, so the lookup map never holds it
+        // and the evaluator refuses at run time with "the rows of `*` could not
+        // be read". A form that is always undecided is a syntax error, not a
+        // capability — the same lesson as `all()`, which parsed, passed
+        // `check`, and poisoned every run that used it into exit 3.
+        if (name.text === 'rows' && table.text === '*') {
+          throw new ExprSyntaxError(
+            '`rows(*)` cannot be read — `rows` needs one table to select from. ' +
+              'Use `changes(*)` to ask about every table this run wrote to.',
+            source,
+            table.pos,
+          );
+        }
         // `changes(*)` means every table in scope.
         if (table.text !== '*') selector.table = table.text;
         // `changes(* except a, b)` — every watched table but these. Only after

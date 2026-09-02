@@ -122,3 +122,21 @@ describe('parse', () => {
     assert.throws(() => parse('response.status == 200 200'), /trailing/);
   });
 });
+
+describe('rows(*)', () => {
+  it('is a syntax error, not a run-time refusal', () => {
+    // It parsed, and then the engine's pre-fetch skipped it — a selector with
+    // no table never enters the lookup map — so every use was undecided at run
+    // time. The same shape as `all()`, which parsed, passed `check`, and made
+    // the run exit 3 over a form that could never do anything.
+    assert.throws(() => parse('count(rows(*)) == 0'), /`rows\(\*\)` cannot be read/);
+  });
+
+  it('leaves changes(*) alone, which does mean every table', () => {
+    assert.doesNotThrow(() => parse('hasWrite(changes(*)) == false'));
+  });
+
+  it('still accepts rows with a table', () => {
+    assert.doesNotThrow(() => parse('count(rows(wallets, id = "x")) == 1'));
+  });
+});
