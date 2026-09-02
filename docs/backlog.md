@@ -132,7 +132,7 @@ before the fix.
   longer private. `runtime`, `web`, `conformance` and the root stay private, which
   is correct — a locally served app, static assets and a test harness. `workspace:*`
   is not a blocker: pnpm rewrites it at publish time. Verified by packing
-  `@tuplescope/core` (46 files, dist only) and `@tuplescope/cli` (bin present).
+  `@tuplescope/core` (46 files, dist only) and the CLI (bin present).
   Publishing itself is still a deliberate decision, not done here.
 - [x] **19. `embedded-postgres` is a root devDependency.** README now states the
   measured cost (133 MB of a 226 MB `node_modules`) and withdraws the "opt-in"

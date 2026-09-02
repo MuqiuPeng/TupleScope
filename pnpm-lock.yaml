@@ -8,12 +8,6 @@ importers:
 
   .:
     devDependencies:
-      '@tuplescope/cli':
-        specifier: workspace:*
-        version: link:apps/cli
-      '@tuplescope/mcp':
-        specifier: workspace:*
-        version: link:apps/mcp
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
@@ -23,6 +17,12 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
+      tuplescope:
+        specifier: workspace:*
+        version: link:apps/cli
+      tuplescope-mcp:
+        specifier: workspace:*
+        version: link:apps/mcp
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

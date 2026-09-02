@@ -1,5 +1,5 @@
 {
-  "name": "tuplescope",
+  "name": "tuplescope-workspace",
   "private": true,
   "version": "0.0.0",
   "engines": {
@@ -18,11 +18,11 @@
     "url": "pnpm --filter @tuplescope/runtime url"
   },
   "devDependencies": {
-    "@tuplescope/cli": "workspace:*",
-    "@tuplescope/mcp": "workspace:*",
     "@types/node": "^22.10.2",
     "embedded-postgres": "^17.5.0-beta.15",
     "tsx": "^4.19.2",
+    "tuplescope": "workspace:*",
+    "tuplescope-mcp": "workspace:*",
     "typescript": "^5.7.2"
   }
 }

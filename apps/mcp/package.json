@@ -1,5 +1,5 @@
 {
-  "name": "@tuplescope/mcp",
+  "name": "tuplescope-mcp",
   "version": "0.4.0",
   "license": "MIT",
   "type": "module",
