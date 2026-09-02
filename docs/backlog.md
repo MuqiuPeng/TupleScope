@@ -219,13 +219,22 @@ decision rather than a guess.
   the vocabulary is not *not yet* good enough; it is deliberately unable, for the
   same reason the colour enum exists.
 
-- [~] **31. Then decide.** §11 removes one of the three options: widening the
-  vocabulary is a bad trade and is not on the table. What remains is a product
-  call the author has to make — build r2 charts-only, or record that the shape
-  does not answer what prompted it and drop the feature. The machinery it needs
-  (a Worker, a grant model, a digest, a scene validator) is not small for a
-  charts-only result. Recorded as `panel-mods-design.md` §12.1; **awaiting the
-  author**.
+- [x] **31. Decided: the mod mechanism is not built.** §11 removed the option of
+  widening the vocabulary. Reading §2 again with that settled removes the rest:
+  the repo-names-it / user-installs-it split exists because different users want
+  different *renderings*, and given two named series every mod anyone would write
+  draws the same two lines. With no reason for third-party code, the Worker, the
+  grant model, the payload boundary, the scene protocol and its validator, the
+  update protocol and the byte-exact loading are all cost with nothing left to
+  buy. Recorded as `panel-mods-design.md` §13.
+
+- [ ] **32. Ship the built-in chart panel** — what §13 replaces mods with.
+  `panels[].sources` in the workspace file (inert, §3 survives intact),
+  evaluated with `seriesFor` — already built in `@tuplescope/expr`, ten tests,
+  currently zero consumers — and drawn by the host in the page's own palette. A
+  `carried` point draws differently from an observed one because the host knows
+  the difference, which no longer has to survive a protocol boundary to be
+  honoured.
 
 ---
 
