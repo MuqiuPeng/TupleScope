@@ -604,7 +604,7 @@ wrapper claiming otherwise would be theatre.
 | --- | --- | --- |
 | macOS | `/usr/bin/security` | yes, against the real Keychain |
 | Linux | `secret-tool` (libsecret) | yes, in a Debian container |
-| Windows | PowerShell + a `CredReadW` shim | **no — see below** |
+| Windows | PowerShell + a `CredReadW` shim | yes, on a GitHub Actions runner |
 
 Nothing shipped with Windows can read a stored password back: `cmdkey` writes
 and deletes but its documentation says outright that passwords are not
@@ -613,8 +613,16 @@ class library. The only route without a native module is PowerShell compiling a
 `DllImport` shim at runtime, which works on a stock install and does not work
 under Constrained Language Mode or some endpoint-protection policies.
 
-Because that cannot be tested from here, and because neither it nor Linux can
-be checked by asking, **both establish availability by using the store** — they
+That shim did not compile until recently — it joined with `` `n ``, PowerShell's
+newline escape, inside an expandable here-string where C#'s `\n` was meant, so
+`Add-Type` failed as a unit and the backend reported itself unavailable on every
+Windows machine there has ever been. Nothing said so, because nothing ran it. CI
+now does, on `windows-latest`, and a probe run through the real Credential
+Manager returns a byte-exact round trip including trailing whitespace.
+
+Because that still cannot be tested from a developer's Mac, and because neither
+it nor Linux can be checked by asking, **both establish availability by using
+the store** — they
 write a throwaway value, read it back, compare it and remove it. A backend that
 cannot prove it works reports itself unavailable instead of failing later with a
 credential in play. On Linux this also resolves a genuine ambiguity: `secret-tool

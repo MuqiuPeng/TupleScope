@@ -119,3 +119,71 @@ jobs:
 
           test "$total" -ge 560
           test "$failed" -eq 0
+
+  # Windows, without a database — because it measurably cannot have one.
+  #
+  # Not a matrix row on the job above: that job's steps are POSIX shell and its
+  # whole point is a running PostgreSQL, and on Windows the embedded server does
+  # not start. Measured on a real runner (windows-probe.yml, run 33634415097):
+  # `initdb` succeeds — it re-executes itself with a restricted token — and then
+  # `postgres.exe` refuses, because it has no such path of its own and a
+  # GitHub-hosted runner is `runneradmin`, an administrator:
+  #
+  #   Execution of PostgreSQL by a user with administrative permissions is not
+  #   permitted.
+  #
+  # So this leg runs everything that does not need a database and lets the rest
+  # skip, which is exactly what the skip guards are for. Measured locally against
+  # an unreachable database: 723 tests, 644 pass, 0 fail, 79 skipped.
+  #
+  # What it is here to protect is the credential backend. That code had never
+  # run anywhere — its PowerShell shim did not compile, on any Windows machine,
+  # ever (946ead1) — and nothing in CI would have said so. The same probe run
+  # then proved the fix: a full round trip through the Credential Manager,
+  # byte-exact including trailing whitespace.
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      # pnpm writes three shims here: a POSIX one for Git Bash, plus `.cmd` and
+      # `.ps1`. `.cmd` is what a Windows shell resolves, so `.cmd` is what is
+      # checked — running the POSIX one under `node` fails for reasons that have
+      # nothing to do with linking, which cost this file one run to learn.
+      - name: the CLI is on PATH
+        shell: pwsh
+        run: |
+          & node_modules/.bin/tuplescope.cmd --version
+          & node_modules/.bin/tuplescope-mcp.cmd --version
+
+      # No database is started and none is configured, so every suite that needs
+      # one skips itself. The floor is what catches a suite bowing out silently:
+      # when `describe` never runs, the totals read `tests 0 ... skipped 0`, which
+      # is green having run nothing.
+      - name: test
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+          sum() { sed -nE "s/.*(ℹ|#) $1 ([0-9]+).*/\2/p" "$RUNNER_TEMP/test.log" \
+                  | awk '{s+=$1} END {print s+0}'; }
+          total=$(sum tests); passed=$(sum pass); failed=$(sum fail); skipped=$(sum skipped)
+          echo "total=$total pass=$passed fail=$failed skipped=$skipped"
+
+          test "$failed" -eq 0
+          test "$total" -ge 550
