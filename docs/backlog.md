@@ -36,7 +36,7 @@ before the fix.
   `check` resolves tables and predicate columns against the live schema already
   and is the natural place for this.
 
-- [ ] **3. A keyless table's DELETE is invisible on two of three engines.**
+- [x] **3. A keyless table's DELETE is invisible on two of three engines.**
   Under `mvcc-xmin` and `wal`, a delete from a table with no PK and no usable
   unique index produces **zero** entries in `changes` — `net-view.ts:104`
   `continue`s past `readDepartedKeys`. Under `snapshot-diff` the same delete is
@@ -47,6 +47,14 @@ before the fix.
   verdict — and not the warnings array — is still misled.
   *Decide: escalate to `error`, or carry the blindness into the envelope where a
   machine consumer will see it.*
+
+- [ ] **3b. The conformance harness cannot express the row-identity axis.**
+  `TableScope.departuresObservable` is a real capability axis and the harness has
+  only `expectByDetection` and `expectByFidelity`. `count(deleted(t)) == 0` over a
+  keyless table is `passed` on snapshot-diff and `unevaluable` on the MVCC
+  engines — a difference the contract currently cannot state, because writing it
+  as `expectByDetection` would give the wrong reason, which is the one thing the
+  suite forbids. Covered by unit test in the meantime.
 
 - [ ] **4. `entered-scope` is dead code.**
   No adapter emits it. Both insert sites write `kind: 'insert'` unconditionally

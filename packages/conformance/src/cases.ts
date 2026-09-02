@@ -238,8 +238,13 @@ export const CASES: ConformanceCase[] = [
       // Over a value-detection engine this is a floor, not a count: a rewrite
       // to identical values would leave it at zero. Answering `0` here is the
       // shape of every idempotency check that passes for the wrong reason.
-      'count(changes(*)) == 0': { write: passed, value: unevaluable },
-      'isEmpty(changes(*)) == true': { write: passed, value: unevaluable },
+        // `except audit_log` keeps this a statement about the axis it is
+        // testing. That table has no key, which makes a whole-scope question
+        // unanswerable on the MVCC engines for an unrelated reason — carved out
+        // here, and tested on its own as `a whole-scope question with a keyless
+        // table in scope`, rather than letting one case fail for two reasons.
+      'count(changes(* except audit_log)) == 0': { write: passed, value: unevaluable },
+      'isEmpty(changes(* except audit_log)) == true': { write: passed, value: unevaluable },
     },
     shape: {},
   },
@@ -260,7 +265,12 @@ export const CASES: ConformanceCase[] = [
       'count(inserted(entries)) == 0': passed,
     },
     expectByDetection: {
-      'count(changes(*)) == 0': { write: passed, value: unevaluable },
+        // `except audit_log` keeps this a statement about the axis it is
+        // testing. That table has no key, which makes a whole-scope question
+        // unanswerable on the MVCC engines for an unrelated reason — carved out
+        // here, and tested on its own as `a whole-scope question with a keyless
+        // table in scope`, rather than letting one case fail for two reasons.
+      'count(changes(* except audit_log)) == 0': { write: passed, value: unevaluable },
       'count(updated(accounts).where(balance = "1.00")) == 0': { write: passed, value: unevaluable },
     },
     shape: {},
@@ -289,6 +299,27 @@ export const CASES: ConformanceCase[] = [
     expect: {
       'count(inserted(audit_log)) == 1': passed,
       'count(inserted(accounts)) == 0': passed,
+      // A question that is structurally empty on a keyless table rather than
+      // merely imprecise: nothing can pair such a row to a previous version, so
+      // `updated` answers 0 however much happened. The insert asserted above
+      // proves this is not a blanket refusal.
+      //
+      // `count(deleted(audit_log)) == 0` belongs here too and is deliberately
+      // absent: it is `passed` on snapshot-diff, which re-reads the table and
+      // sees the multiset deficit, and `unevaluable` on the MVCC engines, which
+      // skip the key read entirely. That is a real capability difference on a
+      // *row-identity* axis this harness cannot yet express — and writing it as
+      // `expectByDetection` would state the wrong reason, which is the one thing
+      // this suite exists to forbid. Covered by unit test instead, until the
+      // axis exists here.
+      'isEmpty(updated(audit_log)) == true': unevaluable,
+      // And a whole-scope question, with this table swept into the default
+      // `allTables` scope, cannot be answered by anything: the MVCC engines
+      // cannot see a departure from it, and the value-detection engine cannot
+      // tell a redundant write from no write. Two different reasons, one
+      // verdict — the contract is about what a consumer may conclude, not
+      // about how an engine got there.
+      'hasWrite(changes(*)) == false': unevaluable,
     },
   },
   {
@@ -486,8 +517,13 @@ export const CASES: ConformanceCase[] = [
         write: passed,
         value: unevaluable,
       },
-      'hasWrite(changes(*)) == true': { write: passed, value: unevaluable },
-      'hasWrite(changes(*)) == false': { write: failed('true'), value: unevaluable },
+        // `except audit_log` keeps this a statement about the axis it is
+        // testing. That table has no key, which makes a whole-scope question
+        // unanswerable on the MVCC engines for an unrelated reason — carved out
+        // here, and tested on its own as `a whole-scope question with a keyless
+        // table in scope`, rather than letting one case fail for two reasons.
+      'hasWrite(changes(* except audit_log)) == true': { write: passed, value: unevaluable },
+      'hasWrite(changes(* except audit_log)) == false': { write: failed('true'), value: unevaluable },
       'count(updated(accounts)) == 1': { write: passed, value: unevaluable },
     },
     shapeByDetection: {

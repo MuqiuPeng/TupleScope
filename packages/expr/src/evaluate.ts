@@ -492,6 +492,31 @@ function selectedTables(expr: Expr, into: Set<string> = new Set()): Set<string> 
   return into;
 }
 
+/** Tables an expression carves out with `except`, which a whole-scope guard must honour. */
+function exceptedTables(expr: Expr, into: Set<string> = new Set()): Set<string> {
+  switch (expr.node) {
+    case 'select':
+      for (const table of expr.selector.exceptTables ?? []) into.add(table);
+      break;
+    case 'column':
+    case 'aggregate':
+    case 'predicate':
+    case 'hasWrite':
+    case 'isEmpty':
+    case 'atomic':
+    case 'writeCount':
+      exceptedTables(expr.source, into);
+      break;
+    case 'compare':
+      exceptedTables(expr.left, into);
+      exceptedTables(expr.right, into);
+      break;
+    default:
+      break;
+  }
+  return into;
+}
+
 /** Selector kinds that are always empty on a table whose departures are invisible. */
 const EMPTY_WITHOUT_ROW_IDENTITY = new Set<SelectorKind>(['updated', 'deleted']);
 
@@ -514,14 +539,27 @@ function guardRowIdentity(expr: Expr, changes: ChangeSet, what: string): void {
     );
   }
 
-  // A whole-scope question (`changes(*)`) over a scope that contains a blind
-  // table is unsound for the same reason — an invisible delete makes the count
-  // a lower bound — but refusing it costs every user with one keyless table the
-  // `changes(*)` form entirely, and the conformance contract asserts
-  // `count(changes(*)) == 0` with a deliberately keyless table in scope.
-  // Left open pending that decision; the run still carries
-  // `degraded-row-identity` for the table, and the CLI already refuses to print
-  // "Nothing was written" beside it.
+  // A whole-scope question (`changes(*)`) is unsound for the same reason: an
+  // invisible delete makes the count a lower bound presented as a total.
+  //
+  // Refused only when the scope was not chosen. `allTables` is the default —
+  // "watch everything" — and it is exactly the mode in which a reader does not
+  // know a table they cannot read has been swept into the scope. A user who
+  // wrote a `watch:` list picked those tables and gets to keep the form; the
+  // `degraded-row-identity` warning still names the table on every run either
+  // way, and the CLI still refuses to print "Nothing was written" beside it.
+  if (changes.scope.allTables && selectedTables(expr).size === 0) {
+    const excepted = exceptedTables(expr);
+    const missing = [...blind].filter((t) => !excepted.has(t)).sort();
+    if (missing.length === 0) return;
+    throw new Unevaluable(
+      `${what} over every watched table, and \`${missing.join('`, `')}\` ` +
+        `${missing.length === 1 ? 'has' : 'have'} no primary key or unique index — ` +
+        `a delete there leaves no trace for this run to count. ` +
+        `Exclude it with \`except ${missing.join(', ')}\`, name the tables you mean ` +
+        `in \`watch:\`, or give it a key.`,
+    );
+  }
 }
 
 /** Every selector kind feeding an expression, so a count knows what it is counting. */
