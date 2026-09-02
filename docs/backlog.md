@@ -209,14 +209,23 @@ decision rather than a guess.
   while panel mods cannot be built because CSP does not exist. Break it from the
   CSP end.*
 
-- [ ] **30. Draw three real panels against the scene vocabulary, on paper.**
-  `line | bar | dot | text | rule` was written from two imagined charts. One of
-  the three must be "looks like the product's own screen", which is the request
-  that started this feature and which the vocabulary plainly does not satisfy
-  (`panel-mods-design.md:293-300`).
+- [x] **30. Draw three real panels against the scene vocabulary** — done, in
+  `panel-mods-design.md` §11. A single series and two compared series are both
+  buildable. A product-looking card is **not**, and not nearly: `text` carries no
+  `fill`, `size` or `weight`, so every string on a panel is identical. The
+  widening that would fix it is bounded — but a mod that can set typography can
+  reproduce the host's own verdict inside the evidence panel, which is the one
+  place in this product where what you see is meant to be what was observed. So
+  the vocabulary is not *not yet* good enough; it is deliberately unable, for the
+  same reason the colour enum exists.
 
-- [ ] **31. Then decide:** build r2 as frozen, widen the vocabulary, or record
-  that this shape is wrong for the original ask.
+- [~] **31. Then decide.** §11 removes one of the three options: widening the
+  vocabulary is a bad trade and is not on the table. What remains is a product
+  call the author has to make — build r2 charts-only, or record that the shape
+  does not answer what prompted it and drop the feature. The machinery it needs
+  (a Worker, a grant model, a digest, a scene validator) is not small for a
+  charts-only result. Recorded as `panel-mods-design.md` §12.1; **awaiting the
+  author**.
 
 ---
 
