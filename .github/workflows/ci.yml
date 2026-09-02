@@ -140,21 +140,21 @@ jobs:
               echo "the demo no longer touches $table, which the README's diff shows"; exit 1; }
           done
 
-  # Windows, without a database — because it measurably cannot have one.
+  # Windows, now with a database.
   #
-  # Not a matrix row on the job above: that job's steps are POSIX shell and its
-  # whole point is a running PostgreSQL, and on Windows the embedded server does
-  # not start. Measured on a real runner (windows-probe.yml, run 33634415097):
-  # `initdb` succeeds — it re-executes itself with a restricted token — and then
-  # `postgres.exe` refuses, because it has no such path of its own and a
-  # GitHub-hosted runner is `runneradmin`, an administrator:
+  # Not a matrix row on the job above: that job's steps are POSIX shell. It was
+  # also, until now, a leg that could not have a database at all. Measured on a
+  # real runner (windows-probe.yml, run 33634415097): `initdb` succeeds, because
+  # it re-executes itself with a restricted token, and then `postgres.exe`
+  # refuses, having no such path of its own and finding itself `runneradmin`:
   #
   #   Execution of PostgreSQL by a user with administrative permissions is not
   #   permitted.
   #
-  # So this leg runs everything that does not need a database and lets the rest
-  # skip, which is exactly what the skip guards are for. Measured locally against
-  # an unreachable database: 723 tests, 644 pass, 0 fail, 79 skipped.
+  # `pg_ctl` creates that restricted token itself, and the platform package ships
+  # it — `embedded-postgres` simply never uses it. `scripts/testdb.ts` takes that
+  # route on Windows now, so this leg starts a real server and runs the whole
+  # suite rather than skipping a fifth of it.
   #
   # What it is here to protect is the credential backend. That code had never
   # run anywhere — its PowerShell shim did not compile, on any Windows machine,
@@ -190,12 +190,38 @@ jobs:
           & node_modules/.bin/tuplescope.cmd --version
           & node_modules/.bin/tuplescope-mcp.cmd --version
 
-      # No database is started and none is configured, so every suite that needs
-      # one skips itself. The floor is what catches a suite bowing out silently:
-      # when `describe` never runs, the totals read `tests 0 ... skipped 0`, which
-      # is green having run nothing.
+      # `pg_ctl` detaches the server, so unlike the POSIX job this does not need
+      # to be backgrounded — it returns once the server accepts connections.
+      - name: start the test database
+        shell: bash
+        run: |
+          pnpm testdb > "$RUNNER_TEMP/db.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            grep -q 'postgres ready' "$RUNNER_TEMP/db.log" && exit 0
+            sleep 2
+          done
+          echo "database did not come up:"; cat "$RUNNER_TEMP/db.log"; exit 1
+
+      # The same `wal_level` check the POSIX job makes. A server that came up
+      # without it turns twenty-two conformance cases into skips, quietly.
+      - name: it is the server the wal engine needs
+        shell: bash
+        working-directory: packages/db-postgres
+        run: |
+          level=$(node -e "
+            const {Client} = require('pg');
+            const c = new Client('postgresql://postgres@127.0.0.1:7432/postgres');
+            c.connect()
+             .then(() => c.query('show wal_level'))
+             .then(r => { console.log(r.rows[0].wal_level); return c.end(); });
+          ")
+          echo "wal_level = $level"
+          test "$level" = logical
+
       - name: test
         shell: bash
+        env:
+          TUPLESCOPE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:7432/postgres
         run: |
           set -o pipefail
           pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"

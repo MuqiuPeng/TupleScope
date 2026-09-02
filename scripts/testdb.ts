@@ -18,15 +18,97 @@
  *
  *     pnpm testdb                 # holds the port open until interrupted
  *     TESTDB_PORT=7433 pnpm testdb
+ *
+ * On Windows — and anywhere with `TESTDB_VIA_PG_CTL=1` — the server is started
+ * through `pg_ctl` and is **detached**, so an ungraceful end to this process
+ * leaves it running. Ctrl-C stops it; `kill -9` does not. A later run finds it
+ * and reuses it rather than failing on the port.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
 import EmbeddedPostgres from "embedded-postgres";
 
 const PORT = Number(process.env["TESTDB_PORT"] ?? 7432);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(here, "../.pgdata");
+
+/**
+ * Where the platform package keeps its server binaries.
+ *
+ * `embedded-postgres` exports only its own entry point, so `binary.js` — which
+ * does exactly this — cannot be imported. Resolving the main entry and walking
+ * up gets to the same place without reaching past the exports map.
+ */
+function serverBinary(name: string): string {
+  const require = createRequire(import.meta.url);
+  const root = path.resolve(path.dirname(require.resolve("embedded-postgres")), "..");
+  const platform =
+    process.platform === "win32"
+      ? "@embedded-postgres/windows-x64"
+      : `@embedded-postgres/${process.platform}-${process.arch}`;
+  const pkg = createRequire(path.join(root, "resolve.js")).resolve(platform);
+  const bin = path.join(path.dirname(pkg), "..", "native", "bin");
+  return path.join(bin, process.platform === "win32" ? `${name}.exe` : name);
+}
+
+/**
+ * Start the postmaster through `pg_ctl` rather than by spawning it.
+ *
+ * `postgres.exe` refuses to run under an administrator token — it calls
+ * `pgwin32_is_admin` and exits — and it has no restricted-token path of its own.
+ * `initdb.exe` does re-execute itself restricted, which is why cluster creation
+ * works on Windows and starting the server does not. Measured on a GitHub
+ * runner, which runs as `runneradmin`:
+ *
+ *   Execution of PostgreSQL by a user with administrative permissions is not
+ *   permitted.
+ *
+ * `pg_ctl` creates that restricted token itself, and the platform package ships
+ * it — `embedded-postgres` simply never uses it, spawning the postmaster
+ * directly instead.
+ *
+ * `TESTDB_VIA_PG_CTL=1` forces this path anywhere, so the mechanism can be
+ * exercised on a machine where the ordinary one already works. Without it this
+ * is Windows only: on POSIX the library's own start is fine and is what the
+ * suite has always used.
+ */
+const VIA_PG_CTL = process.platform === "win32" || process.env["TESTDB_VIA_PG_CTL"] === "1";
+
+function pgCtl(args: string[]): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(serverBinary("pg_ctl"), args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+    child.on("error", reject);
+    child.on("close", (code) => resolve(code ?? 1));
+    void stderr;
+  });
+}
+
+/** Non-zero is a failure worth the message; `status` uses the code instead. */
+async function pgCtlOrThrow(args: string[]): Promise<void> {
+  const code = await pgCtl(args);
+  if (code !== 0) throw new Error(`pg_ctl ${args.join(" ")} exited ${code}`);
+}
+
+/**
+ * Whether a postmaster is already up on this cluster.
+ *
+ * Needed only on the `pg_ctl` path, and needed *because* of it: `pg_ctl start`
+ * detaches the server, so it outlives this process rather than dying with it
+ * the way the library's own start does. A second run would then meet a cluster
+ * that is already up and `pg_ctl start` would refuse, when the honest answer is
+ * that the database is ready.
+ *
+ * Exit 0 means running, 3 means stopped, 4 means the directory is not a
+ * cluster.
+ */
+async function alreadyRunning(dir: string): Promise<boolean> {
+  return (await pgCtl(["-D", dir, "status"])) === 0;
+}
 
 async function main(): Promise<void> {
   mkdirSync(dataDir, { recursive: true });
@@ -60,7 +142,24 @@ async function main(): Promise<void> {
   }
 
   trustExistingCluster(dataDir);
-  await pg.start();
+  if (VIA_PG_CTL) {
+    if (await alreadyRunning(dataDir)) {
+      console.log("[testdb] a server is already up on this cluster; reusing it");
+    } else {
+      // `-w` waits for the server to accept connections, so the readiness line
+      // below means what it says. The options mirror what the library would
+      // have passed the postmaster.
+      await pgCtlOrThrow([
+        "-D", dataDir,
+        "-w",
+        "-l", path.join(dataDir, "postmaster.log"),
+        "-o", `-p ${PORT} -c wal_level=logical`,
+        "start",
+      ]);
+    }
+  } else {
+    await pg.start();
+  }
 
   for (const name of ["postgres", "tuplescope_test"]) {
     try {
@@ -75,7 +174,10 @@ async function main(): Promise<void> {
 
   const stop = async (): Promise<void> => {
     try {
-      await pg.stop();
+      // Symmetrical: a server pg_ctl started is not one the library can stop,
+      // because it holds no handle to it.
+      if (VIA_PG_CTL) await pgCtlOrThrow(["-D", dataDir, "-m", "fast", "stop"]);
+      else await pg.stop();
     } finally {
       process.exit(0);
     }
