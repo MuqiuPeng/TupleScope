@@ -77,21 +77,33 @@ function serverBinary(name: string): string {
  */
 const VIA_PG_CTL = process.platform === "win32" || process.env["TESTDB_VIA_PG_CTL"] === "1";
 
-function pgCtl(args: string[]): Promise<number> {
+function pgCtl(args: string[]): Promise<{ code: number; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(serverBinary("pg_ctl"), args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+    let output = "";
+    // Both streams: `pg_ctl` reports a refusal on stderr and its progress on
+    // stdout, and which one carries the sentence that explains a failure
+    // depends on the failure.
+    child.stdout.on("data", (chunk) => (output += String(chunk)));
+    child.stderr.on("data", (chunk) => (output += String(chunk)));
     child.on("error", reject);
-    child.on("close", (code) => resolve(code ?? 1));
-    void stderr;
+    child.on("close", (code) => resolve({ code: code ?? 1, output }));
   });
 }
 
-/** Non-zero is a failure worth the message; `status` uses the code instead. */
+/**
+ * Non-zero is a failure worth the message; `status` reads the code instead.
+ *
+ * The message is the whole point. An earlier version of this captured the
+ * output and threw only the exit code, so the first Windows run reported
+ * `pg_ctl … exited 1` with the reason nowhere — the same shape as the
+ * `[testdb] failed: undefined` this file already had once.
+ */
 async function pgCtlOrThrow(args: string[]): Promise<void> {
-  const code = await pgCtl(args);
-  if (code !== 0) throw new Error(`pg_ctl ${args.join(" ")} exited ${code}`);
+  const { code, output } = await pgCtl(args);
+  if (code !== 0) {
+    throw new Error(`pg_ctl ${args.join(" ")} exited ${code}${output ? `\n${output.trim()}` : ""}`);
+  }
 }
 
 /**
@@ -107,7 +119,7 @@ async function pgCtlOrThrow(args: string[]): Promise<void> {
  * cluster.
  */
 async function alreadyRunning(dir: string): Promise<boolean> {
-  return (await pgCtl(["-D", dir, "status"])) === 0;
+  return (await pgCtl(["-D", dir, "status"])).code === 0;
 }
 
 async function main(): Promise<void> {
@@ -149,13 +161,20 @@ async function main(): Promise<void> {
       // `-w` waits for the server to accept connections, so the readiness line
       // below means what it says. The options mirror what the library would
       // have passed the postmaster.
-      await pgCtlOrThrow([
-        "-D", dataDir,
-        "-w",
-        "-l", path.join(dataDir, "postmaster.log"),
-        "-o", `-p ${PORT} -c wal_level=logical`,
-        "start",
-      ]);
+      const log = path.join(dataDir, "postmaster.log");
+      try {
+        await pgCtlOrThrow([
+          "-D", dataDir, "-w", "-l", log,
+          "-o", `-p ${PORT} -c wal_level=logical`,
+          "start",
+        ]);
+      } catch (error) {
+        // `-l` sends the *server's* output there, so a postmaster that refused
+        // to start says why in that file and nowhere else. Without this the
+        // failure is `pg_ctl … exited 1` over an empty console.
+        const detail = existsSync(log) ? readFileSync(log, "utf8").trim() : "(no postmaster.log)";
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n\n${detail}`);
+      }
     }
   } else {
     await pg.start();

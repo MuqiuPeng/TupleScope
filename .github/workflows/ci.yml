@@ -200,7 +200,12 @@ jobs:
             grep -q 'postgres ready' "$RUNNER_TEMP/db.log" && exit 0
             sleep 2
           done
-          echo "database did not come up:"; cat "$RUNNER_TEMP/db.log"; exit 1
+          echo "database did not come up:"; cat "$RUNNER_TEMP/db.log"
+          # `pg_ctl -l` sends the *server's* output here, so a postmaster that
+          # refused to start says why in this file and nowhere else.
+          echo "--- postmaster.log ---"
+          cat .pgdata/postmaster.log 2>/dev/null || echo "(none written)"
+          exit 1
 
       # The same `wal_level` check the POSIX job makes. A server that came up
       # without it turns twenty-two conformance cases into skips, quietly.
