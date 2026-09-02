@@ -454,10 +454,18 @@ on whatever the reader last looked at, which is worse than no link.
 
 ### It tells you when the rows might not be yours
 
-Before each run it watches an idle window. Background jobs, session sweepers and
-outbox pollers are ordinary in a running dev stack, and rows they write would
-otherwise be blamed on your API. If anything writes during that window, the
-report says so.
+Set `baselineWindowMs` and it watches an idle window before each run. Background
+jobs, session sweepers and outbox pollers are ordinary in a running dev stack,
+and rows they write would otherwise be blamed on your API. If anything writes
+during that window, the report says so — and if the probe did not run, the run
+says *that*, under `bounded by`.
+
+**It is off unless you ask for it.** `tuplescope.example.yaml` sets 400 ms, so a
+workspace started from the template has it and one written from scratch does
+not; `--baseline <ms>` turns it on for a single run. A probe costs that many
+milliseconds per run, which is why it is not the default — but a run without one
+cannot tell your API's writes from anything else's, and says so rather than
+implying it could.
 
 ### It tells you what it was looking at
 

@@ -155,10 +155,12 @@ before the fix.
 
 ## Documentation
 
-- [ ] **27. Known issues omits items 1, 2, 7 and 8.** Having a disclosure section
-  teaches readers to treat it as exhaustive, which makes an omission cost more
-  than it would without one.
-- [ ] **28. The noise probe is not on by default.** README describes it as running
+- [x] **27. Known issues omits items 1, 2, 7 and 8** — resolved by fixing all
+  four rather than disclosing them. Two entries that described now-fixed defects
+  (`--junit -`, `url --all`) were removed at the same time. Six remain; the one
+  about the web UI naming `ECONNREFUSED` is about workspace *load*, which the
+  run-path taxonomy work did not touch, so it still stands.
+- [x] **28. The noise probe is not on by default.** README describes it as running
   before each run; `baselineWindowMs` defaults to 0, so only a workspace copied
   from the template gets it.
 
