@@ -150,6 +150,9 @@ export class SnapshotPostgresAdapter implements DatabaseAdapter {
           ignoreColumns: overrides?.ignoreColumns ?? [],
           maskedColumns: overrides?.maskedColumns ?? this.options.maskColumns ?? [],
           keyStrategy: identities.get(table)!.strategy,
+          // A re-read sees the multiset deficit, so a departure is visible here
+          // even with no key to name the row by.
+          departuresObservable: true,
         })),
       };
     } finally {

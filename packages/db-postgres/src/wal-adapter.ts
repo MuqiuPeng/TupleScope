@@ -155,6 +155,9 @@ export class WalPostgresAdapter implements DatabaseAdapter {
           ignoreColumns: overrides?.ignoreColumns ?? [],
           maskedColumns: overrides?.maskedColumns ?? this.options.maskColumns ?? [],
           keyStrategy: identities.get(table)!.strategy,
+          // The key read is skipped for a keyless table, so a departure from one
+          // leaves no trace in `changes` at all. See net-view.ts.
+          departuresObservable: identities.get(table)!.strategy !== 'full-row-multiset',
         })),
       };
     } finally {

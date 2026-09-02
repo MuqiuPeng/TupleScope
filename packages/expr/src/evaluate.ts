@@ -446,6 +446,84 @@ function guardSelectionQuestion(expr: Expr, changes: ChangeSet, what: string): v
   requireDetection(changes, 'write', `${what} over ${kinds.sort().join(' and ')}`);
 }
 
+/**
+ * Tables whose departures this run could not observe.
+ *
+ * On the MVCC engines a table with no primary key and no unique index has no
+ * key read at all, so a DELETE from it leaves no trace and an UPDATE arrives as
+ * an insert. `deleted(t)` and `updated(t)` are therefore not merely imprecise
+ * there — they are *always empty*, which makes `count(deleted(t)) == 0` and
+ * `isEmpty(updated(t))` pass over any amount of real activity. That is the
+ * shape this tool exists to refuse.
+ *
+ * The remedy is already in the language: name the table in an `except`, or give
+ * it a key. Both are better than an answer nobody can act on.
+ */
+function blindTables(changes: ChangeSet): ReadonlySet<string> {
+  return new Set(
+    changes.scope.tables
+      .filter((t) => t.departuresObservable === false)
+      .map((t) => t.table),
+  );
+}
+
+/** Every table an expression selects, so a guard can check them against the scope. */
+function selectedTables(expr: Expr, into: Set<string> = new Set()): Set<string> {
+  switch (expr.node) {
+    case 'select':
+      if (expr.selector.table) into.add(expr.selector.table);
+      break;
+    case 'column':
+    case 'aggregate':
+    case 'predicate':
+    case 'hasWrite':
+    case 'isEmpty':
+    case 'atomic':
+    case 'writeCount':
+      selectedTables(expr.source, into);
+      break;
+    case 'compare':
+      selectedTables(expr.left, into);
+      selectedTables(expr.right, into);
+      break;
+    default:
+      break;
+  }
+  return into;
+}
+
+/** Selector kinds that are always empty on a table whose departures are invisible. */
+const EMPTY_WITHOUT_ROW_IDENTITY = new Set<SelectorKind>(['updated', 'deleted']);
+
+function guardRowIdentity(expr: Expr, changes: ChangeSet, what: string): void {
+  const blind = blindTables(changes);
+  if (blind.size === 0) return;
+  const kinds = [...selectorKinds(expr)];
+  const named = [...selectedTables(expr)].filter((t) => blind.has(t));
+
+  // A selector that names a blind table explicitly, asking a question whose
+  // answer is structurally empty there.
+  const structurallyEmpty = kinds.filter((k) => EMPTY_WITHOUT_ROW_IDENTITY.has(k));
+  if (named.length > 0 && structurallyEmpty.length > 0) {
+    throw new Unevaluable(
+      `${what} over ${structurallyEmpty.sort().join(' and ')} of \`${named.sort().join('`, `')}\`, ` +
+        `which has no primary key or unique index. This run captured with ` +
+        `\`${changes.captureMethod}\`, which cannot pair a row to its previous version there — ` +
+        `so ${structurallyEmpty.sort().join(' and ')} is empty however much happened. ` +
+        `Give the table a key, or ask about \`changes\` instead.`,
+    );
+  }
+
+  // A whole-scope question (`changes(*)`) over a scope that contains a blind
+  // table is unsound for the same reason — an invisible delete makes the count
+  // a lower bound — but refusing it costs every user with one keyless table the
+  // `changes(*)` form entirely, and the conformance contract asserts
+  // `count(changes(*)) == 0` with a deliberately keyless table in scope.
+  // Left open pending that decision; the run still carries
+  // `degraded-row-identity` for the table, and the CLI already refuses to print
+  // "Nothing was written" beside it.
+}
+
 /** Every selector kind feeding an expression, so a count knows what it is counting. */
 function selectorKinds(expr: Expr, into: Set<SelectorKind> = new Set()): Set<SelectorKind> {
   switch (expr.node) {
@@ -622,6 +700,7 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
           const rows = asSelection(source, 'count');
           requireWholeSet(source, 'count()');
           guardSelectionQuestion(expr.source, ctx.changes, 'counting');
+          guardRowIdentity(expr.source, ctx.changes, 'counting');
           return { kind: 'scalar', value: rows.length };
         }
         case 'single': {
@@ -659,6 +738,7 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
           const rows = asSelection(source, 'any');
           requireWholeSet(source, 'any()');
           guardSelectionQuestion(expr.source, ctx.changes, 'any()');
+          guardRowIdentity(expr.source, ctx.changes, 'any()');
           return { kind: 'scalar', value: rows.length > 0 };
         }
       }
@@ -673,6 +753,7 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
       // claim from the one the assertion makes.
       requireWholeSet(evaluated, 'hasWrite()');
       requireDetection(ctx.changes, 'write', 'hasWrite');
+      guardRowIdentity(expr.source, ctx.changes, 'hasWrite()');
       return { kind: 'scalar', value: rows.some((c) => c.hasWrite) };
     }
 
@@ -681,6 +762,7 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
       const rows = asSelection(evaluated, 'isEmpty');
       requireWholeSet(evaluated, 'isEmpty()');
       guardSelectionQuestion(expr.source, ctx.changes, 'isEmpty()');
+      guardRowIdentity(expr.source, ctx.changes, 'isEmpty()');
       return { kind: 'scalar', value: rows.length === 0 };
     }
 

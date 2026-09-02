@@ -95,6 +95,23 @@ export interface TableScope {
   /** Columns whose values are redacted before they leave the adapter. */
   maskedColumns: ReadonlyArray<string>;
   keyStrategy: KeyStrategy;
+  /**
+   * Whether a row leaving this table can be observed at all, on the engine that
+   * produced this run.
+   *
+   * Not derivable from `keyStrategy`, which is why it is its own field: all
+   * three engines report `full-row-multiset` for a table with no primary key
+   * and no unique index, and then behave differently. The MVCC engines skip
+   * such a table's key read entirely, so a DELETE leaves no trace anywhere in
+   * `changes`; snapshot-diff re-reads the table and sees the multiset deficit,
+   * so the same DELETE is reported. `updated` is lost with it — a change to a
+   * keyless row is reported as an insert, because there is no previous version
+   * to pair it against.
+   *
+   * Absent means observable, so a run stored before this field existed keeps its
+   * meaning rather than acquiring a refusal it never had.
+   */
+  departuresObservable?: boolean;
 }
 
 /**

@@ -870,3 +870,84 @@ describe('changes(* except …)', () => {
     assert.throws(() => parse('count(changes(* except)) == 0'), /expected a table name/);
   });
 });
+
+/**
+ * A table with no key, and the questions that are empty there whatever happened.
+ *
+ * The MVCC engines skip the key read for a table with no primary key and no
+ * unique index, so a DELETE from it leaves no trace anywhere in `changes` and an
+ * UPDATE arrives as an insert. `count(deleted(t)) == 0` and
+ * `isEmpty(updated(t))` therefore pass over any amount of real activity — not
+ * imprecisely, but structurally, every time.
+ *
+ * `keyStrategy` alone cannot express this: all three engines report
+ * `full-row-multiset` for such a table and then behave differently, because
+ * snapshot-diff re-reads and sees the multiset deficit. Hence a separate axis,
+ * declared by the engine rather than inferred from the schema.
+ */
+describe('a table whose departures cannot be observed', () => {
+  const base = changeSet([]);
+  const scopeWith = (departuresObservable: boolean): ChangeSet => ({
+    ...base,
+    // Write detection either way: this is about row identity, not about the
+    // detection axis, and sharing a captureMethod with the axis would make the
+    // test pass for the wrong reason.
+    captureMethod: departuresObservable ? 'snapshot-diff' : 'mvcc-xmin',
+    scope: {
+      ...base.scope,
+      allTables: true,
+      tables: [
+        { table: 'wallets', ignoreColumns: [], maskedColumns: [], keyStrategy: 'primary-key' },
+        {
+          table: 'audit_log',
+          ignoreColumns: [],
+          maskedColumns: [],
+          keyStrategy: 'full-row-multiset',
+          departuresObservable,
+        },
+      ],
+    },
+  });
+
+  const ask = (source: string, departuresObservable = false): 'answered' | string => {
+    try {
+      evaluateAssertion(parse(source), {
+        changes: scopeWith(departuresObservable),
+        variables: {},
+      });
+      return 'answered';
+    } catch (error) {
+      return error instanceof Unevaluable ? error.message : `threw ${String(error)}`;
+    }
+  };
+
+  for (const source of [
+    'count(deleted(audit_log)) == 0',
+    'isEmpty(deleted(audit_log))',
+    'isEmpty(updated(audit_log))',
+    'any(updated(audit_log))',
+  ]) {
+    it(`refuses \`${source}\`, which is empty however much happened`, () => {
+      assert.match(ask(source), /no primary key or unique index/);
+      // The same question is answerable on an engine that re-reads the table.
+      assert.equal(ask(source, true), 'answered', 'snapshot-diff can see a departure');
+    });
+  }
+
+
+  it('still answers about a keyed table in the same scope', () => {
+    // The refusal is about the table that cannot be read, not about the run.
+    assert.equal(ask('count(deleted(wallets)) == 0'), 'answered');
+  });
+
+  it('still answers about inserts into the keyless table, which are reported', () => {
+    // A change there arrives as an insert. That is a real observation and is not
+    // what this guard is about — over-refusing would cost the one question the
+    // engine can still answer.
+    assert.equal(ask('count(inserted(audit_log)) == 0'), 'answered');
+  });
+
+  it('answers a whole-scope claim once the blind table is excluded', () => {
+    assert.equal(ask('hasWrite(changes(* except audit_log)) == false'), 'answered');
+  });
+});
