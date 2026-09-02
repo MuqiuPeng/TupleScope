@@ -70,6 +70,36 @@ export interface ScopeReport {
   foreignTables: ReadonlyArray<string>;
 }
 
+/**
+ * Filter columns that match nothing, which therefore filter nothing.
+ *
+ * `maskColumns` and `ignoreColumns` are bare column names applied across every
+ * watched table, so a misspelled one is accepted, resolves to nothing, and does
+ * nothing — silently. For `ignoreColumns` that is noise. For `maskColumns` it is
+ * the column being captured in the clear into run history, `--json` and CI
+ * reports, which is exactly what the setting exists to prevent, and the reader
+ * has no way to tell that from a run where the column simply never appeared.
+ *
+ * Same shape as the `except` check: a filter that resolves to nothing filters
+ * nothing, and until now said so nowhere.
+ */
+export function unresolvedFilterColumns(
+  config: { maskColumns?: ReadonlyArray<string>; ignoreColumns?: ReadonlyArray<string> },
+  everyColumn: ReadonlySet<string>,
+): string[] {
+  const out: string[] = [];
+  for (const key of ['maskColumns', 'ignoreColumns'] as const) {
+    for (const column of config[key] ?? []) {
+      if (everyColumn.has(column)) continue;
+      out.push(
+        `  ${key}  \`${column}\` is not a column of any watched table, so nothing is ` +
+          `${key === 'maskColumns' ? 'masked' : 'ignored'} by it`,
+      );
+    }
+  }
+  return out;
+}
+
 export function renderScope(style: Style, scope: ScopeReport, indent = '            '): string[] {
   const out: string[] = [];
   const gaps: string[] = [];

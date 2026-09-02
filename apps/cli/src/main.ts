@@ -42,7 +42,13 @@ import {
 import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
 import { exceptedTablesIn, parse, predicateColumnsIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
-import { renderRun, renderWorkspaceLine, renderScope, styleFor } from './output.js';
+import {
+  renderRun,
+  renderWorkspaceLine,
+  renderScope,
+  styleFor,
+  unresolvedFilterColumns,
+} from './output.js';
 import {
   DEFAULT_CONTEXT,
   SecretNotConfigured,
@@ -560,6 +566,9 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     const problems: string[] = [];
     let assertions = 0;
     let unchecked = 0;
+
+    const everyColumn = new Set([...columns.values()].flatMap((set) => [...set]));
+    problems.push(...unresolvedFilterColumns(session.config, everyColumn));
 
     for (const { scenario, dataset } of selected) {
       for (const step of dataset.steps) {
