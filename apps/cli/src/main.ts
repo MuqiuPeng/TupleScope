@@ -40,8 +40,12 @@ import {
   secretsReferencedBy,
   type ResolvedWorkspaceConfig,
 } from '@tuplescope/workspace';
-import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
-import { exceptedTablesIn, parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
+import {
+  addAssertion,
+  auditScenarios,
+  formatProblem,
+  ScenarioLoadError,
+} from '@tuplescope/scenario-engine';
 import { listSessions } from './sessions.js';
 import {
   renderRun,
@@ -600,81 +604,13 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     const known = new Set(tables);
     const problems: string[] = [];
     let assertions = 0;
-    let unchecked = 0;
 
     const everyColumn = new Set([...columns.values()].flatMap((set) => [...set]));
     problems.push(...unresolvedFilterColumns(session.config, everyColumn));
 
-    for (const { scenario, dataset } of selected) {
-      for (const step of dataset.steps) {
-        const list = step.assert ?? [];
-        assertions += list.length;
-        if (list.length === 0) {
-          unchecked++;
-          problems.push(
-            `  ${scenario.id}/${dataset.id}/${step.id}  checks nothing — it will be observed and verified by no one`,
-          );
-        }
-        // No check here for "a negative assertion with no declared status": the
-        // engine now treats a missing expectStatus as "a success is expected",
-        // so a 4xx fails the step outright. Repeating it here only produced a
-        // false positive on every step that declared its status as an
-        // assertion rather than as expectStatus, which is the commoner spelling.
-        for (const assertion of list) {
-          // Parsed, not pattern-matched. The regex this replaced could only see
-          // an identifier in a selector's first argument, so the bare-table
-          // shorthand — `sum(delta(walets.balance))`, which is exactly what
-          // `promote` emits — carried a misspelling straight past the command
-          // whose job is catching them.
-          let parsed;
-          try {
-            parsed = parse(assertion);
-          } catch {
-            // Unparseable: `run` says so in its own words, with position.
-            continue;
-          }
-          const missing = [...tablesNamedIn(parsed)].filter((t) => !known.has(t));
-          for (const table of missing) {
-            problems.push(
-              `  ${scenario.id}/${dataset.id}/${step.id}  names table \`${table}\`, which is not in this database`,
-            );
-          }
-          // The columns inside a predicate, which the evaluator resolves only
-          // when it has a row to resolve them against. On a step that writes
-          // nothing it never gets one, so `count(inserted(t).where(nmae = "x"))
-          // == 0` is green for as long as the typo lives — and that is the
-          // shape of a "must not write twice" guard, the assertion this tool
-          // exists to make. Here is the one place with a connection and no
-          // rows to depend on.
-          let named: Array<{ table: string; column: string }>;
-          try {
-            named = predicateColumnsIn(parse(assertion));
-          } catch {
-            // Unparseable: `run` will say so in its own words, with position.
-            named = [];
-          }
-          // `except` names are not tables the assertion selects, so
-          // `tablesNamedIn` does not report them. One that resolves to nothing
-          // excludes nothing, silently widening the assertion.
-          for (const excluded of exceptedTablesIn(parse(assertion))) {
-            if (known.has(excluded)) continue;
-            problems.push(
-              `  ${scenario.id}/${dataset.id}/${step.id}  excepts \`${excluded}\`, ` +
-                `which is not a table here — so it excludes nothing`,
-            );
-          }
-          for (const { table, column } of named) {
-            const have = columns.get(table);
-            // An unknown table is already reported above; do not say it twice.
-            if (!have || have.has(column)) continue;
-            problems.push(
-              `  ${scenario.id}/${dataset.id}/${step.id}  matches on \`${table}.${column}\`, ` +
-                `which is not a column of \`${table}\``,
-            );
-          }
-        }
-      }
-    }
+    const audit = auditScenarios(selected, { tables: known, columns });
+    assertions = audit.assertions;
+    problems.push(...audit.problems.map((p) => formatProblem(p, '  ')));
 
     const out = [
       `tuplescope · ${session.config.name}`,

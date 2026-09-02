@@ -156,7 +156,10 @@ before the fix.
   covered, the page is not.
 - [ ] **25. The Windows and Linux secret backends have no test files**, and CI has
   no Windows runner. The README table's "yes" is stronger than the evidence.
-- [ ] **26. `apps/mcp` has one test file**, covering handshake prose only.
+- [x] **26. `apps/mcp` has one test file**, covering handshake prose only — the
+  check logic it shares with the CLI now lives in `@tuplescope/scenario-engine`
+  with 11 tests of its own, and the server was driven over stdio to confirm the
+  tool reports through them.
 
 ---
 

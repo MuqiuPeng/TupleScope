@@ -29,8 +29,12 @@ import {
   type VerdictPolicy,
 } from '@tuplescope/core';
 import { buildEnvelope } from '@tuplescope/report';
-import { addAssertion, loadScenario } from '@tuplescope/scenario-engine';
-import { exceptedTablesIn, parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
+import {
+  addAssertion,
+  auditScenarios,
+  formatProblem,
+  loadScenario,
+} from '@tuplescope/scenario-engine';
 import {
   loadWorkspaceConfig,
   openWorkspace,
@@ -270,56 +274,16 @@ server.registerTool(
       const loaded = (await s.scenarios()).filter(
         (entry) => !scenarioId || entry.scenario.id === scenarioId,
       );
-      const problems: string[] = [];
-      let assertions = 0;
-
-      for (const { scenario } of loaded) {
-        for (const dataset of scenario.datasets) {
-          for (const step of dataset.steps) {
-            const list = step.assert ?? [];
-            assertions += list.length;
-            if (list.length === 0) {
-              problems.push(
-                `${scenario.id}/${dataset.id}/${step.id} checks nothing — it will be observed and verified by no one`,
-              );
-            }
-            for (const assertion of list) {
-              let parsed;
-              try {
-                parsed = parse(assertion);
-              } catch {
-                // Unparseable: `run_scenario` says so with a position.
-                continue;
-              }
-              for (const table of tablesNamedIn(parsed)) {
-                if (!known.has(table)) {
-                  problems.push(
-                    `${scenario.id}/${dataset.id}/${step.id} names table \`${table}\`, which is not in this database`,
-                  );
-                }
-              }
-              // An `except` that resolves to nothing excludes nothing, silently
-              // widening the assertion it was meant to narrow.
-              for (const excluded of exceptedTablesIn(parsed)) {
-                if (known.has(excluded)) continue;
-                problems.push(
-                  `${scenario.id}/${dataset.id}/${step.id} excepts \`${excluded}\`, which is not a table here — so it excludes nothing`,
-                );
-              }
-              // The columns the evaluator only resolves when it has a row, which
-              // a no-write step never gives it — the shape of every "must not
-              // write twice" guard.
-              for (const { table, column } of predicateColumnsIn(parsed)) {
-                const have = columns.get(table);
-                if (!have || have.has(column)) continue;
-                problems.push(
-                  `${scenario.id}/${dataset.id}/${step.id} matches on \`${table}.${column}\`, which is not a column of \`${table}\``,
-                );
-              }
-            }
-          }
-        }
-      }
+      const selected = loaded.flatMap(({ scenario }) =>
+        scenario.datasets.map((dataset) => ({ scenario, dataset })),
+      );
+      // The same function `tuplescope check` calls. These were two
+      // implementations describing themselves identically and doing different
+      // work, which is how this one came to validate no predicate columns and
+      // no `except` names.
+      const audit = auditScenarios(selected, { tables: known, columns });
+      const problems = audit.problems.map((p) => formatProblem(p));
+      const assertions = audit.assertions;
 
       // A green check over nothing asserted is the failure this tool exists to
       // prevent, and it used to hand back an unconditional all-clear for a

@@ -610,3 +610,4 @@ function secretReferences(request: unknown): string[] {
 export * from './load.js';
 export * from './promote.js';
 export * from './save.js';
+export * from './audit.js';
