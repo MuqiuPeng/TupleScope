@@ -165,17 +165,23 @@ before the fix.
   already uses.
 
 - [~] **25. The Windows and Linux secret backends have no test files.** Windows
-  now has one for its wire format — the part testable from a Mac — and it found
-  no bug: the `.trim()` that would have corrupted a trailing-whitespace value is
-  unreachable because everything crossing that channel is base64. Linux needs
-  none of the same kind; it envelopes through the shared `unwrap`, which is
-  already covered. **Still open:** neither store is exercised anywhere, and CI
-  still has no Windows runner, so the README table's "yes" for Linux rests on one
-  container run and Windows' "no" is the only honest cell in it.
-- [x] **26. `apps/mcp` has one test file**, covering handshake prose only — the
-  check logic it shares with the CLI now lives in `@tuplescope/scenario-engine`
-  with 11 tests of its own, and the server was driven over stdio to confirm the
-  tool reports through them.
+  now has one, and writing it found that the backend **had never compiled**: the
+  PowerShell shim passed its C# through an expandable here-string and joined
+  with `` `n ``, PowerShell's newline escape where C#'s `\n` was meant, so
+  `Add-Type` failed as a unit and `probe()` reported the store unavailable on
+  every Windows machine there has ever been (`946ead1`). Fixed, and pinned by
+  four tests that check the *boundary* rather than the runner — the one thing
+  about this backend decidable from a Mac. Three more Windows-only defects fixed
+  with it: the unchecked `CredWrite` ceiling, `URL.pathname` used as a filesystem
+  path in two tests, and `testdb.ts` swallowing every `initialise()` failure.
+
+  **Still open, and now measurable:** whether the shim compiles *on a runner*,
+  whether the session has a credential set, and whether the embedded PostgreSQL
+  starts under an administrator token. Five separate audits all returned "cannot
+  tell from a Mac", so `.github/workflows/windows-probe.yml` asks the runner
+  instead. It needs a manual dispatch from someone with admin rights; its answers
+  decide whether a `windows-latest` matrix row is worth writing or whether
+  `pnpm testdb` needs a different launcher first.
 
 ---
 
