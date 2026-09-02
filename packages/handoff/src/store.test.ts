@@ -146,9 +146,14 @@ describe('writing', () => {
   it('refuses to write a binding the reader would refuse', async () => {
     // The test above only proves a *valid* config survives the trip, which is
     // the easy half. This is the half that matters: the writer accepted
-    // anything it was handed, so `handoff enable` on Windows — where an
-    // absolute psql path is `C:\\...`, not `/...` — wrote a file that the
-    // loader then refused.
+    // anything it was handed, so it could write a file the loader then refused.
+    //
+    // The example used to be `C:\\Program Files\\psql.exe`, from the original
+    // report — `handoff enable` on Windows wrote an absolute path the
+    // POSIX-shaped validator rejected. That is fixed at the root now, the
+    // validator asks `isAbsolute`, and on Windows that path is accepted. So
+    // this test needs a shape refused everywhere, or it proves nothing on the
+    // platform it was written for. A relative path is that shape.
     const p = join(dir, 'refused.json');
     await assert.rejects(
       () =>
@@ -159,8 +164,8 @@ describe('writing', () => {
               db: {
                 preset: 'psql-service',
                 service: 'x',
-                executable: 'C:\\Program Files\\psql.exe',
-                realpath: 'C:\\Program Files\\psql.exe',
+                executable: 'psql',
+                realpath: 'usr/bin/psql',
                 grants: [],
               },
             },
