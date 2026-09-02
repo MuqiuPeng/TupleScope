@@ -152,13 +152,18 @@ before the fix.
 
 ## P3 — coverage
 
-- [~] **24. `apps/web` has no client-side tests.** The three pure functions
-  behind the sentences printed next to a control — `expectedStatus`,
-  `dependenciesFor`, `assertionRank` — are extracted into `steps.js` with 16
-  tests, joining `runs.js` and `api-error.js`. **Still open:** the rendering
-  itself. Every `render*` function builds DOM directly and none is covered; that
-  needs either a DOM shim or a further extraction of the view models, and is a
-  bigger decision than this.
+- [x] **24. `apps/web` has no client-side tests** — and the one that mattered
+  most found a real divergence. The page derived its own run verdict from
+  assertion statuses and never looked at capture warnings, so a run with every
+  assertion passing and a `scope-truncated` warning showed a green dot while
+  `tuplescope run` called it undecided and exited 3. The verdict is now computed
+  once, by `verdictOf`, and sent with the run; the page reads it and says so when
+  a payload does not carry one. Five page modules now have tests — `runs.js`,
+  `api-error.js`, `steps.js`, `chart.js`, `verdict.js`. *Left deliberately:* the
+  `render*` functions build DOM directly and are still uncovered; the decisions
+  inside them have been moved out instead, which is the shape this codebase
+  already uses.
+
 - [~] **25. The Windows and Linux secret backends have no test files.** Windows
   now has one for its wire format — the part testable from a Mac — and it found
   no bug: the `.trim()` that would have corrupted a trailing-whitespace value is

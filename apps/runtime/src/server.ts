@@ -22,6 +22,7 @@ import {
   openWorkspace,
   } from '@tuplescope/workspace';
 import type { Run, Scenario } from '@tuplescope/core';
+import { outcomeOfStep, verdictOf } from '@tuplescope/core';
 import { createGuard, mintToken, SECURITY_HEADERS } from './security.js';
 import { removeSession, writeSession } from './session.js';
 import { withRequestOverrides } from './request-overrides.js';
@@ -108,10 +109,25 @@ async function main(): Promise<void> {
   // Panels ride with the run rather than being a route of their own: they are a
   // view of *this* run's observations, and fetching them separately would let
   // the page draw one run's chart beside another run's diff.
-  const decorate = (run: Run): unknown => ({
-    ...(withHandoffs(run) as object),
-    panels: panelsFor(run, config.panels),
-  });
+  const decorate = (run: Run): unknown => {
+    const decorated = withHandoffs(run) as { steps: Array<Record<string, unknown>> };
+    return {
+      ...decorated,
+      // The verdict, computed once, by the same function the CLI and the exit
+      // code use. The page used to derive its own, and the two disagreed: the
+      // page's rule looked only at assertion statuses, so a run with every
+      // assertion passing and a `scope-truncated` warning showed a green dot
+      // while `tuplescope run` called it undecided and exited 3. A second
+      // implementation of the verdict is the one thing this product cannot
+      // afford to have.
+      verdict: verdictOf(run),
+      steps: decorated.steps.map((step, index) => ({
+        ...step,
+        outcome: outcomeOfStep(run.steps[index]!),
+      })),
+      panels: panelsFor(run, config.panels),
+    };
+  };
 
   app.get('/api/runs', async () => runs.slice(-20).reverse().map(decorate));
 

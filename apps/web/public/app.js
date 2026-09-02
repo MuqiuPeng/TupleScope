@@ -890,7 +890,21 @@ function renderStory() {
     return;
   }
   const verdict = state.running ? 'running' : runVerdict(state.run);
-  summary.append(el('span', `status-dot ${verdict}`), el('strong', null, state.running ? 'Observing the run' : `Run ${verdict}`));
+  summary.append(
+    el('span', `status-dot ${verdict}`),
+    el(
+      'strong',
+      null,
+      state.running
+        ? 'Observing the run'
+        : // `unknown` is not a verdict this run has — it is one this payload did
+          // not carry, which happens with a run stored before the runtime sent
+          // one. "Run unknown" reads as a state of the run; this does not.
+          verdict === 'unknown'
+          ? 'No verdict recorded for this run'
+          : `Run ${verdict}`,
+    ),
+  );
   const signals = collectSignals(state.run);
   const card = el('div', `story-card ${verdict}`);
 
@@ -1229,21 +1243,12 @@ function collectSignals(run) {
   return result;
 }
 
-function runVerdict(run) {
-  if (run.status === 'errored') return 'errored';
-  if (run.status === 'failed' || run.steps.some((step) => step.assertions.some((item) => item.status === 'failed'))) return 'failed';
-  if (run.steps.some((step) => step.assertions.some((item) => item.status === 'unevaluable'))) return 'undecided';
-  return 'clean';
-}
-
-function stepVerdict(step) {
-  if (step.status === 'errored') return 'errored';
-  if (step.status === 'failed' || step.assertions.some((item) => item.status === 'failed')) return 'failed';
-  if (step.assertions.some((item) => item.status === 'unevaluable')) return 'undecided';
-  return 'clean';
-}
-
-function statusLabel(status) { return ({ pending: 'Ready', running: 'Running', clean: 'Passed', failed: 'Failed', undecided: 'Review', errored: 'Error' })[status] ?? status; }
+// `runVerdict`, `stepVerdict` and `statusLabel` live in verdict.js. They used
+// to be worked out here from assertion statuses alone, which made this page a
+// second implementation of the product's central judgement — and it disagreed
+// with the first: a run with every assertion passing and a `scope-truncated`
+// warning showed a green dot while `tuplescope run` exited 3. The page reads
+// the verdict now; it does not compute one.
 function storyHeadline(verdict, signals) {
   if (verdict === 'running') return 'The system is changing under observation.';
   if (verdict === 'errored') return 'The behavior stopped before its story completed.';

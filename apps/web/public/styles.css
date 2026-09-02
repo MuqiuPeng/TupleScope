@@ -107,6 +107,9 @@ code, pre { font-family: var(--mono); }
 .status-dot.errored { background: var(--errored); }
 .status-dot.undecided { background: var(--review); }
 .status-dot.ready { background: var(--accent); }
+/* Not a verdict the run has — one the payload did not carry. Hollow, so it
+   cannot be mistaken for any of the four that mean something. */
+.status-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
 .progress-track { height: 2px; overflow: hidden; background: var(--rule); }
 .progress-bar { display: block; height: 100%; background: var(--accent); transition: width .2s ease; }
 .progress-bar.failed { background: var(--failed); }
