@@ -207,7 +207,7 @@ describe('mintToken', () => {
 
 describe('SECURITY_HEADERS', () => {
   const csp = SECURITY_HEADERS['content-security-policy']!;
-  const directive = (name) =>
+  const directive = (name: string): string | undefined =>
     csp.split('; ').find((part) => part.startsWith(`${name} `) || part === name);
 
   it('closes by default, so a directive nobody thought of is denied', () => {
