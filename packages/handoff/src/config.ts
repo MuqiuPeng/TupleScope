@@ -12,6 +12,8 @@
  * to are all decided here, by the person at the keyboard, and nowhere else.
  */
 
+import { isAbsolute } from 'node:path';
+
 export const HANDOFF_CONFIG_VERSION = 1;
 
 /**
@@ -194,6 +196,27 @@ export function parseHandoffConfig(
   }
   return { v: 1, bindings };
 }
+/**
+ * An absolute path, on the platform this is running on.
+ *
+ * The test was `startsWith('/')`, which is what a POSIX absolute path looks
+ * like and is not what a Windows one looks like. `D:\a\project` fails it, so
+ * `handoff enable` wrote a grant the loader then refused as malformed, and the
+ * feature could not work on Windows at all.
+ *
+ * This file had already been bitten by the same assumption once, for
+ * `executable` — `store.test.ts` carries the note about a Windows psql path
+ * being `C:\...` and the writer accepting what the reader would reject. The fix
+ * then was to validate at write time; it should have been to stop asking a
+ * POSIX question. `isAbsolute` is what all three checks should always have used.
+ *
+ * A UNC path is absolute to `isAbsolute` and stays allowed: a workspace on a
+ * network share is a real thing, and refusing it here would be a new
+ * restriction dressed as a portability fix.
+ */
+const absolute = (value: unknown): value is string =>
+  typeof value === 'string' && value !== '' && isAbsolute(value);
+
 
 function parseBinding(alias: string, value: unknown, allowRemote: boolean): Binding {
   if (typeof value !== 'object' || value === null) {
@@ -217,12 +240,12 @@ function parseBinding(alias: string, value: unknown, allowRemote: boolean): Bind
     case 'psql-service': {
       const executable = b['executable'];
       const realpath = b['realpath'];
-      if (typeof executable !== 'string' || !executable.startsWith('/')) {
+      if (!absolute(executable)) {
         throw new HandoffConfigError(
           `\`${alias}.executable\` must be an absolute path resolved at enable time.`,
         );
       }
-      if (typeof realpath !== 'string' || !realpath.startsWith('/')) {
+      if (!absolute(realpath)) {
         throw new HandoffConfigError(`\`${alias}.realpath\` must be an absolute path.`);
       }
       return {
@@ -249,7 +272,7 @@ function parseGrants(alias: string, raw: unknown): WorkspaceGrant[] {
       throw new HandoffConfigError(`\`${alias}.grants[${i}]\` is not an object.`);
     }
     const g = entry as Record<string, unknown>;
-    if (typeof g['workspace'] !== 'string' || !g['workspace'].startsWith('/')) {
+    if (!absolute(g['workspace'])) {
       throw new HandoffConfigError(`\`${alias}.grants[${i}].workspace\` must be an absolute path.`);
     }
     return {

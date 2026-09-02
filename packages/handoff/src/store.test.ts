@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { OWNER_ONLY_BASIS, OWNER_ONLY_MODE_IS_ENFORCED } from '@tuplescope/core';
 import {
@@ -86,6 +86,61 @@ describe('writing', () => {
     await saveHandoffConfig({ v: 1, bindings: { adminer: binding } }, path());
     const read = await loadHandoffConfig(path());
     assert.deepEqual(read.bindings['adminer'], binding);
+  });
+
+
+  it('accepts a Windows absolute path, which is not a POSIX one', async () => {
+    // The check was `startsWith('/')`. `D:\a\project` fails that, so every
+    // grant written on Windows was refused by the loader as malformed and the
+    // feature could not work there at all — found by the Windows CI leg, on its
+    // first run, in `handoff enable`.
+    //
+    // Asserted on every platform because `isAbsolute` is platform-dependent and
+    // this is about the *shape* the validator accepts: on POSIX a backslash
+    // path is not absolute and must still be refused, which is the other half
+    // of the same rule.
+    const windowsPath = 'D:\\a\\project';
+    const p = join(dir, 'abs.json');
+    const withGrantAt = {
+      v: 1 as const,
+      bindings: {
+        adminer: {
+          ...binding,
+          grants: [
+            {
+              workspace: isAbsolute(windowsPath) ? windowsPath : '/home/me/project',
+              approvedAt: 'now',
+              approvedBy: 'me',
+              policyVersion: HANDOFF_POLICY_VERSION,
+            },
+          ],
+        },
+      },
+    };
+    await saveHandoffConfig(withGrantAt, p);
+    const read = await loadHandoffConfig(p);
+    assert.equal(read.bindings['adminer']!.grants.length, 1);
+  });
+
+  it('still refuses a relative path', async () => {
+    await assert.rejects(
+      () =>
+        saveHandoffConfig(
+          {
+            v: 1,
+            bindings: {
+              adminer: {
+                ...binding,
+                grants: [
+                  { workspace: 'not/absolute', approvedAt: 'n', approvedBy: 'm', policyVersion: HANDOFF_POLICY_VERSION },
+                ],
+              },
+            },
+          } as never,
+          join(dir, 'rel.json'),
+        ),
+      HandoffConfigError,
+    );
   });
 
   it('refuses to write a binding the reader would refuse', async () => {
