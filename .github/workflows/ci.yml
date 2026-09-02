@@ -118,6 +118,7 @@ jobs:
           fi
 
           test "$total" -ge 560
+          test "$failed" -eq 0
 
       # The front page claims `pnpm demo` prints the diff at the top of it. A
       # claim about a command is worth exactly as much as a run of that command,
@@ -138,7 +139,6 @@ jobs:
             grep -q "$table" "$RUNNER_TEMP/demo.log" || {
               echo "the demo no longer touches $table, which the README's diff shows"; exit 1; }
           done
-          test "$failed" -eq 0
 
   # Windows, without a database — because it measurably cannot have one.
   #
