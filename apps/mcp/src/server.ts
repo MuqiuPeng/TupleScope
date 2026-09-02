@@ -30,6 +30,7 @@ import {
 } from '@tuplescope/core';
 import { buildEnvelope } from '@tuplescope/report';
 import { addAssertion, loadScenario } from '@tuplescope/scenario-engine';
+import { exceptedTablesIn, parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
 import {
   loadWorkspaceConfig,
   openWorkspace,
@@ -260,7 +261,11 @@ server.registerTool(
   async ({ scenarioId }) =>
     guarded(async () => {
       const s = await workspace();
-      const { tables } = await s.preflight();
+      // `columns` too. Destructuring only `tables` was the whole reason this
+      // tool was weaker than `tuplescope check`: it could see a misspelled
+      // table and not a misspelled predicate column, which is the one that
+      // stays green forever.
+      const { tables, columns } = await s.preflight();
       const known = new Set(tables);
       const loaded = (await s.scenarios()).filter(
         (entry) => !scenarioId || entry.scenario.id === scenarioId,
@@ -279,32 +284,66 @@ server.registerTool(
               );
             }
             for (const assertion of list) {
-              for (const table of tablesNamedIn(assertion)) {
+              let parsed;
+              try {
+                parsed = parse(assertion);
+              } catch {
+                // Unparseable: `run_scenario` says so with a position.
+                continue;
+              }
+              for (const table of tablesNamedIn(parsed)) {
                 if (!known.has(table)) {
                   problems.push(
                     `${scenario.id}/${dataset.id}/${step.id} names table \`${table}\`, which is not in this database`,
                   );
                 }
               }
+              // An `except` that resolves to nothing excludes nothing, silently
+              // widening the assertion it was meant to narrow.
+              for (const excluded of exceptedTablesIn(parsed)) {
+                if (known.has(excluded)) continue;
+                problems.push(
+                  `${scenario.id}/${dataset.id}/${step.id} excepts \`${excluded}\`, which is not a table here — so it excludes nothing`,
+                );
+              }
+              // The columns the evaluator only resolves when it has a row, which
+              // a no-write step never gives it — the shape of every "must not
+              // write twice" guard.
+              for (const { table, column } of predicateColumnsIn(parsed)) {
+                const have = columns.get(table);
+                if (!have || have.has(column)) continue;
+                problems.push(
+                  `${scenario.id}/${dataset.id}/${step.id} matches on \`${table}.${column}\`, which is not a column of \`${table}\``,
+                );
+              }
             }
           }
         }
       }
 
-      return ok(
-        problems.length === 0
-          ? `${loaded.length} scenario(s), ${assertions} assertions. Nothing here would fail for a reason other than the system under test.`
-          : `${loaded.length} scenario(s), ${assertions} assertions.\n\nProblems:\n${problems
+      // A green check over nothing asserted is the failure this tool exists to
+      // prevent, and it used to hand back an unconditional all-clear for a
+      // scenarioId that matched no file. The CLI refuses the same shape and
+      // exits 3.
+      if (problems.length === 0 && assertions === 0) {
+        return fail(
+          `${loaded.length} scenario(s) selected, and not one assertion between them. ` +
+            'A green check over nothing asserted is the failure this command exists to prevent.',
+        );
+      }
+      // A problem list is an error result, not a success that happens to
+      // contain bad news. The caller here is an agent, and one that reads only
+      // `isError` was told everything was fine.
+      const summary = `${loaded.length} scenario(s), ${assertions} assertions.`;
+      return problems.length === 0
+        ? ok(`${summary} Nothing here would fail for a reason other than the system under test.`)
+        : fail(
+            `${summary}\n\nProblems:\n${problems
               .map((p) => `  · ${p}`)
               .join('\n')}\n\nThese would not fail loudly at run time; fix them before relying on the result.`,
-      );
+          );
     }),
 );
-
-const SELECTORS = /\b(?:changes|inserted|updated|deleted|rows)\(\s*([A-Za-z_][A-Za-z0-9_]*)/g;
-const RESERVED = new Set(['response', 'true', 'false', 'null']);
-const tablesNamedIn = (source: string): string[] =>
-  [...source.matchAll(SELECTORS)].map((m) => m[1]!).filter((name) => !RESERVED.has(name));
 
 server.registerTool(
   'run_scenario',

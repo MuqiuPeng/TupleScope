@@ -8,6 +8,7 @@ import {
   predicateClauses,
   predicateColumnsIn,
   valuesEqual,
+  tablesNamedIn,
 } from './evaluate.js';
 import { textIfVisible, visible } from '@tuplescope/core';
 
@@ -949,5 +950,36 @@ describe('a table whose departures cannot be observed', () => {
 
   it('answers a whole-scope claim once the blind table is excluded', () => {
     assert.equal(ask('hasWrite(changes(* except audit_log)) == false'), 'answered');
+  });
+});
+
+describe('tablesNamedIn', () => {
+  const named = (source: string): string[] => [...tablesNamedIn(parse(source))].sort();
+
+  it('finds a table in a selector, as the old regex did', () => {
+    assert.deepEqual(named('count(inserted(ledger_entries)) == 1'), ['ledger_entries']);
+  });
+
+  it('finds one behind the bare-table shorthand, which the regex could not', () => {
+    // `sum(delta(wallets.balance))` carries no `changes(` for a regex to anchor
+    // on — the shorthand becomes a `changes` selector during parsing. This is
+    // the form `promote` generates, so the blind spot fell exactly on the
+    // assertions nobody writes by hand.
+    assert.deepEqual(named('sum(delta(wallets.balance)) == "0.00"'), ['wallets']);
+  });
+
+  it('finds every table in a comparison of two selectors', () => {
+    assert.deepEqual(
+      named('count(inserted(refunds)) == count(inserted(payments))'),
+      ['payments', 'refunds'],
+    );
+  });
+
+  it('finds one through a predicate and a column read', () => {
+    assert.deepEqual(named('after(single(updated(stock, sku = "X")).on_hand) == "1"'), ['stock']);
+  });
+
+  it('names nothing for a whole-scope selector, which has no table to name', () => {
+    assert.deepEqual(named('hasWrite(changes(*)) == false'), []);
   });
 });

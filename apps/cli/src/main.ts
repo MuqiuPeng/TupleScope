@@ -40,7 +40,7 @@ import {
   secretsReferencedBy,
 } from '@tuplescope/workspace';
 import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
-import { exceptedTablesIn, parse, predicateColumnsIn } from '@tuplescope/expr';
+import { exceptedTablesIn, parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import {
   renderRun,
@@ -586,7 +586,19 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
         // false positive on every step that declared its status as an
         // assertion rather than as expectStatus, which is the commoner spelling.
         for (const assertion of list) {
-          const missing = tablesNamedIn(assertion).filter((t) => !known.has(t));
+          // Parsed, not pattern-matched. The regex this replaced could only see
+          // an identifier in a selector's first argument, so the bare-table
+          // shorthand — `sum(delta(walets.balance))`, which is exactly what
+          // `promote` emits — carried a misspelling straight past the command
+          // whose job is catching them.
+          let parsed;
+          try {
+            parsed = parse(assertion);
+          } catch {
+            // Unparseable: `run` says so in its own words, with position.
+            continue;
+          }
+          const missing = [...tablesNamedIn(parsed)].filter((t) => !known.has(t));
           for (const table of missing) {
             problems.push(
               `  ${scenario.id}/${dataset.id}/${step.id}  names table \`${table}\`, which is not in this database`,
@@ -606,8 +618,8 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
             // Unparseable: `run` will say so in its own words, with position.
             named = [];
           }
-          // `except` names live where `tablesNamedIn`'s regex cannot see them:
-          // the selector's first argument is `*`. One that resolves to nothing
+          // `except` names are not tables the assertion selects, so
+          // `tablesNamedIn` does not report them. One that resolves to nothing
           // excludes nothing, silently widening the assertion.
           for (const excluded of exceptedTablesIn(parse(assertion))) {
             if (known.has(excluded)) continue;
@@ -662,19 +674,6 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     return problems.length > 0 || assertions === 0 ? 3 : 0;
   });
   return typeof result === 'number' ? result : 0;
-}
-
-const RESERVED = new Set([
-  'response', 'status', 'body', 'headers', 'count', 'single', 'sum', 'min', 'max',
-  'any', 'all', 'inserted', 'updated', 'deleted', 'changes', 'rows', 'hasWrite',
-  'isEmpty', 'before', 'after', 'delta', 'where', 'true', 'false', 'null', 'and', 'or', 'not',
-]);
-
-/** Table names are the identifiers in a selector's first argument position. */
-function tablesNamedIn(source: string): string[] {
-  return [...source.matchAll(/\b(?:changes|inserted|updated|deleted|rows)\(\s*([A-Za-z_][A-Za-z0-9_]*)/g)]
-    .map((m) => m[1]!)
-    .filter((name) => !RESERVED.has(name));
 }
 
 async function commandRuns(args: string[], values: Values): Promise<number> {

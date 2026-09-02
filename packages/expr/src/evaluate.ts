@@ -1196,3 +1196,42 @@ export function exceptedTablesIn(expr: Expr): string[] {
   walk(expr);
   return found;
 }
+
+/**
+ * Every table an assertion names, from the syntax tree rather than from a regex.
+ *
+ * `check` and the MCP tool both resolved table names with
+ * `/\b(?:changes|inserted|updated|deleted|rows)\(\s*([A-Za-z_]\w*)/g`, which
+ * only ever matched an identifier sitting in a selector's *first argument*. The
+ * bare-table shorthand puts it somewhere else — `sum(delta(wallets.balance))`
+ * desugars to a `changes` selector during parsing, and there is no `changes(`
+ * in the text at all — so a misspelling there was invisible to the one command
+ * whose job is catching misspellings, and stayed green for as long as it lived.
+ *
+ * That form is exactly what `promote` emits for a cross-row invariant, so the
+ * blind spot lined up precisely with the assertions users do not write by hand
+ * and are least likely to proof-read.
+ */
+export function tablesNamedIn(expr: Expr, into: Set<string> = new Set()): Set<string> {
+  switch (expr.node) {
+    case 'select':
+      if (expr.selector.table) into.add(expr.selector.table);
+      break;
+    case 'column':
+    case 'aggregate':
+    case 'predicate':
+    case 'hasWrite':
+    case 'isEmpty':
+    case 'atomic':
+    case 'writeCount':
+      tablesNamedIn(expr.source, into);
+      break;
+    case 'compare':
+      tablesNamedIn(expr.left, into);
+      tablesNamedIn(expr.right, into);
+      break;
+    default:
+      break;
+  }
+  return into;
+}

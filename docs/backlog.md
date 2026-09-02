@@ -65,7 +65,7 @@ before the fix.
   union because removing a member breaks exhaustive consumers exactly as adding
   one would.
 
-- [ ] **5. MCP `check_scenarios` is materially weaker than `tuplescope check`.**
+- [x] **5. MCP `check_scenarios` is materially weaker than `tuplescope check`.**
   It destructures only `{ tables }` from `preflight()` (`apps/mcp/src/server.ts:262`),
   discarding the `columns` map, so it validates no predicate columns and no
   `except` names. It also returns an unconditional all-clear over zero scenarios
@@ -73,7 +73,7 @@ before the fix.
   Both `predicateColumnsIn` and `exceptedTablesIn` are already exported from
   `@tuplescope/expr`, which `apps/mcp` already depends on.
 
-- [ ] **6. The bare-table shorthand bypasses `check`'s table extraction.**
+- [x] **6. The bare-table shorthand bypasses `check`'s table extraction.**
   `tablesNamedIn` (`apps/cli/src/main.ts:663-666`, and the identical regex at
   `apps/mcp/src/server.ts:304`) matches only an identifier in a selector's first
   argument, so `sum(delta(walets.balance))` yields nothing while
