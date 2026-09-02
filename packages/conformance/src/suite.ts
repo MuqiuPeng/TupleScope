@@ -24,7 +24,7 @@ import {
   rowsSelectorsIn,
   Unevaluable,
 } from '@tuplescope/expr';
-import type { Answer, Capability, ConformanceCase } from './cases.js';
+import type { Answer, Capability, ConformanceCase, RowIdentity } from './cases.js';
 import { keyLabel } from '@tuplescope/core';
 
 export interface EngineUnderTest {
@@ -52,6 +52,8 @@ export interface CaseOutcome {
   warnings: string[];
   detection: ChangeSet['detection'];
   fidelity: ChangeSet['fidelity'];
+  /** Whether this engine could see a row leave the fixture's keyless table. */
+  rowIdentity: RowIdentity;
   /** `table:operation:key` per mutation, in order. Undefined when not offered. */
   mutations: string[] | undefined;
 }
@@ -97,16 +99,28 @@ export function assertionsOf(testCase: ConformanceCase): string[] {
     ...Object.keys(testCase.expect),
     ...Object.keys(testCase.expectByDetection ?? {}),
     ...Object.keys(testCase.expectByFidelity ?? {}),
+    ...Object.keys(testCase.expectByRowIdentity ?? {}),
     ...Object.keys(testCase.expectByCapability ?? {}),
   ].sort();
 }
 
 /**
- * The answers a case demands of an engine with these capabilities. Returns
- * `undefined` for an assertion the case leaves to the capability tables
- * without covering this particular capability — an omission, which the caller
- * reports rather than silently passing.
+ * The engine's answer for a table it cannot key, read off the run rather than
+ * assumed from its name.
+ *
+ * `departuresObservable` is per-table, because it is a fact about a table *and*
+ * an engine. The harness only ever asks it of the fixture's keyless table,
+ * where it is an engine-level property: snapshot-diff re-reads and sees the
+ * multiset deficit, the MVCC engines skip the key read entirely.
+ *
+ * A scope with no such table reports `departures-observable`, which is true of
+ * every table in it — there is nothing here the engine cannot see.
  */
+export function rowIdentityOf(changes: ChangeSet): RowIdentity {
+  const blind = changes.scope.tables.some((t) => t.departuresObservable === false);
+  return blind ? 'departures-invisible' : 'departures-observable';
+}
+
 /**
  * The answers a case demands of an engine with these capabilities.
  *
@@ -124,6 +138,7 @@ export function expectedFor(
   testCase: ConformanceCase,
   detection: ChangeSet['detection'],
   fidelity: ChangeSet['fidelity'],
+  rowIdentity: RowIdentity = 'departures-observable',
 ): Record<string, Answer | undefined> {
   const out: Record<string, Answer | undefined> = { ...testCase.expect };
   const claimedBy = new Map<string, string>();
@@ -152,6 +167,10 @@ export function expectedFor(
     Object.entries(testCase.expectByFidelity ?? {}).map(([k, t]) => [k, t[fidelity]]),
   );
   apply(
+    'expectByRowIdentity',
+    Object.entries(testCase.expectByRowIdentity ?? {}).map(([k, t]) => [k, t[rowIdentity]]),
+  );
+  apply(
     'expectByCapability',
     Object.entries(testCase.expectByCapability ?? {}).map(([k, t]) => [
       k,
@@ -167,6 +186,7 @@ export function capabilityExplained(testCase: ConformanceCase): Set<string> {
   return new Set([
     ...Object.keys(testCase.expectByDetection ?? {}),
     ...Object.keys(testCase.expectByFidelity ?? {}),
+    ...Object.keys(testCase.expectByRowIdentity ?? {}),
     ...Object.keys(testCase.expectByCapability ?? {}),
   ]);
 }
@@ -253,6 +273,7 @@ export async function runCase(
       warnings: changes.warnings.map((w) => w.code).sort(),
       detection: changes.detection,
       fidelity: changes.fidelity,
+      rowIdentity: rowIdentityOf(changes),
       mutations: changes.mutations?.map(
         (m) => `${m.table}:${m.operation}:${keyLabel(m.key)}`,
       ),

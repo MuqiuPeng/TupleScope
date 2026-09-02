@@ -132,13 +132,19 @@ for (const engine of ENGINES) {
         const outcome = await runCase(engine, CONNECTION, SCHEMA, testCase);
         observed.set(`${engine.name}\u0000${testCase.name}`, outcome);
 
-        const expected = expectedFor(testCase, outcome.detection, outcome.fidelity);
+        const expected = expectedFor(
+          testCase,
+          outcome.detection,
+          outcome.fidelity,
+          outcome.rowIdentity,
+        );
         for (const source of assertionsOf(testCase)) {
           const want = expected[source];
           assert.ok(
             want,
             `\`${source}\` has no expectation for detection=${outcome.detection} ` +
-              `fidelity=${outcome.fidelity}. An engine with a capability the case does not cover ` +
+              `fidelity=${outcome.fidelity} rowIdentity=${outcome.rowIdentity}. ` +
+              `An engine with a capability the case does not cover ` +
               `must not be waved through.`,
           );
           assert.ok(

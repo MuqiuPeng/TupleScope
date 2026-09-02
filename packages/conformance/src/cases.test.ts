@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parse } from '@tuplescope/expr';
 import { CASES, type ConformanceCase } from './cases.js';
-import { assertionsOf, expectedFor } from './suite.js';
+import type { ChangeSet } from '@tuplescope/core';
+import { assertionsOf, expectedFor, rowIdentityOf } from './suite.js';
 
 describe('the conformance cases', () => {
   it('are all written in syntax the parser accepts', () => {
@@ -78,5 +79,69 @@ describe('the conformance cases', () => {
     assert.deepEqual(answer('write', 'transactional'), { status: 'failed', actual: '2' });
     // An engine nobody wrote an expectation for is an omission, not a pass.
     assert.equal(answer('value', 'transactional'), undefined);
+  });
+});
+
+describe('the row-identity axis', () => {
+  const keyless = (departuresObservable: boolean): ChangeSet =>
+    ({
+      scope: {
+        tables: [
+          { table: 'accounts', keyStrategy: 'primary-key' },
+          { table: 'audit_log', keyStrategy: 'full-row-multiset', departuresObservable },
+        ],
+      },
+    }) as never;
+
+  it('reads the engine’s answer off the run, not off its name', () => {
+    assert.equal(rowIdentityOf(keyless(false)), 'departures-invisible');
+    assert.equal(rowIdentityOf(keyless(true)), 'departures-observable');
+  });
+
+  it('calls a scope with nothing unkeyable observable, because it is', () => {
+    // Absent means observable, which keeps a run stored before the field
+    // existed meaning what it meant.
+    const plain = { scope: { tables: [{ table: 'accounts' }] } } as never;
+    assert.equal(rowIdentityOf(plain), 'departures-observable');
+  });
+
+  it('selects a different answer per engine, which is the point of the axis', () => {
+    const c = {
+      name: 'x',
+      because: 'y',
+      seed: [],
+      act: [],
+      expect: {},
+      expectByRowIdentity: {
+        'count(deleted(t)) == 0': {
+          'departures-observable': { status: 'passed' as const },
+          'departures-invisible': { status: 'unevaluable' as const },
+        },
+      },
+    } as never;
+    assert.deepEqual(expectedFor(c, 'write', 'net', 'departures-observable')['count(deleted(t)) == 0'], {
+      status: 'passed',
+    });
+    assert.deepEqual(expectedFor(c, 'write', 'net', 'departures-invisible')['count(deleted(t)) == 0'], {
+      status: 'unevaluable',
+    });
+  });
+
+  it('refuses an assertion claimed by two axes at once', () => {
+    // The same collision `expectByDetection` and `expectByFidelity` already
+    // guard: one table would silently override the other, and a case that means
+    // "both decide this" has to say so through `expectByCapability`.
+    const clash = {
+      name: 'x',
+      because: 'y',
+      seed: [],
+      act: [],
+      expect: {},
+      expectByDetection: { 'count(deleted(t)) == 0': { write: { status: 'passed' as const } } },
+      expectByRowIdentity: {
+        'count(deleted(t)) == 0': { 'departures-invisible': { status: 'unevaluable' as const } },
+      },
+    } as never;
+    assert.throws(() => expectedFor(clash, 'write', 'net', 'departures-invisible'), /One would silently override/);
   });
 });

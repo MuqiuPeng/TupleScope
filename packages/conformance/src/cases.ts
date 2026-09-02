@@ -10,6 +10,8 @@
  *   `expect`         every engine must produce this
  *   `expectByDetection`  the answer legitimately differs, and the case says
  *                        which capability decides it
+ *   `expectByRowIdentity` likewise, for whether a keyless table's departures
+ *                        can be observed at all
  *
  * There is deliberately no third shape keyed on the engine's name. If a new
  * engine needs one, the capability vocabulary is missing an axis and the fix is
@@ -18,6 +20,18 @@
  */
 
 import type { Detection, Fidelity } from '@tuplescope/core';
+
+/**
+ * Whether the engine can see a row leave a table it cannot key.
+ *
+ * The third axis, added because the contract could not state a difference that
+ * is real: `count(deleted(audit_log)) == 0` is `passed` on snapshot-diff, which
+ * re-reads the table and sees the multiset deficit, and `unevaluable` on the
+ * MVCC engines, which skip the key read entirely. It correlates with detection
+ * here and is not the same thing — spelling it `expectByDetection` would state
+ * the wrong reason, which is exactly what the note above forbids.
+ */
+export type RowIdentity = 'departures-observable' | 'departures-invisible';
 
 /**
  * A capability profile: the two axes together.
@@ -69,6 +83,8 @@ export interface ConformanceCase {
    */
   expectByDetection?: Record<string, Partial<Record<Detection, Answer>>>;
   expectByFidelity?: Record<string, Partial<Record<Fidelity, Answer>>>;
+  /** For an answer decided by whether a keyless table's departures can be seen. */
+  expectByRowIdentity?: Record<string, Partial<Record<RowIdentity, Answer>>>;
   /** For answers that depend on both axes at once. */
   expectByCapability?: Record<string, Partial<Record<Capability, Answer>>>;
   /**
@@ -303,15 +319,6 @@ export const CASES: ConformanceCase[] = [
       // merely imprecise: nothing can pair such a row to a previous version, so
       // `updated` answers 0 however much happened. The insert asserted above
       // proves this is not a blanket refusal.
-      //
-      // `count(deleted(audit_log)) == 0` belongs here too and is deliberately
-      // absent: it is `passed` on snapshot-diff, which re-reads the table and
-      // sees the multiset deficit, and `unevaluable` on the MVCC engines, which
-      // skip the key read entirely. That is a real capability difference on a
-      // *row-identity* axis this harness cannot yet express — and writing it as
-      // `expectByDetection` would state the wrong reason, which is the one thing
-      // this suite exists to forbid. Covered by unit test instead, until the
-      // axis exists here.
       'isEmpty(updated(audit_log)) == true': unevaluable,
       // And a whole-scope question, with this table swept into the default
       // `allTables` scope, cannot be answered by anything: the MVCC engines
@@ -320,6 +327,20 @@ export const CASES: ConformanceCase[] = [
       // verdict — the contract is about what a consumer may conclude, not
       // about how an engine got there.
       'hasWrite(changes(*)) == false': unevaluable,
+    },
+    expectByRowIdentity: {
+      // The axis this case exists to pin. Both answers are correct for the
+      // engine giving them: snapshot-diff re-reads the table and sees the
+      // multiset deficit, so it can say a row did not leave; the MVCC engines
+      // skip the key read for a table they cannot key, so a departure leaves no
+      // trace and the only honest answer is that they could not tell.
+      //
+      // Not `expectByDetection`, though it happens to correlate here — that
+      // would state the wrong reason, which is the one thing this suite forbids.
+      'count(deleted(audit_log)) == 0': {
+        'departures-observable': passed,
+        'departures-invisible': unevaluable,
+      },
     },
   },
   {

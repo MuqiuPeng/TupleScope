@@ -48,7 +48,7 @@ before the fix.
   *Decide: escalate to `error`, or carry the blindness into the envelope where a
   machine consumer will see it.*
 
-- [ ] **3b. The conformance harness cannot express the row-identity axis.**
+- [x] **3b. The conformance harness cannot express the row-identity axis.**
   `TableScope.departuresObservable` is a real capability axis and the harness has
   only `expectByDetection` and `expectByFidelity`. `count(deleted(t)) == 0` over a
   keyless table is `passed` on snapshot-diff and `unevaluable` on the MVCC
