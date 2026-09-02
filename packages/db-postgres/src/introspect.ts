@@ -159,6 +159,15 @@ export interface ScopeReport {
 }
 
 export async function describeScope(client: PoolClient): Promise<ScopeReport> {
+  // Asked directly rather than read off a row, because the row may not exist.
+  // The name used to be filled in from whichever table happened to be in the
+  // current schema, so a schema with no tables reported itself as `` — and that
+  // is exactly the state in which every following run says "Nothing was
+  // written", with nothing on screen to say what it looked at.
+  const { rows: current } = await client.query<{ schema: string | null }>(
+    'SELECT current_schema()::text AS schema',
+  );
+
   const { rows } = await client.query<{
     schema: string;
     table_name: string;
@@ -179,7 +188,9 @@ export async function describeScope(client: PoolClient): Promise<ScopeReport> {
   );
 
   const report: ScopeReport = {
-    schema: '',
+    // `current_schema()` is null when `search_path` names nothing that exists.
+    // Saying so beats an empty pair of backticks.
+    schema: current[0]?.schema ?? '(no current schema)',
     watched: 0,
     otherSchemas: [],
     nameFiltered: [],
@@ -195,7 +206,6 @@ export async function describeScope(client: PoolClient): Promise<ScopeReport> {
       elsewhere.set(row.schema, (elsewhere.get(row.schema) ?? 0) + 1);
       continue;
     }
-    report.schema = row.schema;
     if (row.relkind === 'p') report.partitionedParents.push(row.table_name);
     else if (row.relkind === 'f') report.foreignTables.push(row.table_name);
     else if (row.table_name.startsWith('_')) report.nameFiltered.push(row.table_name);

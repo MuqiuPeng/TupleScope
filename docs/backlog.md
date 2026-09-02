@@ -81,11 +81,11 @@ before the fix.
   (`promote.ts:386`), so a kept cross-row invariant with a bad table name is
   invisible to the command that exists to catch bad table names.
 
-- [ ] **7. An empty schema renders as `` 0 tables in `` ``.**
+- [x] **7. An empty schema renders as `` 0 tables in `` ``.**
   The schema name goes blank exactly when the watch scope is empty — which is the
   state in which every subsequent run will say "Nothing was written".
 
-- [ ] **8. `status` collapses when any secret is unset.**
+- [x] **8. `status` collapses when any secret is unset.**
   It then answers none of its three questions, drops the workspace name, and
   exits 2 — even when the missing secret is an identity token with nothing to do
   with the database. The suppression should be scoped to what actually depends on

@@ -38,6 +38,7 @@ import {
   openWorkspace,
   resolveWorkspaceSecrets,
   secretsReferencedBy,
+  type ResolvedWorkspaceConfig,
 } from '@tuplescope/workspace';
 import { addAssertion, ScenarioLoadError } from '@tuplescope/scenario-engine';
 import { exceptedTablesIn, parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
@@ -403,12 +404,14 @@ async function commandList(values: Values): Promise<number> {
  * on the way to finding out. Asking the store whether an id exists is the whole
  * check; the value never leaves the keychain.
  */
-async function reportSecrets(values: Values): Promise<{ lines: string[]; allConfigured: boolean }> {
+async function reportSecrets(
+  values: Values,
+): Promise<{ lines: string[]; allConfigured: boolean; config: ResolvedWorkspaceConfig }> {
   const config = await loadWorkspaceConfig({
     ...(values.config !== undefined ? { configPath: values.config } : {}),
   });
   const names = secretsReferencedBy(config);
-  if (names.length === 0) return { lines: [], allConfigured: true };
+  if (names.length === 0) return { lines: [], allConfigured: true, config };
 
   const opened = await tryOpenSecretStore({ namespace: namespaceOf(config) });
   if (!opened.store) {
@@ -418,6 +421,7 @@ async function reportSecrets(values: Values): Promise<{ lines: string[]; allConf
         `            ${opened.reason}`,
       ],
       allConfigured: false,
+      config,
     };
   }
   const lines: string[] = [];
@@ -434,7 +438,7 @@ async function reportSecrets(values: Values): Promise<{ lines: string[]; allConf
         (present ? '' : ` \u2014 not configured; \`tuplescope secret set ${id}\``),
     );
   }
-  return { lines, allConfigured };
+  return { lines, allConfigured, config };
 }
 
 async function commandStatus(values: Values): Promise<number> {
@@ -442,17 +446,31 @@ async function commandStatus(values: Values): Promise<number> {
   // missing one would abort the very report that explains why.
   let secretsOk = true;
   let secretLines: string[] = [];
+  let known: ResolvedWorkspaceConfig | undefined;
   try {
     const report = await reportSecrets(values);
     secretLines = report.lines;
     secretsOk = report.allConfigured;
+    known = report.config;
   } catch (error) {
     if (!(error instanceof WorkspaceConfigError)) throw error;
   }
   if (!secretsOk) {
-    // The workspace cannot open without them, so this is the whole report.
-    process.stdout.write('tuplescope\n');
+    // The workspace genuinely cannot open — `assertResolved` refuses any
+    // surviving marker — so the database and the backend go unchecked. What is
+    // *known* still gets said: this used to print the bare word `tuplescope`
+    // and a secret list, dropping the workspace name and the config path, which
+    // are the two things a reader needs in order to go and fix it. And it said
+    // nothing about the other two questions, so their absence read as a third
+    // failure rather than as a consequence of the first.
+    process.stdout.write(
+      known ? `${renderWorkspaceLine(styleFor(values), known)}\n` : 'tuplescope\n',
+    );
     for (const line of secretLines) process.stdout.write(`${line}\n`);
+    process.stdout.write(
+      '  database  not checked — the workspace cannot open until every secret above resolves\n',
+    );
+    process.stdout.write('  backend   not checked, for the same reason\n');
     return 2;
   }
 
