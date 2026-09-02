@@ -15,6 +15,9 @@
       "path": "../../packages/db-postgres"
     },
     {
+      "path": "../../packages/expr"
+    },
+    {
       "path": "../../packages/http-runner"
     },
     {

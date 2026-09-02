@@ -756,8 +756,116 @@ function renderEvidence() {
     button.onclick = () => { state.evidenceMode = id; renderEvidence(); };
     tabs.appendChild(button);
   });
+  renderPanels(host);
   if (state.evidenceMode === 'timeline') renderTimeline(host);
   else renderStepEvidence(host);
+}
+
+/**
+ * The workspace's declared charts, drawn from what the run observed.
+ *
+ * Above the diff because a column moving over five steps is the shape a diff is
+ * worst at: the diff answers "what did this step write", the chart answers "what
+ * has this value been doing", and the second question is why anyone asked for
+ * panels. Silent when the workspace declares none, which is most of them.
+ */
+function renderPanels(host) {
+  const panels = state.run?.panels ?? [];
+  if (panels.length === 0) return;
+  const strip = el('div', 'panel-strip');
+  for (const panel of panels) {
+    const box = el('section', 'panel');
+    const head = el('header', 'panel-head');
+    head.append(el('h4', null, panel.title));
+    if (panel.unit) head.append(el('span', 'panel-unit', panel.unit));
+    box.append(head);
+    box.append(drawChart(panel));
+    // A source that would not evaluate is named. Dropping it silently leaves a
+    // chart that looks complete and is missing a line.
+    for (const problem of panel.problems ?? []) {
+      box.append(el('p', 'panel-problem', `${problem.name}: ${problem.reason}`));
+    }
+    strip.append(box);
+  }
+  host.append(strip);
+}
+
+const SVG = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs) => {
+  const node = document.createElementNS(SVG, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  return node;
+};
+
+/**
+ * One panel as SVG, from `chartGeometry`.
+ *
+ * The geometry decides everything that could be a claim; this only decides how
+ * it looks. A carried segment is dashed because it is inference — the host knows
+ * which points were observed, and drawing them identically would be the page
+ * asserting something the run did not.
+ */
+function drawChart(panel) {
+  const geometry = chartGeometry(panel);
+  const svg = svgEl('svg', {
+    class: 'panel-chart',
+    viewBox: `0 0 ${geometry.width} ${geometry.height}`,
+    role: 'img',
+    'aria-label': panel.title,
+  });
+
+  if (!geometry.range) {
+    const states = new Set(geometry.series.flatMap((s) => s.points.map((p) => p.state)));
+    // Why there is nothing to draw, rather than an empty frame. `observed` here
+    // means a value arrived and could not be plotted — masked, or not a number.
+    const reason = states.has('observed')
+      ? 'observed, but not a number this can plot'
+      : states.has('unevaluable')
+        ? 'this run could not evaluate the source'
+        : 'nothing observed yet';
+    svg.append(svgEl('text', { x: 12, y: geometry.height / 2, class: 'panel-empty' }));
+    svg.lastChild.textContent = reason;
+    return svg;
+  }
+
+  const top = 12;
+  const bottom = geometry.height - 22;
+  svg.append(svgEl('line', { x1: 40, y1: top, x2: 40, y2: bottom, class: 'panel-axis' }));
+  svg.append(svgEl('line', { x1: 40, y1: bottom, x2: geometry.width - 12, y2: bottom, class: 'panel-axis' }));
+  for (const label of axisLabels(geometry.range)) {
+    const node = svgEl('text', { x: 36, y: label.at === 'max' ? top + 4 : bottom, class: 'panel-tick' });
+    node.setAttribute('text-anchor', 'end');
+    node.textContent = label.text;
+    svg.append(node);
+  }
+
+  geometry.series.forEach((series, index) => {
+    const stroke = index === 0 ? 'accent' : 'muted';
+    for (const segment of series.segments) {
+      const path = svgEl('polyline', {
+        class: `panel-line ${stroke}${segment.state === 'carried' ? ' carried' : ''}`,
+        points: segment.points.map((p) => `${p.x},${p.y}`).join(' '),
+      });
+      svg.append(path);
+    }
+    for (const point of series.points) {
+      if (point.x === undefined) continue;
+      const dot = svgEl('circle', {
+        cx: point.x,
+        cy: point.y,
+        r: point.state === 'carried' ? 1.5 : 2.5,
+        class: `panel-dot ${stroke}${point.state === 'carried' ? ' carried' : ''}`,
+      });
+      const title = svgEl('title', {});
+      title.textContent =
+        `${series.name} ${point.value} at ${point.stepId}` +
+        (point.state === 'carried' ? ' (carried — this step did not touch the row)' : '');
+      dot.append(title);
+      svg.append(dot);
+    }
+  });
+
+  return svg;
 }
 
 function renderStory() {

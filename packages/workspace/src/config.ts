@@ -48,6 +48,30 @@ export interface Identity {
   header: { name: string; value: string };
 }
 
+/**
+ * A chart of one or more columns across the run, drawn beside the diff.
+ *
+ * The repository chooses what a panel is *about* — a title, a unit, and named
+ * expressions in the language assertions already use. It contributes no code and
+ * no rendering: the host evaluates the sources with `seriesFor` and draws them
+ * in its own palette. See docs/panel-mods-design.md §13 for why it is this way
+ * round and not a plugin.
+ */
+export interface PanelSpec {
+  title: string;
+  /** Printed beside the axis. Labels only ever describe. */
+  unit?: string;
+  /**
+   * Series name → expression, which must select a **column**.
+   *
+   * `after(updated(stock, sku = "X").on_hand)`, not `single(...)`: `single()`
+   * throws when a step did not touch the row, which is the ordinary case for
+   * most steps and not an error. A column selector answers with an empty list,
+   * which is the distinction a series needs.
+   */
+  sources: Record<string, string>;
+}
+
 /** The file as written. Paths may be relative; `${VAR}` may be unexpanded. */
 export interface WorkspaceConfig {
   name: string;
@@ -55,6 +79,8 @@ export interface WorkspaceConfig {
   database: { connectionString: string };
   scenariosDir: string;
   identities?: Identity[];
+  /** Charts drawn beside the diff. Inert: names and expressions, never code. */
+  panels?: PanelSpec[];
   ignoreColumns?: string[];
   maskColumns?: string[];
   /** Endpoint that wipes and reseeds, used by datasets declaring `resetFirst`. */
@@ -247,6 +273,7 @@ const KNOWN_KEYS = new Set([
   'identities',
   'ignoreColumns',
   'maskColumns',
+  'panels',
   'resetUrl',
   'baselineWindowMs',
   'engine',
@@ -367,6 +394,33 @@ function validate(value: unknown, file: string): ResolvedWorkspaceConfig {
         typeof identity.header?.value !== 'string'
       ) {
         return fail(`identity \`${identity.id}\` needs header.name and header.value`);
+      }
+    }
+  }
+
+  const panels = doc['panels'];
+  if (panels !== undefined) {
+    if (!Array.isArray(panels)) return fail('`panels` must be a list');
+    for (const [index, entry] of panels.entries()) {
+      const panel = entry as Partial<PanelSpec>;
+      if (typeof panel?.title !== 'string' || !panel.title) {
+        return fail(`panel ${index} has no title`);
+      }
+      if (panel.unit !== undefined && typeof panel.unit !== 'string') {
+        return fail(`panel \`${panel.title}\` has a unit that is not a string`);
+      }
+      const sources = panel.sources;
+      if (typeof sources !== 'object' || sources === null || Array.isArray(sources)) {
+        return fail(`panel \`${panel.title}\` needs \`sources\`, a name-to-expression map`);
+      }
+      const names = Object.entries(sources);
+      // A panel with no sources draws an empty box and says nothing about why.
+      // Refusing at load beats rendering a frame around nothing.
+      if (names.length === 0) return fail(`panel \`${panel.title}\` has no sources`);
+      for (const [name, source] of names) {
+        if (typeof source !== 'string' || !source) {
+          return fail(`panel \`${panel.title}\` source \`${name}\` is not an expression`);
+        }
       }
     }
   }

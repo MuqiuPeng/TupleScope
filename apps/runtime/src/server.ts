@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { withHandoffs } from './handoff-payload.js';
+import { panelsFor } from './panels.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerResetRoute } from './reset-route.js';
 import { openUrl } from './open-url.js';
@@ -104,7 +105,15 @@ async function main(): Promise<void> {
     return scenarios;
   });
 
-  app.get('/api/runs', async () => runs.slice(-20).reverse().map(withHandoffs));
+  // Panels ride with the run rather than being a route of their own: they are a
+  // view of *this* run's observations, and fetching them separately would let
+  // the page draw one run's chart beside another run's diff.
+  const decorate = (run: Run): unknown => ({
+    ...(withHandoffs(run) as object),
+    panels: panelsFor(run, config.panels),
+  });
+
+  app.get('/api/runs', async () => runs.slice(-20).reverse().map(decorate));
 
   // Separate from running because they are separate intentions. A run resets so
   // that its evidence means something; a person resets so they can go and look
@@ -157,7 +166,7 @@ async function main(): Promise<void> {
         message: `No run job \`${request.params.id}\` is still available.`,
       });
     }
-    return { ...job, ...(job.run ? { run: withHandoffs(job.run) } : {}) };
+    return { ...job, ...(job.run ? { run: decorate(job.run) } : {}) };
   });
 
   async function runInJob(job: RunJob, body: RunRequest): Promise<void> {

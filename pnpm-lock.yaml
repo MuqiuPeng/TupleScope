@@ -94,6 +94,9 @@ importers:
       '@tuplescope/db-postgres':
         specifier: workspace:*
         version: link:../../packages/db-postgres
+      '@tuplescope/expr':
+        specifier: workspace:*
+        version: link:../../packages/expr
       '@tuplescope/handoff':
         specifier: workspace:*
         version: link:../../packages/handoff

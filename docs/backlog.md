@@ -228,7 +228,7 @@ decision rather than a guess.
   update protocol and the byte-exact loading are all cost with nothing left to
   buy. Recorded as `panel-mods-design.md` §13.
 
-- [ ] **32. Ship the built-in chart panel** — what §13 replaces mods with.
+- [x] **32. Ship the built-in chart panel** — what §13 replaces mods with.
   `panels[].sources` in the workspace file (inert, §3 survives intact),
   evaluated with `seriesFor` — already built in `@tuplescope/expr`, ten tests,
   currently zero consumers — and drawn by the host in the page's own palette. A

@@ -623,3 +623,73 @@ code, pre { font-family: var(--mono); }
 /* "Nothing is bound yet" is not a fault — it is the state every machine starts
    in. It reads as information, not as a warning. */
 .inspect-chip.muted { color: var(--faint); border-color: var(--rule-strong); }
+
+/* ── Panels ────────────────────────────────────────────────────────────────
+   Charts the workspace declares, drawn above the diff. A carried point is
+   drawn as inference — dashed, and a smaller dot — because the run knows the
+   difference and the picture has to keep it. */
+.panel-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.panel {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px 12px 6px;
+  background: var(--panel-raised);
+}
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.panel-head h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.panel-unit {
+  font-size: 11px;
+  color: var(--muted);
+}
+.panel-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.panel-axis {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.panel-tick,
+.panel-empty {
+  font-size: 9px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.panel-line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.panel-line.accent { stroke: var(--accent); }
+.panel-line.muted { stroke: var(--muted); }
+.panel-line.carried {
+  stroke-dasharray: 3 3;
+  opacity: 0.65;
+}
+.panel-dot.accent { fill: var(--accent); }
+.panel-dot.muted { fill: var(--muted); }
+.panel-dot.carried { opacity: 0.55; }
+.panel-problem {
+  margin: 4px 0 2px;
+  font-size: 11px;
+  color: var(--review);
+}

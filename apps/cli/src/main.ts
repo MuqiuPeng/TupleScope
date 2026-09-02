@@ -46,6 +46,7 @@ import {
   formatProblem,
   ScenarioLoadError,
 } from '@tuplescope/scenario-engine';
+import { parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import {
   renderRun,
@@ -607,6 +608,39 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
 
     const everyColumn = new Set([...columns.values()].flatMap((set) => [...set]));
     problems.push(...unresolvedFilterColumns(session.config, everyColumn));
+
+    // Panel sources are expressions in the same language, resolved against the
+    // same schema, and fail the same way — a misspelled table draws an empty
+    // chart rather than an error. `check` is where that is caught.
+    for (const panel of session.config.panels ?? []) {
+      for (const [name, source] of Object.entries(panel.sources)) {
+        let parsed;
+        try {
+          parsed = parse(source);
+        } catch (error) {
+          problems.push(
+            `  panel \`${panel.title}\`  source \`${name}\` will not parse: ` +
+              `${error instanceof Error ? error.message : String(error)}`,
+          );
+          continue;
+        }
+        for (const table of tablesNamedIn(parsed)) {
+          if (known.has(table)) continue;
+          problems.push(
+            `  panel \`${panel.title}\`  source \`${name}\` names table \`${table}\`, ` +
+              'which is not in this database',
+          );
+        }
+        for (const { table, column } of predicateColumnsIn(parsed)) {
+          const have = columns.get(table);
+          if (!have || have.has(column)) continue;
+          problems.push(
+            `  panel \`${panel.title}\`  source \`${name}\` matches on ` +
+              `\`${table}.${column}\`, which is not a column of \`${table}\``,
+          );
+        }
+      }
+    }
 
     const audit = auditScenarios(selected, { tables: known, columns });
     assertions = audit.assertions;

@@ -55,3 +55,18 @@ baselineWindowMs: 400
 # `tuplescope runs` lists them; `--from` and `--only` read a previous run's
 # variables from there, which is the only reason the store exists.
 # Disable with --no-save.
+
+# Charts drawn beside the diff, from what the run observed.
+#
+# Names and expressions only — the host evaluates and draws them, in its own
+# palette. A step that did not touch the row is drawn as inference rather than
+# as a value, because the run knows the difference. Sources must select a
+# column: `after(updated(t, k = "x").col)`, not `single(...)`, which throws on a
+# step that touched nothing.
+#
+# panels:
+#   - title: Wallets
+#     unit: USD
+#     sources:
+#       alice: after(updated(wallets, id = "wal_alice").balance)
+#       shop: after(updated(wallets, id = "wal_shop").balance)
