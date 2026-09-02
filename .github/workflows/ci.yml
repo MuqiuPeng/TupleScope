@@ -118,6 +118,26 @@ jobs:
           fi
 
           test "$total" -ge 560
+
+      # The front page claims `pnpm demo` prints the diff at the top of it. A
+      # claim about a command is worth exactly as much as a run of that command,
+      # and a demo nobody runs rots into a lie faster than anything else here —
+      # it is the one piece of this repository whose only job is to be someone's
+      # first impression.
+      #
+      # It brings its own PostgreSQL on another port, so it does not touch the
+      # one above. Roughly a second locally.
+      - name: the demo on the front page still runs
+        run: |
+          set -o pipefail
+          pnpm demo 2>&1 | tee "$RUNNER_TEMP/demo.log"
+          grep -q 'outcome  clean' "$RUNNER_TEMP/demo.log"
+          # The four tables the README's opening diff names. If the demo stops
+          # showing one, the front page is describing something else.
+          for table in payments refunds ledger_entries wallets; do
+            grep -q "$table" "$RUNNER_TEMP/demo.log" || {
+              echo "the demo no longer touches $table, which the README's diff shows"; exit 1; }
+          done
           test "$failed" -eq 0
 
   # Windows, without a database — because it measurably cannot have one.

@@ -10,10 +10,11 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b packages/core packages/secrets packages/handoff packages/expr packages/http-runner packages/db-postgres packages/scenario-engine packages/report packages/conformance packages/workspace apps/runtime apps/cli apps/mcp",
-    "typecheck": "pnpm build && tsc -p tsconfig.check.json",
+    "demo": "tsx scripts/demo.ts",
     "start": "pnpm --filter @tuplescope/runtime start",
-    "testdb": "tsx scripts/testdb.ts",
     "test": "pnpm typecheck && pnpm -r --no-bail run test",
+    "testdb": "tsx scripts/testdb.ts",
+    "typecheck": "pnpm build && tsc -p tsconfig.check.json",
     "url": "pnpm --filter @tuplescope/runtime url"
   },
   "devDependencies": {

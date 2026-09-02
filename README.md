@@ -24,22 +24,34 @@ Local-first and PostgreSQL-only. Your database credentials never leave your mach
 
 ## Quick start
 
-You need Node 22 or newer, pnpm 9, and a PostgreSQL you do not mind being read
-— TupleScope holds a real connection to it and watches what your API writes.
+You need Node 22 or newer and pnpm 9.
 
 ```bash
 git clone https://github.com/MuqiuPeng/TupleScope && cd TupleScope
 pnpm install && pnpm build
+pnpm demo
+```
+
+`pnpm demo` prints the diff at the top of this page, on your machine. It starts
+a throwaway PostgreSQL, serves forty lines of payments API, runs the scenario
+below against them, and deletes all three afterwards. Nothing is left behind and
+nothing is installed.
+
+It exists because the honest answer to "what do I need to try this" is *your*
+API and *your* database — TupleScope watches a real service write to a real
+schema, and there is no bundled backend here to point it at. That is a fair
+amount to arrange before seeing whether the output is worth it, so the demo
+arranges a disposable one for you.
+
+Then, for your own service:
+
+```bash
 export PATH="$PWD/node_modules/.bin:$PATH"   # this shell only; nothing goes global
 ```
 
 Not published to npm yet — a checkout is the only way to run it today, though
-the packages are now shaped for it.
-
-**The repository ships no example backend.** There is no bundled API to point at
-and no seeded schema — TupleScope watches *your* service against *your*
-database, and the pages below build a scenario against one you supply. If you
-have no PostgreSQL to hand, `pnpm testdb` starts one (see [A database to develop
+the packages are now shaped for it. If you have no PostgreSQL to develop
+against, `pnpm testdb` starts one (see [A database to develop
 against](#a-database-to-develop-against)); the API has to be yours. The
 `refund/happy` used throughout is the scenario you write in the next section,
 not something to clone.
