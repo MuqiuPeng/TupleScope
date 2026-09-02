@@ -1,0 +1,106 @@
+# What actually happens on Windows, measured rather than reasoned about.
+#
+# This is not a test leg and it is deliberately not on `push`. Five separate
+# audits of Windows portability all came back "cannot be determined from a Mac",
+# and the three questions below decide whether a real `windows-latest` matrix
+# row is worth writing or is a waste of everyone's minutes:
+#
+#   1. Does the PowerShell shim compile, and does a credential round trip?
+#      The shim had a defect that made it never compile anywhere (946ead1). That
+#      is fixed and unit-tested at the language boundary, but "the C# is valid"
+#      and "advapi32 answers on a CI runner" are different claims.
+#
+#   2. Is the session one that has a credential set? `CredRead`/`CredWrite`
+#      return ERROR_NO_SUCH_LOGON_SESSION (1312) when it does not, and a network
+#      logon has none. Nobody could tell us which shape a runner is.
+#
+#   3. Does the embedded PostgreSQL start? `postgres.exe` refuses to run under
+#      an administrator token — it has no restricted-token path, only initdb
+#      does — and GitHub's Windows runners are believed to run as administrator.
+#      If that is right, `pnpm testdb` cannot work here as written and a full
+#      matrix row would need a different launcher, not a matrix row.
+#
+# Run it from the Actions tab. Read the summary. Then decide.
+
+name: Windows probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    # Every step reports and none of them gates. A probe that goes red tells you
+    # less than one that prints what it found.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: what kind of session is this
+        shell: pwsh
+        run: |
+          "language mode : $($ExecutionContext.SessionState.LanguageMode)"
+          "identity       : $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+          $p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          "administrator  : $($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          "logon type     : $((Get-CimInstance Win32_LogonSession | Select-Object -First 1).LogonType)"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: the bins are linked here too
+        shell: pwsh
+        run: |
+          node node_modules/.bin/tuplescope --version
+          Test-Path node_modules/.bin/tuplescope-mcp
+
+      # The question this whole file exists for: the store, used.
+      - name: does a credential round trip
+        shell: pwsh
+        run: |
+          node -e "
+            const { WindowsCredentialManager } = require('./packages/secrets/dist/windows.js');
+            (async () => {
+              const store = await WindowsCredentialManager.probe('ciprobe');
+              console.log('probe      : available -', store.description);
+              const id = 'ciprobe_value';
+              await store.set(id, 'hunter2  with trailing space');
+              const back = await store.get(id);
+              const text = back && back.reveal ? back.reveal() : String(back);
+              console.log('round trip : ' + JSON.stringify(text));
+              console.log('byte exact : ' + (text === 'hunter2  with trailing space'));
+              console.log('deleted    : ' + await store.delete(id));
+              console.log('absent now : ' + (await store.get(id) === undefined));
+            })().catch((e) => { console.log('FAILED     : ' + e.message); process.exitCode = 0; });
+          "
+
+      # Everything that needs no database. If this is green, a narrow matrix row
+      # is worth having even if the database never starts here.
+      - name: the tests that need no database
+        shell: bash
+        run: pnpm --filter @tuplescope/secrets --filter @tuplescope/expr --filter @tuplescope/core --filter @tuplescope/report test
+
+      - name: does the embedded postgres start
+        shell: bash
+        run: |
+          set -o pipefail
+          ( pnpm testdb > db.log 2>&1 & )
+          for _ in $(seq 1 45); do
+            grep -q 'postgres ready' db.log && break
+            sleep 2
+          done
+          echo "--- db.log ---"; cat db.log
+          grep -q 'postgres ready' db.log \
+            && echo "RESULT: the database started" \
+            || echo "RESULT: it did not — this is the answer question 3 was asking for"
