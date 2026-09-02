@@ -66,7 +66,7 @@ import { commandHandoff } from './handoff.js';
 import { commandSecret } from './secrets.js';
 
 /** One place, so `--version` and the envelope's `producer` cannot drift apart. */
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 /** Codes a run can produce come from core. These are the CLI's own. */
 const EXIT_USAGE = 4;

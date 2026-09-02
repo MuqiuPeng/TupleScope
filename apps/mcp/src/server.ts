@@ -167,7 +167,7 @@ function describeRun(report: {
  * every stored envelope would carry a version the server no longer reports, and
  * nothing would say so.
  */
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 const server = new McpServer(
   { name: 'tuplescope', version: VERSION },
