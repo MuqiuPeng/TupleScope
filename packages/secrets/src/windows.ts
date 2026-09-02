@@ -46,6 +46,14 @@ const REMEDY =
 const TARGET = 'TupleScope_secret_';
 
 /** Documented Win32 codes. The messages are localized; the numbers are not. */
+/**
+ * `CredWrite`'s documented ceiling on `CredentialBlobSize`: 5 * 512 bytes.
+ *
+ * This is the encoded size, not the plaintext — everything crosses as base64 of
+ * the envelope, so roughly three quarters of it is available to a value.
+ */
+const MAX_BLOB_BYTES = 5 * 512;
+
 const ERROR_NOT_FOUND = 1168;
 const ERROR_NO_SUCH_LOGON_SESSION = 1312;
 
@@ -54,10 +62,29 @@ const ERROR_NO_SUCH_LOGON_SESSION = 1312;
  *
  * Everything crosses the boundary as base64 so that a value's bytes never meet
  * PowerShell's quoting rules, its output encoding, or a console code page.
+ *
+ * The here-string is **single-quoted** — `@'…'@`, not `@"…"@` — because
+ * PowerShell expands the double-quoted form before `Add-Type` ever sees it, and
+ * this text is C#, where PowerShell's metacharacters mean something else.
+ *
+ * That was not hypothetical. The list operation joined names with `` `n ``,
+ * which is PowerShell's newline escape written where C#'s `\n` was meant.
+ * Inside an expandable here-string PowerShell turned it into a real newline
+ * before compilation, csc met a line break inside a string literal, and the
+ * whole `Add-Type` failed with CS1010 — so `probe()` reported the credential
+ * store unavailable and **the entire Windows backend had never worked**. One
+ * character, and it took the shim down rather than the one function that used
+ * it, because the shim compiles as a unit.
+ *
+ * Both halves of the fix matter. `\n` is the escape C# actually wants; the
+ * single-quoted here-string is what makes the class of mistake impossible
+ * rather than fixing this instance of it. `SHIM` is exported so a test can
+ * assert nothing in it would be rewritten on the way through — see
+ * `windows.test.ts`.
  */
-const SHIM = `
+export const SHIM = `
 $ErrorActionPreference = 'Stop'
-Add-Type -Language CSharp @"
+Add-Type -Language CSharp @'
 using System;
 using System.Runtime.InteropServices;
 public static class SsCred {
@@ -126,12 +153,12 @@ public static class SsCred {
         var c = (CREDENTIAL)Marshal.PtrToStructure(entry, typeof(CREDENTIAL));
         found.Add(Marshal.PtrToStringUni(c.TargetName));
       }
-      names = String.Join("\`n", found.ToArray());
+      names = String.Join("\\n", found.ToArray());
       return 0;
     } finally { CredFree(p); }
   }
 }
-"@
+'@
 `;
 
 interface Ran {
@@ -246,12 +273,27 @@ export class WindowsCredentialManager implements SecretStore {
 
   async set(id: SecretId, value: string): Promise<void> {
     assertUsableId(id);
+    // `CredWrite` caps `CredentialBlobSize` at 5*512 bytes and returns a bare
+    // Win32 error past it, which `failure()` renders as `Win32 error 87` —
+    // accurate and useless. The value crosses as base64 of the envelope, so the
+    // plaintext a user may store is about three quarters of that; refusing here
+    // says which number was exceeded and by how much, the way the macOS backend
+    // does for its own limit.
+    const blob = Buffer.from(wrap(value), 'utf8').toString('base64');
+    if (Buffer.byteLength(blob, 'utf8') > MAX_BLOB_BYTES) {
+      throw new Error(
+        `That value does not fit in the Windows Credential Manager. It becomes ` +
+          `${Buffer.byteLength(blob, 'utf8')} bytes once wrapped and encoded, and \`CredWrite\` ` +
+          `accepts ${MAX_BLOB_BYTES}. For something this large, an environment variable read ` +
+          `with \`\${VAR}\` is the honest option.`,
+      );
+    }
     // On stdin: a Windows command line is readable by any process of the same
     // user, and Sysmon records it.
     const ran = await powershell(
       `$b64 = [Console]::In.ReadToEnd().Trim()
        $rc = [SsCred]::Write('${this.target(id)}', $b64); Write-Output "$rc\`t"`,
-      Buffer.from(wrap(value), 'utf8').toString('base64'),
+      blob,
     );
     const { code } = split(ran.stdout);
     if (code !== 0) throw failure('store', id, code, ran);

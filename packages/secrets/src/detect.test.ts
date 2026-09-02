@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { openSecretStore, tryOpenSecretStore } from './detect.js';
@@ -27,7 +28,11 @@ describe('choosing a store', () => {
     // The promise, as a test rather than as a comment. A well-meaning fallback
     // added later — a cache, a "development mode", an error handler that saves
     // what it could not store — would keep the syntax and lose the point.
-    const dir = new URL('.', import.meta.url).pathname;
+    // `fileURLToPath`, not `.pathname`: on Windows the latter yields
+    // `/D:/a/...`, which the filesystem reads as rooted on the current drive
+    // and refuses for the colon. Identical on macOS and Linux, which is why
+    // it survived — this file has never run anywhere it would fail.
+    const dir = fileURLToPath(new URL('.', import.meta.url));
     const offences: string[] = [];
     for (const file of readdirSync(dir)) {
       if (!file.endsWith('.ts') || file.endsWith('.test.ts')) continue;

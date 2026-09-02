@@ -18,11 +18,13 @@
  */
 
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-const ROOT = new URL('../../../', import.meta.url).pathname;
+// `fileURLToPath`, not `.pathname` — the latter is `/D:/...` on Windows.
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 /**
  * Everything downstream of capture. `db-postgres` is excluded because it *is*

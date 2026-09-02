@@ -19,7 +19,7 @@
  *     pnpm testdb                 # holds the port open until interrupted
  *     TESTDB_PORT=7433 pnpm testdb
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import EmbeddedPostgres from "embedded-postgres";
@@ -47,11 +47,16 @@ async function main(): Promise<void> {
   });
 
   // Throws when the cluster is already there, which is every run after the
-  // first.
-  try {
+  // first — and used to throw away every other reason too. A bare catch here
+  // means a genuine `initdb` failure reaches `start()` instead, which rejects
+  // with no argument at all, and the log reads `[testdb] failed: undefined`
+  // with the real stderr nowhere. Harmless on a machine where the only cause is
+  // the expected one; the reason a first Windows run would be unreadable.
+  //
+  // `PG_VERSION` is what `initdb` writes last, so its presence is the cluster
+  // saying it finished.
+  if (!existsSync(path.join(dataDir, "PG_VERSION"))) {
     await pg.initialise();
-  } catch {
-    /* already initialised */
   }
 
   trustExistingCluster(dataDir);

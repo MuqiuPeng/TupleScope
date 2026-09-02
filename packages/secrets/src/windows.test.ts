@@ -21,7 +21,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { split } from './windows.js';
+import { SHIM, split } from './windows.js';
 
 describe('the code/payload channel', () => {
   it('reads a plain success', () => {
@@ -73,5 +73,55 @@ describe('the code/payload channel', () => {
 
   it('tolerates leading whitespace before the code', () => {
     assert.deepEqual(split('  0\tok\n'), { code: 0, payload: 'ok' });
+  });
+});
+
+/**
+ * The shim, checked at the boundary it has to cross.
+ *
+ * This is the one thing about the Windows backend that can be settled from any
+ * machine, and it decided everything: the C# was joined with `` `n ``, which is
+ * PowerShell's newline escape written where C#'s `\n` belonged. Inside an
+ * expandable here-string PowerShell turned it into a real newline before
+ * compilation, csc met a line break inside a string literal, and `Add-Type`
+ * failed as a unit — so `probe()` reported the store unavailable and the whole
+ * backend had never worked, on any Windows machine, ever.
+ *
+ * A test that ran the shim would need Windows. A test that checks nothing in it
+ * *survives the trip* needs only the rules of the two languages, which is why
+ * this one exists and why it is worth more than it looks.
+ */
+describe('the PowerShell shim', () => {
+  const body = SHIM.slice(SHIM.indexOf("@'") + 2, SHIM.lastIndexOf("'@"));
+
+  it('hands the C# to Add-Type in a here-string PowerShell will not rewrite', () => {
+    // `@'…'@` substitutes nothing. `@"…"@` substitutes `$name` and processes
+    // backtick escapes — in a document that is C#, where both mean something
+    // else. Using the quoting form that cannot rewrite is what makes the class
+    // of mistake impossible rather than fixing one instance of it.
+    assert.match(SHIM, /Add-Type -Language CSharp @'/);
+    assert.doesNotMatch(SHIM, /Add-Type -Language CSharp @"/);
+  });
+
+  it('contains nothing an expandable here-string would have eaten', () => {
+    // Belt and braces: even under `@"…"@` this body would now survive intact.
+    // If someone changes the quoting back, this fails rather than the backend
+    // silently ceasing to compile on a platform nobody here can run.
+    assert.equal(body.includes('`'), false, 'a backtick in the C# is a PowerShell escape');
+    assert.doesNotMatch(body, /\$[A-Za-z_(]/, 'a $name in the C# is a PowerShell variable');
+  });
+
+  it('joins with the escape C# understands, not the one PowerShell does', () => {
+    // The actual defect, pinned by its bytes. `\n` is backslash-n; `` `n `` is
+    // U+0060 followed by n, and C# has no such escape.
+    assert.match(body, /String\.Join\("\\n"/);
+    assert.equal(body.includes('String.Join("\u0060n"'), false);
+  });
+
+  it('opens and closes the here-string exactly once', () => {
+    // A stray delimiter would truncate the C# and produce a compile error that
+    // reads nothing like its cause.
+    assert.equal(SHIM.split("@'").length - 1, 1);
+    assert.equal(SHIM.split("'@").length - 1, 1);
   });
 });
