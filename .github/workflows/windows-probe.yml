@@ -30,9 +30,6 @@ on:
 jobs:
   probe:
     runs-on: windows-latest
-    # Every step reports and none of them gates. A probe that goes red tells you
-    # less than one that prints what it found.
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +44,7 @@ jobs:
           cache: pnpm
 
       - name: what kind of session is this
+        continue-on-error: true
         shell: pwsh
         run: |
           "language mode : $($ExecutionContext.SessionState.LanguageMode)"
@@ -56,17 +54,29 @@ jobs:
           "logon type     : $((Get-CimInstance Win32_LogonSession | Select-Object -First 1).LogonType)"
 
       - run: pnpm install --frozen-lockfile
+        continue-on-error: true
 
       - run: pnpm build
+        continue-on-error: true
 
+      # `continue-on-error` belongs on every step, not on the job. On the job it
+      # only stops a failure reddening the workflow — the job still halts, and
+      # the first run of this file skipped four questions because of that.
       - name: the bins are linked here too
+        continue-on-error: true
         shell: pwsh
         run: |
-          node node_modules/.bin/tuplescope --version
-          Test-Path node_modules/.bin/tuplescope-mcp
+          # pnpm writes three shims on Windows: a POSIX one for Git Bash, plus
+          # `.cmd` and `.ps1`. The first run of this probe fed the POSIX one to
+          # `node`, which is a mistake about shims rather than a finding about
+          # linking. What CI needs to know is that a shim exists and runs.
+          Get-ChildItem node_modules/.bin -Filter 'tuplescope*' | Select-Object -ExpandProperty Name
+          & node_modules/.bin/tuplescope.cmd --version
+          & node_modules/.bin/tuplescope-mcp.cmd --version
 
       # The question this whole file exists for: the store, used.
       - name: does a credential round trip
+        continue-on-error: true
         shell: pwsh
         run: |
           node -e "
@@ -88,10 +98,12 @@ jobs:
       # Everything that needs no database. If this is green, a narrow matrix row
       # is worth having even if the database never starts here.
       - name: the tests that need no database
+        continue-on-error: true
         shell: bash
         run: pnpm --filter @tuplescope/secrets --filter @tuplescope/expr --filter @tuplescope/core --filter @tuplescope/report test
 
       - name: does the embedded postgres start
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
