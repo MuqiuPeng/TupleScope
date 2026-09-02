@@ -119,7 +119,12 @@ export function renderValue(style: Style, value: Value | undefined, room: number
   let text = value.text.replace(/\n/g, style.ascii ? '\\n' : '⏎');
   const bytes = Buffer.byteLength(value.text, 'utf8');
   if (bytes > MAX_VALUE_BYTES) {
-    text = `${text.slice(0, Math.max(8, room - 12))}…${style.ascii ? `(${bytes}B)` : `⟨${bytes}B⟩`}`;
+    // Bounded by the cap as well as by the room, so `--wide` — which passes a
+    // room of effectively infinity — still cannot page a megabyte of jsonb
+    // through the terminal. "Do not truncate" is a promise about fitting the
+    // window, not about printing a blob.
+    const fits = Math.max(8, Math.min(room, MAX_VALUE_BYTES) - 12);
+    text = `${text.slice(0, fits)}…${style.ascii ? `(${bytes}B)` : `⟨${bytes}B⟩`}`;
   } else if (widthOf(text) > room && room > 4) {
     text = `${text.slice(0, room - 1)}…`;
   }
@@ -197,6 +202,16 @@ export interface DiffOptions {
   /** Column names mentioned in this step's assertions, ranked first. */
   interesting: ReadonlySet<string>;
   indent: string;
+  /**
+   * Print values in full rather than fitting them to the grid.
+   *
+   * `--wide` was declared, documented and carried all the way into the flags
+   * object without a single reader, so it did nothing at all — measured, two
+   * runs with and without it differed only in timestamps. It is a different
+   * question from `--columns all`, which decides how many columns are shown
+   * rather than how much of each value.
+   */
+  untruncated?: boolean;
 }
 
 /**
@@ -267,7 +282,13 @@ export function renderDiff(changes: ChangeSet, options: DiffOptions): string[] {
       first = false;
       const key = pad(renderKey(change, style), keyWidth);
       const prefix = `${indent}${lead} ${key} `;
-      const room = Math.max(20, style.width - widthOf(prefix) - 12);
+      // `--wide` widens the grid rather than removing the guard on a value that
+      // is genuinely enormous: `MAX_VALUE_BYTES` still caps a megabyte of jsonb,
+      // because "do not truncate" is a promise about fitting the terminal, not
+      // an invitation to page a blob through it.
+      const room = options.untruncated
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(20, style.width - widthOf(prefix) - 12);
 
       const lines = change.kind === 'update'
         ? renderUpdate(change, options, room)

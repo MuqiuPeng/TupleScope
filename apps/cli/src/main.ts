@@ -86,6 +86,7 @@ const OPTIONS = {
   'no-save': { type: 'boolean' },
   'exit-zero': { type: 'boolean' },
   'pass-with-no-scenarios': { type: 'boolean' },
+  all: { type: 'boolean' },
   'no-color': { type: 'boolean' },
   ascii: { type: 'boolean' },
   quiet: { type: 'boolean', short: 'q' },
@@ -133,6 +134,8 @@ Run options
       --warnings <mode>        default | strict | off                (default)
       --require-assertions     a run that checked nothing exits 3
       --baseline <ms|off>      idle window watched before the run
+      --pass-with-no-scenarios exit 0 when nothing was selected — for a pipeline
+                               wired up before the first scenario exists
       --exit-zero              cap outcomes 1 and 3 at 0; never masks 2, 4, 5
 
 Output

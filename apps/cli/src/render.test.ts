@@ -399,3 +399,59 @@ describe('the write order', () => {
     assert.equal(coloured.replace(/\u001b\[[0-9;]*m/g, ''), plain);
   });
 });
+
+describe('--wide', () => {
+  /**
+   * The flag was declared, put in HELP, and carried into the flags object with
+   * no reader anywhere — measured, two runs with and without it differed only
+   * in timestamps. It is a different question from `--columns all`, which
+   * decides how many columns are shown rather than how much of each value, so
+   * neither could stand in for the other.
+   */
+  // Wider than the 100-column test terminal, under the 200-byte hard cap — so
+  // this exercises the width truncation, which is the one `--wide` governs.
+  const long = 'x'.repeat(150);
+  const one = set([
+    change({
+      table: 'notes',
+      kind: 'insert',
+      key: keyed('id', 'n1'),
+      before: null,
+      after: { body: v(long, 'text') },
+      changedColumns: ['body'],
+    }),
+  ]);
+
+  it('truncates to the terminal by default', () => {
+    const lines = renderDiff(one, options).join('\n');
+    assert.match(lines, /…/, 'a 150-character value must not be printed whole into 100 columns');
+    assert.equal(lines.includes(long), false);
+  });
+
+  it('prints the value whole when asked', () => {
+    const lines = renderDiff(one, { ...options, untruncated: true }).join('\n');
+    assert.equal(lines.includes(long), true, 'the value must survive intact');
+    assert.doesNotMatch(lines, /…/);
+  });
+
+  it('still caps a value that is enormous rather than paging a blob', () => {
+    // "Do not truncate" is a promise about fitting the terminal, not an
+    // invitation to print a megabyte of jsonb into it.
+    const huge = 'y'.repeat(200_000);
+    const lines = renderDiff(
+      set([
+        change({
+          table: 'notes',
+          kind: 'insert',
+          key: keyed('id', 'n2'),
+          before: null,
+          after: { body: v(huge, 'text') },
+          changedColumns: ['body'],
+        }),
+      ]),
+      { ...options, untruncated: true },
+    ).join('\n');
+    assert.equal(lines.includes(huge), false, 'MAX_VALUE_BYTES still applies');
+    assert.match(lines, /200000B|⟨200000B⟩/);
+  });
+});

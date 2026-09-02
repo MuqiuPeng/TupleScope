@@ -168,6 +168,7 @@ export function renderRun(
         ...renderDiff(step.changes, {
           style,
           columns,
+          ...(values.wide ? { untruncated: true as const } : {}),
           // A passing step gets a glance; a failing one gets the evidence.
           maxRows: mode === 'all' ? Number.MAX_SAFE_INTEGER : clean ? 3 : 12,
           maxTables: mode === 'all' ? Number.MAX_SAFE_INTEGER : 6,
