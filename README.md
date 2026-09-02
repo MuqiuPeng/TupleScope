@@ -929,15 +929,12 @@ first. None of them lose data, and each says how to avoid it.
 - **`baseUrl` is only checked for being a parseable URL.** A scheme typo such as
   `htp://` loads, and `status` then reports "nothing is listening" about a
   backend that is answering.
-- **`--junit -` does not produce parseable XML** — the human summary is
-  interleaved with it. Write to a path.
 - **`tuplescope status` does not look at the scenarios directory,** so it can
   report a healthy workspace on which `ls`, `run` and `check` all exit 4. And
   `ls` over an empty directory prints the header and exits 0.
 - **A workspace file cannot name a handoff alias.** Every alias is bound by the
   person at the keyboard. `tuplescope handoff --help` says otherwise; it is
   wrong.
-- **`tuplescope url --all` is suggested by `url` and not accepted.**
 - **The demo's `pg_hba.conf` rewrite handles the shapes `initdb` writes.** A
   hand-edited file using the two-field `IP-address IP-mask` form, or line
   continuations, is rewritten in place without a backup.

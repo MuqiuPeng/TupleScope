@@ -98,7 +98,7 @@ before the fix.
 - [x] **9. `url --all` is unreachable dead code.** `all` is absent from `OPTIONS`
   and `parseArgs` is strict, so the branch at `main.ts:219-224` cannot run; the
   hint at `:227` actively directs users to it. *(Disclosed in Known issues.)*
-- [ ] **10. `--junit -` emits XML no parser accepts, silently, exit 0.** Written
+- [x] **10. `--junit -` emits XML no parser accepts, silently, exit 0.** Written
   to a path the output is correct. *(Disclosed in Known issues.)*
 - [x] **11. `--wide` is a documented no-op.** Declared (`main.ts:77`), in HELP
   (`:136`), carried into `Flags` (`output.ts:25`), and read by nobody.
@@ -110,7 +110,7 @@ before the fix.
 - [x] **14. `rows(*)` parses and can never evaluate.** The engine's pre-fetch skips
   any selector without a table (`scenario-engine/src/index.ts:329`), so it always
   refuses. Refuse it at parse instead.
-- [ ] **15. Two dead routes.** `POST /api/runs` and `DELETE /api/assertions` have
+- [x] **15. Two dead routes.** `POST /api/runs` and `DELETE /api/assertions` have
   no callers repo-wide. The run path is implemented twice, and the dead copy's
   error handling has diverged in its favour — the UI shows worse messages than the
   code contains.

@@ -1086,7 +1086,9 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
         verdict,
       });
       if (!values.json) {
-        process.stdout.write(`${renderRun(style, values, session.config, run, verdict).join('\n')}\n`);
+        (values.junit === '-' ? process.stderr : process.stdout).write(
+          `${renderRun(style, values, session.config, run, verdict).join('\n')}\n`,
+        );
       }
     }
 
@@ -1141,6 +1143,12 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
       }
     }
 
+    // With `--junit -` stdout *is* the report, so everything meant for a person
+    // moves to stderr. It used to share the stream with the XML, and the file
+    // that came out was rejected by every parser — silently, exit 0, which
+    // reads as "TupleScope produced no report" rather than "the report has a
+    // run summary stapled to the front of it".
+    const human = values.junit === '-' ? process.stderr : process.stdout;
     if (values.json) process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
     if (values.junit !== undefined) {
       const xml = toJUnit(envelope);
@@ -1153,7 +1161,7 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
     // one thing a human always needs, and suppressing it made the flag useless.
     if (!values.json) {
       const { renderSummary } = await import('./render.js');
-      process.stdout.write(`${renderSummary(styleFor(values), suite as RunVerdict, exitCode).join('\n')}\n`);
+      human.write(`${renderSummary(styleFor(values), suite as RunVerdict, exitCode).join('\n')}\n`);
     }
     return exitCode;
   });

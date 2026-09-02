@@ -15,12 +15,12 @@ import { withHandoffs } from './handoff-payload.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerResetRoute } from './reset-route.js';
 import { openUrl } from './open-url.js';
-import { addAssertion, removeAssertion, ScenarioSaveError } from '@tuplescope/scenario-engine';
+import { addAssertion, ScenarioSaveError } from '@tuplescope/scenario-engine';
 import {
   loadWorkspaceConfig,
   openWorkspace,
   } from '@tuplescope/workspace';
-import type { CaptureScope, Run, Scenario } from '@tuplescope/core';
+import type { Run, Scenario } from '@tuplescope/core';
 import { createGuard, mintToken } from './security.js';
 import { removeSession, writeSession } from './session.js';
 import { withRequestOverrides } from './request-overrides.js';
@@ -28,6 +28,11 @@ import type { RequestOverride } from './request-overrides.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env['TUPLESCOPE_PORT'] ?? 7420);
+
+/** The message of anything thrown, without asserting it was an Error. */
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 async function main(): Promise<void> {
   const config = await loadWorkspaceConfig();
@@ -152,7 +157,19 @@ async function main(): Promise<void> {
   async function runInJob(job: RunJob, body: RunRequest): Promise<void> {
     const { scenarioId, datasetId, fromStepId, onlyStepId, requestOverrides } = body;
     try {
-      await reloadScenarios();
+      // Each stage names its own failure. This was one flat try/catch reporting
+      // `RUN_COULD_NOT_START` for everything and guessing a remedy from a regex
+      // over the message — while a second, unreachable copy of this route
+      // carried the taxonomy below. The page showed the worse of the two,
+      // because the page calls the reachable one.
+      try {
+        await reloadScenarios();
+      } catch (error) {
+        throw Object.assign(new Error(message(error)), {
+          code: 'SCENARIO_WILL_NOT_LOAD',
+          remedy: 'Fix the scenario file and run again.',
+        });
+      }
       const scenario = scenarios.find((candidate) => candidate.id === scenarioId);
       if (!scenario) {
         throw Object.assign(new Error(
@@ -160,13 +177,26 @@ async function main(): Promise<void> {
         ), { code: 'NO_SUCH_SCENARIO' });
       }
       const dataset = datasetId ?? scenario.datasets[0]!.id;
-      const executable = withRequestOverrides(
-        scenario,
-        dataset,
-        requestOverrides,
-        config.identities?.map((identity) => identity.id) ?? [],
-      );
-      const scope = await workspace.scopeFor(executable);
+      let executable;
+      try {
+        executable = withRequestOverrides(
+          scenario,
+          dataset,
+          requestOverrides,
+          config.identities?.map((identity) => identity.id) ?? [],
+        );
+      } catch (error) {
+        throw Object.assign(new Error(message(error)), { code: 'BAD_REQUEST_OVERRIDE' });
+      }
+      let scope;
+      try {
+        scope = await workspace.scopeFor(executable);
+      } catch (error) {
+        throw Object.assign(new Error(message(error)), {
+          code: 'DATABASE_UNREACHABLE',
+          remedy: 'Start the database for this workspace, then run again.',
+        });
+      }
       const key = `${scenario.id}/${dataset}`;
       const carried = fromStepId || onlyStepId ? lastVariables.get(key) : undefined;
 
@@ -185,100 +215,23 @@ async function main(): Promise<void> {
       if (run.coverage === 'full') lastVariables.set(key, run.variables);
       runs.push(run);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const text = message(error);
+      const tagged = error as { code?: string; remedy?: string };
       job.status = 'errored';
       job.error = {
-        error: (error as { code?: string }).code ?? 'RUN_COULD_NOT_START',
-        message,
-        ...(/ECONNREFUSED|ENOTFOUND|password authentication|does not exist/i.test(message)
-          ? { remedy: 'Start the database and backend for this workspace, then run again.' }
-          : {}),
+        error: tagged.code ?? 'RUN_COULD_NOT_START',
+        message: text,
+        // A remedy the thrower knew, or — for anything reaching here untagged —
+        // the guess that used to be the only answer.
+        ...(tagged.remedy
+          ? { remedy: tagged.remedy }
+          : /ECONNREFUSED|ENOTFOUND|password authentication|does not exist/i.test(text)
+            ? { remedy: 'Start the database and backend for this workspace, then run again.' }
+            : {}),
       };
     }
   }
 
-  app.post<{
-    Body: RunRequest;
-  }>('/api/runs', async (request, reply) => {
-    const { scenarioId, datasetId, fromStepId, onlyStepId, requestOverrides } = request.body ?? {};
-
-    // Re-read before every run. Editing the YAML and pressing Run must execute
-    // what is on disk — running a stale copy would make "what did this run
-    // actually do?" unanswerable, which is the one question this tool exists
-    // to answer.
-    try {
-      await reloadScenarios();
-    } catch (error) {
-      return reply.status(422).send({
-        error: 'SCENARIO_WILL_NOT_LOAD',
-        message: error instanceof Error ? error.message : String(error),
-        remedy: 'Fix the scenario file and run again.',
-      });
-    }
-
-    const scenario = scenarios.find((s) => s.id === scenarioId);
-    if (!scenario) {
-      return reply.status(404).send({
-        error: 'NO_SUCH_SCENARIO',
-        message: `No scenario \`${scenarioId}\`. Loaded: ${scenarios.map((s) => s.id).join(', ') || '(none)'}.`,
-      });
-    }
-    const dataset = datasetId ?? scenario.datasets[0]!.id;
-
-    let executable: Scenario;
-    try {
-      executable = withRequestOverrides(
-        scenario,
-        dataset,
-        requestOverrides,
-        config.identities?.map((identity) => identity.id) ?? [],
-      );
-    } catch (error) {
-      return reply.status(400).send({
-        error: 'BAD_REQUEST_OVERRIDE',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    let scope: CaptureScope;
-    try {
-      scope = await workspace.scopeFor(executable);
-    } catch (error) {
-      return reply.status(503).send({
-        error: 'DATABASE_UNREACHABLE',
-        message: error instanceof Error ? error.message : String(error),
-        remedy: 'Start the database for this workspace, then run again.',
-      });
-    }
-
-    const key = `${scenario.id}/${dataset}`;
-    const carried = fromStepId || onlyStepId ? lastVariables.get(key) : undefined;
-
-    let run: Run;
-    try {
-      run = await engine.run(executable, dataset, scope, {
-        ...(fromStepId ? { fromStepId } : {}),
-        ...(onlyStepId ? { onlyStepId } : {}),
-        ...(carried ? { variables: carried } : {}),
-      });
-    } catch (error) {
-      return reply.status(400).send({
-        error: 'BAD_RUN_REQUEST',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    // Only a full run's variables are worth carrying: a partial run's are a
-    // mixture of carried and fresh, and reusing them compounds the confusion.
-    if (run.coverage === 'full') lastVariables.set(key, run.variables);
-    runs.push(run);
-    return withHandoffs(run);
-  });
-
-  /**
-   * Keeps an observed change as an assertion — the observe-then-promote loop.
-   * Writes into the scenario's own file, preserving its comments.
-   */
   app.post<{
     Body: { scenarioId?: string; datasetId?: string; stepId?: string; expression?: string };
   }>('/api/assertions', async (request, reply) => {
@@ -302,18 +255,6 @@ async function main(): Promise<void> {
     }
   });
 
-  app.delete<{
-    Body: { scenarioId?: string; datasetId?: string; stepId?: string; expression?: string };
-  }>('/api/assertions', async (request, reply) => {
-    const { scenarioId, datasetId, stepId, expression } = request.body ?? {};
-    const file = scenarioId ? files.get(scenarioId) : undefined;
-    if (!file || !datasetId || !stepId || !expression) {
-      return reply.status(400).send({ error: 'BAD_REQUEST', message: 'All fields are required.' });
-    }
-    const result = await removeAssertion({ file, datasetId, stepId, expression });
-    await reloadScenarios();
-    return result;
-  });
 
   await app.listen({ port: PORT, host: '127.0.0.1' });
 
