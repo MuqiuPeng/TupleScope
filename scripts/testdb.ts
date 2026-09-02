@@ -87,7 +87,16 @@ function pgCtl(args: string[]): Promise<{ code: number; output: string }> {
     child.stdout.on("data", (chunk) => (output += String(chunk)));
     child.stderr.on("data", (chunk) => (output += String(chunk)));
     child.on("error", reject);
-    child.on("close", (code) => resolve({ code: code ?? 1, output }));
+    // `exit`, not `close`. On Windows `pg_ctl` re-executes itself under a
+    // restricted token — that is the whole reason this path exists — and the
+    // grandchild inherits these pipes. `close` waits for every writer to let go
+    // of them, so it never fires, and the first Windows run hung here for the
+    // full two minutes CI allows with no output and no error. `exit` fires when
+    // the process itself is done; a short drain after it collects whatever the
+    // pipes had, which is all the message this needs.
+    child.on("exit", (code) => {
+      setTimeout(() => resolve({ code: code ?? 1, output }), 100);
+    });
   });
 }
 
