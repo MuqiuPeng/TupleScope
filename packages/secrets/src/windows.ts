@@ -160,12 +160,27 @@ function powershell(body: string, stdin?: string): Promise<Ran> {
   });
 }
 
-/** `code<TAB>payload`, so an error number and a value share one channel unambiguously. */
-function split(stdout: string): { code: number; payload: string } {
-  const line = stdout.trim();
-  const tab = line.indexOf('\t');
+/**
+ * `code<TAB>payload`, so an error number and a value share one channel
+ * unambiguously.
+ *
+ * The payload is taken byte-exact after the tab, minus **one** trailing newline
+ * — the one `Write-Output` adds.
+ *
+ * This is not fixing a live bug. It used to `.trim()` the whole line, which
+ * would eat a value's own trailing whitespace — unreachable, because everything
+ * crossing here is base64, which has none. The point is that the channel should
+ * be right on its own terms rather than by accident of what its caller puts
+ * through it. Likewise the finite check: `Number('oops')` is NaN and
+ * `NaN !== 0`, so a garbled line already reached the failure path, by a
+ * coincidence of IEEE comparison rather than by a decision.
+ */
+export function split(stdout: string): { code: number; payload: string } {
+  const tab = stdout.indexOf('\t');
   if (tab < 0) return { code: -1, payload: '' };
-  return { code: Number(line.slice(0, tab)), payload: line.slice(tab + 1) };
+  const code = Number(stdout.slice(0, tab).trim());
+  if (!Number.isFinite(code)) return { code: -1, payload: '' };
+  return { code, payload: stdout.slice(tab + 1).replace(/\r?\n$/, '') };
 }
 
 export class WindowsCredentialManager implements SecretStore {

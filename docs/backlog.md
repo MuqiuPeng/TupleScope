@@ -154,8 +154,14 @@ before the fix.
 
 - [ ] **24. `apps/web` has no client-side tests.** 1,574 lines; the runtime is
   covered, the page is not.
-- [ ] **25. The Windows and Linux secret backends have no test files**, and CI has
-  no Windows runner. The README table's "yes" is stronger than the evidence.
+- [~] **25. The Windows and Linux secret backends have no test files.** Windows
+  now has one for its wire format — the part testable from a Mac — and it found
+  no bug: the `.trim()` that would have corrupted a trailing-whitespace value is
+  unreachable because everything crossing that channel is base64. Linux needs
+  none of the same kind; it envelopes through the shared `unwrap`, which is
+  already covered. **Still open:** neither store is exercised anywhere, and CI
+  still has no Windows runner, so the README table's "yes" for Linux rests on one
+  container run and Windows' "no" is the only honest cell in it.
 - [x] **26. `apps/mcp` has one test file**, covering handshake prose only — the
   check logic it shares with the CLI now lives in `@tuplescope/scenario-engine`
   with 11 tests of its own, and the server was driven over stdio to confirm the
