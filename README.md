@@ -33,7 +33,16 @@ pnpm install && pnpm build
 export PATH="$PWD/node_modules/.bin:$PATH"   # this shell only; nothing goes global
 ```
 
-Not on npm yet; a checkout is the only way to run it today.
+Not published to npm yet — a checkout is the only way to run it today, though
+the packages are now shaped for it.
+
+**The repository ships no example backend.** There is no bundled API to point at
+and no seeded schema — TupleScope watches *your* service against *your*
+database, and the pages below build a scenario against one you supply. If you
+have no PostgreSQL to hand, `pnpm testdb` starts one (see [A database to develop
+against](#a-database-to-develop-against)); the API has to be yours. The
+`refund/happy` used throughout is the scenario you write in the next section,
+not something to clone.
 
 ### Point it at your backend
 

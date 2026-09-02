@@ -1,6 +1,6 @@
 {
   "name": "@tuplescope/scenario-engine",
-  "version": "0.0.0",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,5 +24,16 @@
   },
   "devDependencies": {
     "tsx": "^4.19.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MuqiuPeng/TupleScope.git",
+    "directory": "packages/scenario-engine"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "@tuplescope/db-postgres",
-  "version": "0.0.0",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,5 +23,16 @@
   "devDependencies": {
     "@types/pg": "^8.11.10",
     "tsx": "^4.19.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MuqiuPeng/TupleScope.git",
+    "directory": "packages/db-postgres"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ]
 }

@@ -26,5 +26,13 @@
   },
   "devDependencies": {
     "tsx": "^4.19.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MuqiuPeng/TupleScope.git",
+    "directory": "apps/mcp"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

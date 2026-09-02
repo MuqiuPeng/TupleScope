@@ -121,12 +121,19 @@ before the fix.
 
 ## P2 — release blockers
 
-- [ ] **17. Nothing to run.** `examples/` is gitignored, so a fresh clone has no
-  backend, no schema and no scenario. Every demonstration the README is built
-  around is unreachable to a reader. *This is the largest single distance between
-  "works" and "someone else can see that it works".*
-- [ ] **18. npm is structurally blocked.** Six packages `private: true`; every
-  library at `0.0.0`; no `engines`, `repository` or `files`.
+- [x] **17. Nothing to run** — resolved by saying so, not by shipping one (the
+  author's call). The audit overstated this: the README does not tell a reader to
+  run a bundled example, it teaches them to *write* `refund/happy` against their
+  own service, and every later reference is to that. What was missing was one
+  sentence saying the repository ships no backend, so nobody arrives expecting a
+  clone-and-run demo. Added to Quick start.
+- [x] **18. npm is structurally blocked** — unblocked. Nine libraries and the two
+  bins are at 0.3.0 with `repository`, `engines`, `files` and `license`, and no
+  longer private. `runtime`, `web`, `conformance` and the root stay private, which
+  is correct — a locally served app, static assets and a test harness. `workspace:*`
+  is not a blocker: pnpm rewrites it at publish time. Verified by packing
+  `@tuplescope/core` (46 files, dist only) and `@tuplescope/cli` (bin present).
+  Publishing itself is still a deliberate decision, not done here.
 - [x] **19. `embedded-postgres` is a root devDependency.** README now states the
   measured cost (133 MB of a 226 MB `node_modules`) and withdraws the "opt-in"
   framing. *Structural option not taken:* moving it out of the root manifest so
