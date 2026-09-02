@@ -144,3 +144,47 @@ export function createGuard(options: GuardOptions) {
     }
   };
 }
+
+/**
+ * The response headers this page ships with, strict because it can afford to be.
+ *
+ * Measured before writing this: the page carries **no** inline event handlers,
+ * no `<script>` without a `src`, no `<style>` element, no `style` attribute, no
+ * external origin anywhere, and every `fetch` is same-origin. So `'self'` is
+ * enough everywhere and `'unsafe-inline'` is needed nowhere — which is the only
+ * version of this header worth having. The panel-mods design assumed otherwise
+ * ("it currently uses inline handlers freely, so this is not a one-line
+ * addition"); that was true of an earlier page and is not true of this one.
+ *
+ * `default-src 'none'` is the load-bearing line. Every fetch destination this
+ * page does not use — media, object, manifest, worker — is denied by falling
+ * back to it rather than by being listed, so a directive nobody thought of is
+ * closed rather than open.
+ *
+ * `connect-src 'self'` is also the prerequisite panel mods are waiting on: a
+ * Worker inherits its creator's policy, and inside a Worker that directive is a
+ * *complete* statement about the network because a Worker has no navigation and
+ * no elements to build. See docs/panel-mods-design.md §1.
+ */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'content-security-policy': [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "connect-src 'self'",
+    // No `img-src`, no `font-src`: measured, the page loads neither, and
+    // `default-src 'none'` already covers them. An allowance nothing uses is
+    // how a policy loosens — the first image added here should produce a
+    // console error naming the directive, so widening it is a decision.
+    // Nothing here navigates or submits, and a page that cannot be framed
+    // cannot be clickjacked into pressing Run.
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+  // The token lives in the URL until the page strips it. Referrer-Policy keeps
+  // it out of any request that leaves, and nothing here leaves.
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+};

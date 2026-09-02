@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { createGuard, mintToken } from './security.js';
+import { createGuard, mintToken, SECURITY_HEADERS } from './security.js';
 
 const TOKEN = 'test-token-aaaaaaaaaaaaaaaaaaaaaaaa';
 const PORT = 7420;
@@ -202,5 +202,63 @@ describe('mintToken', () => {
     assert.notEqual(a, b);
     assert.ok(a.length >= 40);
     assert.match(a, /^[A-Za-z0-9_-]+$/);
+  });
+});
+
+describe('SECURITY_HEADERS', () => {
+  const csp = SECURITY_HEADERS['content-security-policy']!;
+  const directive = (name) =>
+    csp.split('; ').find((part) => part.startsWith(`${name} `) || part === name);
+
+  it('closes by default, so a directive nobody thought of is denied', () => {
+    // The load-bearing line. Every destination this page does not use — media,
+    // object, manifest, worker — falls back to `none` rather than being listed,
+    // which is what makes an unlisted one closed instead of open.
+    assert.equal(directive('default-src'), "default-src 'none'");
+  });
+
+  it('never allows inline or eval, anywhere', () => {
+    // Measured before this header was written: the page carries no inline
+    // handler, no `<script>` without a src, no `<style>` and no `style`
+    // attribute. So `unsafe-inline` buys nothing and would cost everything —
+    // and `unsafe-eval` would make `connect-src` meaningless in a Worker, which
+    // is the whole reason panel mods are waiting on this.
+    assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|unsafe-hashes/);
+  });
+
+  it('permits no origin but this one', () => {
+    // A single external host in here would be a route out for anything running
+    // on the page, which for a page holding database rows is the thing to stop.
+    assert.doesNotMatch(csp, /https?:|\*|data:|blob:/);
+    for (const name of ['script-src', 'style-src', 'connect-src']) {
+      assert.equal(directive(name), `${name} 'self'`, name);
+    }
+  });
+
+  it('lists no directive the page does not use', () => {
+    // Measured: no image, no font, no media anywhere in the page. Each is
+    // covered by `default-src 'none'`, and an allowance nothing uses is how a
+    // policy loosens without anyone deciding to loosen it.
+    for (const unused of ['img-src', 'font-src', 'media-src', 'object-src']) {
+      assert.equal(directive(unused), undefined, unused);
+    }
+  });
+
+  it('keeps connect-src to self, which is what a panel mod Worker will inherit', () => {
+    // A Worker inherits its creator's policy, and inside a Worker `connect-src`
+    // is a complete statement about the network — there is no navigation and no
+    // element to build. docs/panel-mods-design.md §1.
+    assert.equal(directive('connect-src'), "connect-src 'self'");
+  });
+
+  it('cannot be framed, and cannot navigate or submit', () => {
+    assert.equal(directive('frame-ancestors'), "frame-ancestors 'none'");
+    assert.equal(directive('base-uri'), "base-uri 'none'");
+    assert.equal(directive('form-action'), "form-action 'none'");
+    assert.equal(SECURITY_HEADERS['x-frame-options'], 'DENY');
+  });
+
+  it('sends no referrer, because the token starts life in the URL', () => {
+    assert.equal(SECURITY_HEADERS['referrer-policy'], 'no-referrer');
   });
 });

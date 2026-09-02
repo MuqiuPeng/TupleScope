@@ -194,11 +194,15 @@ the design says plainly that it does not yet satisfy the request that started it
 Do not implement out of this order — steps 29 and 30 are what make step 31 a
 decision rather than a guess.
 
-- [ ] **29. Serve a Content-Security-Policy from the page.** Measured: zero CSP
-  headers, no meta tag. Every guarantee in the r2 design is inherited by the
-  Worker *from the page*, so the page's policy is not a detail of the feature —
-  it is the feature. The page currently uses inline handlers freely, so this is
-  not a one-line addition. It has standalone value and is a hard prerequisite.
+- [x] **29. Serve a Content-Security-Policy from the page** — done, and the
+  reason it was deferred turned out not to exist. The design says "the page
+  currently uses inline handlers freely, so this is not a one-line addition."
+  Measured: **zero** inline handlers, zero `<script>` without a `src`, zero
+  `<style>`, zero `style` attributes, zero external origins. So the page took
+  `default-src 'none'` with `'self'` for script, style and connect, and nothing
+  else — no `unsafe-inline`, no `unsafe-eval`, and no allowance for images or
+  fonts it does not load. Verified in the browser: a full run through the UI,
+  clean, with no violation.
 
   *Note the circularity to break here: the release review deferred CSP on the
   grounds that it was only a prerequisite for panel mods, which do not exist —

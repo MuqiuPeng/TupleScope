@@ -21,7 +21,7 @@ import {
   openWorkspace,
   } from '@tuplescope/workspace';
 import type { Run, Scenario } from '@tuplescope/core';
-import { createGuard, mintToken } from './security.js';
+import { createGuard, mintToken, SECURITY_HEADERS } from './security.js';
 import { removeSession, writeSession } from './session.js';
 import { withRequestOverrides } from './request-overrides.js';
 import type { RequestOverride } from './request-overrides.js';
@@ -43,6 +43,12 @@ async function main(): Promise<void> {
 
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'warn' } });
   app.addHook('onRequest', createGuard({ token, port: PORT, publicPaths: new Set(['/health']) }));
+  // On every response, including the guard's own refusals and the 404s — a
+  // policy that covers only the happy path is a policy with holes in the shapes
+  // an attacker reaches for.
+  app.addHook('onSend', async (_request, reply) => {
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) reply.header(header, value);
+  });
 
   await app.register(fastifyStatic, { root: resolve(here, '../../web/public'), prefix: '/' });
 
