@@ -117,12 +117,25 @@ export interface TableScope {
 /**
  * What happened to one row.
  *
- * `entered-scope` / `left-scope` exist because a filtered observation makes
- * absence ambiguous: with `where customer_id = 7`, a row that vanishes may have
- * been deleted, or may have had its `customer_id` changed. Those are different
- * events and a refund tool must not conflate them. Adding these later would
- * break every consumer that switched exhaustively on `kind`, so they are here
- * from the start even though v0.1 does not yet emit them.
+ * `left-scope` exists because a filtered observation makes *absence* ambiguous:
+ * with `where customer_id = 7`, a row that vanishes may have been deleted, or
+ * may have had its `customer_id` changed. Those are different events and a
+ * refund tool must not conflate them, so the engines emit `left-scope` for the
+ * second.
+ *
+ * `entered-scope` is its mirror and is **never emitted, by design** — the
+ * symmetry the name suggests does not exist in the data. Presence is not
+ * ambiguous the way absence is: the before-image is read *by key, with no watch
+ * predicate*, so a row that existed outside the scope is still found and still
+ * pairs. It arrives as an ordinary `update` whose predicate column moved, which
+ * is both true and more legible than a fifth kind would be. Measured, not
+ * assumed — see `mvcc-adapter.test.ts`, 'calls a row entering the watch
+ * predicate an update, not an insert', written after a review claimed such a
+ * row was indistinguishable from a genuine insert.
+ *
+ * The variant stays in the union rather than being removed: taking a member out
+ * breaks every consumer that switched exhaustively on `kind` just as surely as
+ * adding one would, and it costs nothing to keep a documented dead branch.
  */
 export type ChangeKind =
   | 'insert'

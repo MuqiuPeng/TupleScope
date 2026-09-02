@@ -18,7 +18,7 @@ Status: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` decided against
 These produce a decided verdict that is not true. Each needs a test that fails
 before the fix.
 
-- [ ] **1. `sum` / `min` / `max` do not refuse a truncated read.**
+- [x] **1. `sum` / `min` / `max` do not refuse a truncated read.**
   `requireWholeSet` only inspects `{kind: 'selection', partial}`
   (`packages/expr/src/evaluate.ts:791-808`), and the column node returns
   `{kind: 'column'}` with no `partial` flag (`:583-608`), so the flag is lost the
@@ -28,7 +28,7 @@ before the fix.
   `evaluate.test.ts:668-686` covers only the selectors that already refuse.
   *This is the only known false green in the language.*
 
-- [ ] **2. `maskColumns` fails open on a typo.**
+- [x] **2. `maskColumns` fails open on a typo.**
   Config validation accepts any string and never resolves it against the schema,
   so a misspelled column is captured in the clear into `.tuplescope/runs`,
   `--json` and CI reports. README states masking happens at capture precisely so
@@ -56,14 +56,14 @@ before the fix.
   as `expectByDetection` would give the wrong reason, which is the one thing the
   suite forbids. Covered by unit test in the meantime.
 
-- [ ] **4. `entered-scope` is dead code.**
-  No adapter emits it. Both insert sites write `kind: 'insert'` unconditionally
-  (`net-view.ts:95,165`, `snapshot-adapter.ts:372,463`) while the delete side does
-  branch (`kind: table.where ? 'left-scope' : 'delete'`, `net-view.ts:202`). So
-  under a narrowed `watch:` predicate, a row that merely *started matching* is
-  reported as a genuine INSERT and nothing can tell the two apart.
-  *Decide: implement the symmetric case, or delete the variant and say plainly
-  that a narrowed watch cannot distinguish them.*
+- [x] **4. `entered-scope` is dead code** — and correctly so. The audit's claim
+  that a row entering a narrowed `watch:` arrives as an indistinguishable insert
+  is **wrong**, measured: the before-image is read by key with no watch
+  predicate, so such a row is still found, still pairs, and is reported as an
+  ordinary `update` whose predicate column moved. The concept is not missing, it
+  is unnecessary. Type comment corrected to say so; the variant stays in the
+  union because removing a member breaks exhaustive consumers exactly as adding
+  one would.
 
 - [ ] **5. MCP `check_scenarios` is materially weaker than `tuplescope check`.**
   It destructures only `{ tables }` from `preflight()` (`apps/mcp/src/server.ts:262`),
@@ -196,3 +196,6 @@ decision rather than a guess.
 - [x] Departure tests crashed on a machine with no database, contradicting the
   README, on a path CI never exercises (`c231304`).
 - [x] GitGuardian finding on `7b85aae` — dismissed by the author.
+- [x] `junit.ts` held its control-character class as literal bytes, so `file`
+  and grep treated the whole file as binary and skipped it silently (`fe09ffa`).
+  Found by three greps for symbols that were plainly there coming back empty.

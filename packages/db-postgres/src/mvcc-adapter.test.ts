@@ -320,6 +320,33 @@ describe('MvccPostgresAdapter', { skip: available ? false : 'no PostgreSQL reach
     await sql.query(`UPDATE accounts SET status = 'ACTIVE' WHERE id = 'acc_b'`);
   });
 
+  it('calls a row entering the watch predicate an update, not an insert', async () => {
+    // The symmetric case to `left-scope`, and the reason `entered-scope` has
+    // never been emitted: the before-image is read **by key, with no watch
+    // predicate**, so a row that existed outside the scope is still found and
+    // still pairs. It is reported as an update whose predicate column moved —
+    // true, and legible.
+    //
+    // Written because a review claimed the opposite: that such a row arrives as
+    // a genuine insert with nothing to tell the two apart. Measured here rather
+    // than reasoned about, so the claim cannot come back.
+    const base = await scope();
+    await sql.query(`UPDATE accounts SET status = 'CLOSED' WHERE id = 'acc_b'`);
+    const narrowed: CaptureScope = {
+      schema: 'public',
+      database: 'test',
+      allTables: false,
+      tables: base.tables
+        .filter((t) => t.table === 'accounts')
+        .map((t) => ({ ...t, where: `status = 'ACTIVE'` })),
+    };
+    const { changes } = await adapter.capture(narrowed, async () => {
+      await sql.query(`UPDATE accounts SET status = 'ACTIVE' WHERE id = 'acc_b'`);
+    });
+    const [row] = forTable(changes, 'accounts');
+    assert.equal(row!.kind, 'update', 'a row entering the scope must not look created');
+  });
+
   it('reports a quiet database as quiet', async () => {
     const noise = await adapter.probeBaselineNoise(await scope(), 120);
     assert.deepEqual(noise.changes, []);
