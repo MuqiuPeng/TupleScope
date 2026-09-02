@@ -127,12 +127,14 @@ before the fix.
   "works" and "someone else can see that it works".*
 - [ ] **18. npm is structurally blocked.** Six packages `private: true`; every
   library at `0.0.0`; no `engines`, `repository` or `files`.
-- [ ] **19. `embedded-postgres` is a root devDependency.** The first documented
-  command fetches 133 MB for everyone, including users with their own PostgreSQL.
-  README frames it as opt-in and "about 51 MB" (the compressed download).
-- [ ] **20. No `engines: {node: ">=22"}`.** A Node 20 user gets a `node --test`
+- [x] **19. `embedded-postgres` is a root devDependency.** README now states the
+  measured cost (133 MB of a 226 MB `node_modules`) and withdraws the "opt-in"
+  framing. *Structural option not taken:* moving it out of the root manifest so
+  only CI and `pnpm testdb` users install it. That would make a checkout much
+  smaller and costs a step in the contributing instructions.
+- [x] **20. No `engines: {node: ">=22"}`.** A Node 20 user gets a `node --test`
   glob failure with nothing connecting it to their Node version.
-- [ ] **21. Six environment variables are undocumented** — including the only
+- [x] **21. Six environment variables are undocumented** — including the only
   escape from `EADDRINUSE` on a second `pnpm start`.
 - [x] **22. `release-prep` is fully merged** (0 commits not in `main`) and can be
   deleted.

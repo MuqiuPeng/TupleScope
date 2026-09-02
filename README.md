@@ -126,10 +126,15 @@ brings its own:
 pnpm testdb                    # 127.0.0.1:7432, trust auth on loopback, logical
 ```
 
-It is a platform binary pnpm fetches (about 51 MB on macOS, 23 MB on Linux), so
-there is nothing to install and no Docker. Data lives in `.pgdata`; delete it
-for a clean slate. It exists for the test suite and for exactly this — it is not
-part of what TupleScope ships.
+It is a platform binary, so there is nothing to install and no Docker. Data lives
+in `.pgdata`; delete it for a clean slate.
+
+Be aware of what it costs, because it is not opt-in: `embedded-postgres` is a
+root devDependency, so **the first command on this page fetches it**, whether or
+not you ever run `pnpm testdb`. Measured on macOS/arm64 it is 133 MB unpacked,
+of a 226 MB `node_modules`. It is not part of what TupleScope ships — nothing
+that reaches a user's machine depends on it — but it is part of what a checkout
+costs, and this page previously implied otherwise.
 
 ### The UI
 
@@ -817,6 +822,21 @@ deliberately relational and
 Postgres-shaped rather than pretending to a database-neutral value model it
 cannot honestly provide — a document store will be a new ChangeSet variant, not
 this one wearing a disguise.
+
+## Environment
+
+Nothing here is required; each has a default that is what you want. They are
+listed because a value that changes behaviour and is documented nowhere is
+indistinguishable from a bug.
+
+| | |
+| --- | --- |
+| `TUPLESCOPE_PORT` | Port for `pnpm start`. Default 7420. A second runtime on one machine needs this — otherwise the second start dies on `EADDRINUSE`. |
+| `TUPLESCOPE_TOKEN` | Fixes the runtime's access token instead of minting one per start. **Defeats the per-start property**, and on a command line it lands in shell history and in `ps`. For a supervisor that must know the URL in advance; not for convenience. |
+| `TUPLESCOPE_TEST_DATABASE_URL` | Where the integration tests look for PostgreSQL. Default `postgresql://postgres:postgres@127.0.0.1:7432/postgres` — what `pnpm testdb` starts. |
+| `LOG_LEVEL` | Fastify's log level in the runtime. |
+| `NO_COLOR` / `FORCE_COLOR` | The usual conventions, honoured alongside `--no-color`. |
+| `COLUMNS` | Overrides the detected terminal width, which decides where values are truncated. Useful for reproducing a diff in a fixed width. |
 
 ## Tests
 
