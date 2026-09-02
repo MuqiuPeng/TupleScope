@@ -1,0 +1,190 @@
+# Backlog
+
+Every item here was verified against the code on 2026-09-02, by a 14-agent audit
+whose findings were then put through an adversarial refutation pass: 154 claims
+confirmed, 18 overclaimed, 3 refuted. Items are ordered by *what a wrong answer
+costs*, not by effort.
+
+The ordering principle is the project's own: an answer that looks precise and is
+wrong outranks everything else, because it is the failure this tool exists to
+prevent. A dead flag wastes a minute. A false green ends an investigation.
+
+Status: `[ ]` open · `[x]` done · `[~]` in progress · `[-]` decided against
+
+---
+
+## P0 — wrong answers
+
+These produce a decided verdict that is not true. Each needs a test that fails
+before the fix.
+
+- [ ] **1. `sum` / `min` / `max` do not refuse a truncated read.**
+  `requireWholeSet` only inspects `{kind: 'selection', partial}`
+  (`packages/expr/src/evaluate.ts:791-808`), and the column node returns
+  `{kind: 'column'}` with no `partial` flag (`:583-608`), so the flag is lost the
+  moment a column is read off the set. Measured: with 1200 rows and a 500-row
+  limit, `count(rows(events)) == 500` refuses, while
+  `sum(after(rows(events).amount))` answers from 500 rows and **passes**.
+  `evaluate.test.ts:668-686` covers only the selectors that already refuse.
+  *This is the only known false green in the language.*
+
+- [ ] **2. `maskColumns` fails open on a typo.**
+  Config validation accepts any string and never resolves it against the schema,
+  so a misspelled column is captured in the clear into `.tuplescope/runs`,
+  `--json` and CI reports. README states masking happens at capture precisely so
+  it cannot leak into those; that holds only for a correctly spelled column.
+  `check` resolves tables and predicate columns against the live schema already
+  and is the natural place for this.
+
+- [ ] **3. A keyless table's DELETE is invisible on two of three engines.**
+  Under `mvcc-xmin` and `wal`, a delete from a table with no PK and no usable
+  unique index produces **zero** entries in `changes` — `net-view.ts:104`
+  `continue`s past `readDepartedKeys`. Under `snapshot-diff` the same delete is
+  reported. The only universal signal is `degraded-row-identity`, whose severity
+  is `warn`, not `error` (`verdict.ts:88`), so it does not escalate the run on its
+  own. The CLI refuses to print "Not a single row was touched" when it is present
+  (`output.ts:165-175`), but a JSON or JUnit consumer reading `changes` and the
+  verdict — and not the warnings array — is still misled.
+  *Decide: escalate to `error`, or carry the blindness into the envelope where a
+  machine consumer will see it.*
+
+- [ ] **4. `entered-scope` is dead code.**
+  No adapter emits it. Both insert sites write `kind: 'insert'` unconditionally
+  (`net-view.ts:95,165`, `snapshot-adapter.ts:372,463`) while the delete side does
+  branch (`kind: table.where ? 'left-scope' : 'delete'`, `net-view.ts:202`). So
+  under a narrowed `watch:` predicate, a row that merely *started matching* is
+  reported as a genuine INSERT and nothing can tell the two apart.
+  *Decide: implement the symmetric case, or delete the variant and say plainly
+  that a narrowed watch cannot distinguish them.*
+
+- [ ] **5. MCP `check_scenarios` is materially weaker than `tuplescope check`.**
+  It destructures only `{ tables }` from `preflight()` (`apps/mcp/src/server.ts:262`),
+  discarding the `columns` map, so it validates no predicate columns and no
+  `except` names. It also returns an unconditional all-clear over zero scenarios
+  (`:294-297`) where the CLI refuses and exits 3, and it never sets `isError`.
+  Both `predicateColumnsIn` and `exceptedTablesIn` are already exported from
+  `@tuplescope/expr`, which `apps/mcp` already depends on.
+
+- [ ] **6. The bare-table shorthand bypasses `check`'s table extraction.**
+  `tablesNamedIn` (`apps/cli/src/main.ts:663-666`, and the identical regex at
+  `apps/mcp/src/server.ts:304`) matches only an identifier in a selector's first
+  argument, so `sum(delta(walets.balance))` yields nothing while
+  `changes(walets)` is caught. The dotted form is exactly what `promote` emits
+  (`promote.ts:386`), so a kept cross-row invariant with a bad table name is
+  invisible to the command that exists to catch bad table names.
+
+- [ ] **7. An empty schema renders as `` 0 tables in `` ``.**
+  The schema name goes blank exactly when the watch scope is empty — which is the
+  state in which every subsequent run will say "Nothing was written".
+
+- [ ] **8. `status` collapses when any secret is unset.**
+  It then answers none of its three questions, drops the workspace name, and
+  exits 2 — even when the missing secret is an identity token with nothing to do
+  with the database. The suppression should be scoped to what actually depends on
+  the missing value.
+
+---
+
+## P1 — surfaces that do not do what they say
+
+- [ ] **9. `url --all` is unreachable dead code.** `all` is absent from `OPTIONS`
+  and `parseArgs` is strict, so the branch at `main.ts:219-224` cannot run; the
+  hint at `:227` actively directs users to it. *(Disclosed in Known issues.)*
+- [ ] **10. `--junit -` emits XML no parser accepts, silently, exit 0.** Written
+  to a path the output is correct. *(Disclosed in Known issues.)*
+- [ ] **11. `--wide` is a documented no-op.** Declared (`main.ts:77`), in HELP
+  (`:136`), carried into `Flags` (`output.ts:25`), and read by nobody.
+  `--columns all` is the flag that works.
+- [ ] **12. `--baseline abc` silently disables the noise probe.** NaN, no
+  validation, exit 0. Its two policy-flag siblings both validate and exit 4.
+- [ ] **13. `--pass-with-no-scenarios` is absent from HELP.** The person who needs
+  it — wiring CI before any scenario exists — cannot discover it.
+- [ ] **14. `rows(*)` parses and can never evaluate.** The engine's pre-fetch skips
+  any selector without a table (`scenario-engine/src/index.ts:329`), so it always
+  refuses. Refuse it at parse instead.
+- [ ] **15. Two dead routes.** `POST /api/runs` and `DELETE /api/assertions` have
+  no callers repo-wide. The run path is implemented twice, and the dead copy's
+  error handling has diverged in its favour — the UI shows worse messages than the
+  code contains.
+- [ ] **16. Exit-code and help inconsistencies.** `<subcommand> --help` exits 4;
+  exit 1 is overloaded across `url` and two `secret` paths, none documented.
+
+---
+
+## P2 — release blockers
+
+- [ ] **17. Nothing to run.** `examples/` is gitignored, so a fresh clone has no
+  backend, no schema and no scenario. Every demonstration the README is built
+  around is unreachable to a reader. *This is the largest single distance between
+  "works" and "someone else can see that it works".*
+- [ ] **18. npm is structurally blocked.** Six packages `private: true`; every
+  library at `0.0.0`; no `engines`, `repository` or `files`.
+- [ ] **19. `embedded-postgres` is a root devDependency.** The first documented
+  command fetches 133 MB for everyone, including users with their own PostgreSQL.
+  README frames it as opt-in and "about 51 MB" (the compressed download).
+- [ ] **20. No `engines: {node: ">=22"}`.** A Node 20 user gets a `node --test`
+  glob failure with nothing connecting it to their Node version.
+- [ ] **21. Six environment variables are undocumented** — including the only
+  escape from `EADDRINUSE` on a second `pnpm start`.
+- [x] **22. `release-prep` is fully merged** (0 commits not in `main`) and can be
+  deleted.
+- [ ] **23. The working directory is still `StateScope`.** Content and remote are
+  both TupleScope.
+
+---
+
+## P3 — coverage
+
+- [ ] **24. `apps/web` has no client-side tests.** 1,574 lines; the runtime is
+  covered, the page is not.
+- [ ] **25. The Windows and Linux secret backends have no test files**, and CI has
+  no Windows runner. The README table's "yes" is stronger than the evidence.
+- [ ] **26. `apps/mcp` has one test file**, covering handshake prose only.
+
+---
+
+## Documentation
+
+- [ ] **27. Known issues omits items 1, 2, 7 and 8.** Having a disclosure section
+  teaches readers to treat it as exhaustive, which makes an omission cost more
+  than it would without one.
+- [ ] **28. The noise probe is not on by default.** README describes it as running
+  before each run; `baselineWindowMs` defaults to 0, so only a workspace copied
+  from the template gets it.
+
+---
+
+## Panel mods
+
+Designed to r2 and frozen (`docs/panel-mods-design.md`). Nothing is built, and
+the design says plainly that it does not yet satisfy the request that started it.
+Do not implement out of this order — steps 29 and 30 are what make step 31 a
+decision rather than a guess.
+
+- [ ] **29. Serve a Content-Security-Policy from the page.** Measured: zero CSP
+  headers, no meta tag. Every guarantee in the r2 design is inherited by the
+  Worker *from the page*, so the page's policy is not a detail of the feature —
+  it is the feature. The page currently uses inline handlers freely, so this is
+  not a one-line addition. It has standalone value and is a hard prerequisite.
+
+  *Note the circularity to break here: the release review deferred CSP on the
+  grounds that it was only a prerequisite for panel mods, which do not exist —
+  while panel mods cannot be built because CSP does not exist. Break it from the
+  CSP end.*
+
+- [ ] **30. Draw three real panels against the scene vocabulary, on paper.**
+  `line | bar | dot | text | rule` was written from two imagined charts. One of
+  the three must be "looks like the product's own screen", which is the request
+  that started this feature and which the vocabulary plainly does not satisfy
+  (`panel-mods-design.md:293-300`).
+
+- [ ] **31. Then decide:** build r2 as frozen, widen the vocabulary, or record
+  that this shape is wrong for the original ask.
+
+---
+
+## Closed
+
+- [x] Departure tests crashed on a machine with no database, contradicting the
+  README, on a path CI never exercises (`c231304`).
+- [x] GitGuardian finding on `7b85aae` — dismissed by the author.

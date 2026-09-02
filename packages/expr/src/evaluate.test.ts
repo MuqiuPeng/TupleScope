@@ -677,6 +677,37 @@ describe('a read that stopped at its limit', () => {
     assert.match(ask('single(rows(events)).after.id == "0"', false, one), /needs the whole set/);
   });
 
+  /**
+   * The half the guard was missing.
+   *
+   * `count()` and `isEmpty()` are questions about the *set*, and the guard
+   * caught those because it inspects a selection. `sum()` is a question about
+   * the set too — it just reads a column on the way — and reading that column
+   * discarded the truncation flag, so the guard was called with a value that
+   * could not carry it and silently passed. Measured: `count(rows(events))`
+   * refused while `sum(after(rows(events).id))` answered 3 over a read that
+   * stopped early. A fraction, presented as a total.
+   */
+  for (const source of [
+    'sum(after(rows(events).id)) == "3"',
+    'min(after(rows(events).id)) == "0"',
+    'max(after(rows(events).id)) == "2"',
+    'sum(delta(rows(events).id)) == "0"',
+  ]) {
+    it(`refuses \`${source}\` over a partial read`, () => {
+      assert.equal(ask(source, true), 'answered', 'it must answer when the read was complete');
+      assert.match(ask(source, false), /needs the whole set/);
+    });
+  }
+
+  it('refuses hasWrite() over a partial read, because an unread row may hold the write', () => {
+    // `hasWrite(...) == false` is the shape of a "this endpoint wrote nothing
+    // here" guard. Over a truncated read, false means "none of the rows I
+    // happened to read had a write", which is a different claim.
+    assert.equal(ask('hasWrite(rows(events)) == false', true), 'answered');
+    assert.match(ask('hasWrite(rows(events)) == false', false), /needs the whole set/);
+  });
+
   it('stays refused after a predicate narrows it', () => {
     // Narrowing does not complete it: the rows that were never read might have
     // matched too, so the count is still a lower bound.

@@ -75,7 +75,7 @@ export type EvalResult =
    * become unanswerable; questions about a row that is here stay decided.
    */
   | { kind: 'selection'; rows: ReadonlyArray<RowChange>; partial?: true }
-  | { kind: 'column'; values: ReadonlyArray<Value | null>; temporal: Temporal };
+  | { kind: 'column'; values: ReadonlyArray<Value | null>; temporal: Temporal; partial?: true };
 
 // ─── Value semantics ──────────────────────────────────────────────────────────
 
@@ -587,7 +587,15 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
             `.after.${expr.column}, or delta(...${expr.column}).`,
         );
       }
-      const rows = asSelection(evaluate(expr.source, ctx), 'a column read');
+      const evaluated = evaluate(expr.source, ctx);
+      const rows = asSelection(evaluated, 'a column read');
+      // Reading a column off a truncated set does not complete it. The flag has
+      // to travel with the values, because the questions that must refuse —
+      // sum, min, max — are asked one level up, after the selection is gone.
+      const partial =
+        (evaluated.kind === 'selection' || evaluated.kind === 'column') && evaluated.partial
+          ? { partial: true as const }
+          : {};
       if (expr.temporal === 'delta') {
         const values = rows.map((change) => {
           const before = change.before?.[expr.column] ?? null;
@@ -601,10 +609,10 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
           // never falls back to zero, which would be the claim "nothing moved".
           return visible(pgType, to.minus(from).toString());
         });
-        return { kind: 'column', values, temporal: 'delta' };
+        return { kind: 'column', values, temporal: 'delta', ...partial };
       }
       const values = rows.map((change) => rowFor(change, expr.temporal!)?.[expr.column] ?? null);
-      return { kind: 'column', values, temporal: expr.temporal };
+      return { kind: 'column', values, temporal: expr.temporal, ...partial };
     }
 
     case 'aggregate': {
@@ -658,7 +666,12 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
     }
 
     case 'hasWrite': {
-      const rows = asSelection(evaluate(expr.source, ctx), 'hasWrite');
+      const evaluated = evaluate(expr.source, ctx);
+      const rows = asSelection(evaluated, 'hasWrite');
+      // Never guarded at all: `hasWrite(...) == false` over a truncated read
+      // means "no row I happened to read had a write", which is a different
+      // claim from the one the assertion makes.
+      requireWholeSet(evaluated, 'hasWrite()');
       requireDetection(ctx.changes, 'write', 'hasWrite');
       return { kind: 'scalar', value: rows.some((c) => c.hasWrite) };
     }
@@ -799,7 +812,7 @@ function asSelection(value: EvalResult, what: string): ReadonlyArray<RowChange> 
  * values.
  */
 function requireWholeSet(value: EvalResult, what: string): void {
-  if (value.kind === 'selection' && value.partial) {
+  if ((value.kind === 'selection' || value.kind === 'column') && value.partial) {
     throw new Unevaluable(
       `${what} needs the whole set, and this read stopped at its limit — there are rows it did ` +
         'not see. Narrow the selector with a predicate so it names the rows you mean.',
