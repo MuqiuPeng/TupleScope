@@ -139,6 +139,51 @@ function boundsOf(code: string): string {
   return BOUNDS[code] ?? 'this run may be reporting less than the whole picture';
 }
 
+// ─── what bounds a verdict, in words ──────────────────────────────────────────
+//
+// Named, because `mergeVerdicts` has to recognise each per-run sentence to say
+// what it means for a suite. Folding them by string identity alone undercounted
+// (two datasets' "1 undecided assertion was not counted" became one sentence
+// beside counts of 2) and leaked (a suite whose checks read 1/1 passed was told
+// "no assertions were evaluated", a sentence true of two of its three datasets).
+
+const PARTIAL_BOUND =
+  'this run started mid-dataset, so earlier steps left the database in whatever state the previous run did';
+const UNPROBED_BOUND = 'the baseline was not probed, so concurrent writes would not have been detected';
+const UNCHECKED_OBSERVED = 'no assertions were evaluated; the run observed changes but checked none of them';
+// A step refused before it sent — a `${…}` in its request, a variable nothing
+// captured — observed nothing. The sentence above said it "observed changes".
+const UNCHECKED_UNOBSERVED =
+  'no assertions were evaluated, and no step got as far as observing the database, so nothing was observed either';
+const BY_POLICY_BOUND = /^\d+ undecided assertions? (?:was|were) not counted against this run, by policy$/;
+
+function byPolicyBound(unevaluable: number): string {
+  return (
+    `${unevaluable} undecided assertion${unevaluable === 1 ? ' was' : 's were'} ` +
+    'not counted against this run, by policy'
+  );
+}
+
+/** `accounts, addresses, blocks and 32 more` — names, capped; never only a count. */
+function tablesOf(same: ReadonlyArray<LocatedWarning>): string {
+  const names = [...new Set(same.flatMap((w) => (w.table ? [w.table] : [])))];
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+/**
+ * One line per kind of warning, naming its tables. A step that truncated
+ * thirty-five tables used to leave thirty-five copies of the same sentence and
+ * none of the table names.
+ */
+function warningBounds(warnings: ReadonlyArray<LocatedWarning>): string[] {
+  return [...new Set(warnings.map((w) => w.code))].map((code) => {
+    const same = warnings.filter((w) => w.code === code);
+    const where = tablesOf(same);
+    return where ? `${same[0]!.bounds} (${where})` : same[0]!.bounds;
+  });
+}
+
 // ─── counts ───────────────────────────────────────────────────────────────────
 
 export interface AssertionCounts {
@@ -220,6 +265,13 @@ function countAssertions(results: ReadonlyArray<AssertionResult>): AssertionCoun
  * A step whose assertions all evaluated and passed is `passed`; one carrying an
  * undecided assertion is `undecided` under the strict policy, because the step
  * did not establish what it says it establishes.
+ *
+ * So is a step whose own capture carried a warning the policy escalates — the
+ * rule `verdictOf` applies to the run, applied to the step it came from. This
+ * returned `passed` for a step whose observation was `scope-truncated` inside a
+ * run that exited 3, and the web UI, which draws each step from this, put a
+ * green tick on the one step whose observation was cut short (measured on the
+ * payment API's `/debug/reset`, ts-verify re-honesty-runtime run_mtxeox8c).
  */
 export function outcomeOfStep(
   step: StepResult,
@@ -232,7 +284,20 @@ export function outcomeOfStep(
   if (policy.unevaluable === 'error' && step.assertions.some((a) => a.status === 'unevaluable')) {
     return 'undecided';
   }
+  if ((step.changes?.warnings ?? []).some((w) => resolveSeverity(w.code, policy) === 'error')) {
+    return 'undecided';
+  }
   return 'passed';
+}
+
+/**
+ * Whether a step got as far as observing the database. `changes` is absent only
+ * when a step stopped before its observation completed (StepResult), and a step
+ * that passed or failed got through it. A step refused before it sent — a
+ * `${…}` in its request, a variable nothing captured — did not.
+ */
+function observedStep(step: StepResult): boolean {
+  return step.changes !== undefined || step.status === 'passed' || step.status === 'failed';
 }
 
 function locateWarnings(run: Run, policy: VerdictPolicy): LocatedWarning[] {
@@ -290,7 +355,10 @@ export function verdictOf(run: Run, policy: VerdictPolicy = DEFAULT_POLICY): Run
     else if (outcome === 'errored') steps.errored++;
     else if (outcome === 'undecided') steps.undecided++;
     else steps.notRun++;
-    if (outcome !== 'not-run' && step.assertions.length === 0) steps.unchecked++;
+    // "Observed, but checked by no one" — so not a step refused before it
+    // observed anything. The stored refused runs (ts-verify re-cli-run-flags,
+    // topup/ghost and uncaptured/novar) counted their errored step here too.
+    if (outcome !== 'not-run' && step.assertions.length === 0 && observedStep(step)) steps.unchecked++;
   }
   steps.notRun += unreached.length;
 
@@ -327,25 +395,39 @@ export function verdictOf(run: Run, policy: VerdictPolicy = DEFAULT_POLICY): Run
       `evaluated, so this run did not establish what it claims to check`;
   } else if (escalating.length > 0) {
     outcome = 'undecided';
-    reason = `the observation was incomplete: ${escalating[0]!.bounds}`;
+    // Which warning, and where. This used to read "the observation was
+    // incomplete: the observation was cut short, …" — naming neither the
+    // truncation nor any of the thirty-five tables it happened to. Measured on
+    // a step that called the service's own reset endpoint.
+    const first = escalating[0]!;
+    const where = tablesOf(escalating.filter((w) => w.code === first.code));
+    reason = `${first.code}${where ? ` on ${where}` : ''}: ${first.bounds}`;
   } else if (noAssertions) {
     outcome = 'undecided';
     reason = 'this run evaluated no assertions, so it established nothing';
   } else {
     outcome = 'clean';
+    // Under `--unevaluable warn` a clean run can hold assertions nobody decided.
+    // The sentence used to say "4 assertions evaluated and passed" directly
+    // above counts of 2 passed and 2 undecided — the one line an agent reads
+    // first, claiming the opposite of the numbers under it. Found by running
+    // the MCP server against a real service.
+    const decided = assertions.total - assertions.unevaluable;
     reason =
       assertions.total === 0
         ? 'every step ran; nothing was asserted'
-        : `${assertions.total} assertion${assertions.total === 1 ? '' : 's'} evaluated and passed`;
+        : assertions.unevaluable > 0
+          ? `${decided} of ${assertions.total} assertions evaluated and passed; ` +
+            `${assertions.unevaluable} could not be evaluated and ` +
+            `${assertions.unevaluable === 1 ? 'was' : 'were'} not counted against this run, by policy`
+          : `${assertions.total} assertion${assertions.total === 1 ? '' : 's'} evaluated and passed`;
   }
 
   // What qualifies the verdict, whether or not it changed the outcome. A run
   // can be clean and still be worth reading the fine print on.
   const boundedBy: string[] = [];
   if (run.coverage === 'partial') {
-    boundedBy.push(
-      'this run started mid-dataset, so earlier steps left the database in whatever state the previous run did',
-    );
+    boundedBy.push(PARTIAL_BOUND);
   }
   if (unreached.length > 0) {
     // Stopping early is not the same as passing. The suite says nothing about
@@ -357,17 +439,15 @@ export function verdictOf(run: Run, policy: VerdictPolicy = DEFAULT_POLICY): Run
     );
   }
   if (!baseline.probed) {
-    boundedBy.push('the baseline was not probed, so concurrent writes would not have been detected');
+    boundedBy.push(UNPROBED_BOUND);
   }
-  for (const warning of warnings) boundedBy.push(warning.bounds);
+  boundedBy.push(...warningBounds(warnings));
   if (policy.unevaluable === 'warn' && assertions.unevaluable > 0) {
-    boundedBy.push(
-      `${assertions.unevaluable} undecided assertion${assertions.unevaluable === 1 ? ' was' : 's were'} ` +
-        'not counted against this run, by policy',
-    );
+    boundedBy.push(byPolicyBound(assertions.unevaluable));
   }
   if (assertions.total === 0 && steps.total > 0) {
-    boundedBy.push('no assertions were evaluated; the run observed changes but checked none of them');
+    // Tells "saw and checked nothing" from "saw nothing".
+    boundedBy.push(run.steps.some(observedStep) ? UNCHECKED_OBSERVED : UNCHECKED_UNOBSERVED);
   }
 
   return {
@@ -463,7 +543,13 @@ export function mergeVerdicts(
     worst === 'clean'
       ? assertions.total === 0
         ? 'every step ran; nothing was asserted'
-        : `${plural(assertions.total, 'assertion')} evaluated and passed`
+        : // The run-level sentence says this already; a suite of several
+          // datasets said "5 assertions evaluated and passed" over 2 undecided.
+          assertions.unevaluable > 0
+          ? `${assertions.total - assertions.unevaluable} of ${plural(assertions.total, 'assertion')} ` +
+            `evaluated and passed; ${assertions.unevaluable} could not be evaluated and ` +
+            `${assertions.unevaluable === 1 ? 'was' : 'were'} not counted against this run, by policy`
+          : `${plural(assertions.total, 'assertion')} evaluated and passed`
       : worst === 'failed'
         ? `${plural(assertions.failed, 'assertion')} failed`
         : worst === 'undecided'
@@ -486,7 +572,7 @@ export function mergeVerdicts(
     datasets,
     coverage: coverages.size > 1 ? 'mixed' : (verdicts[0]?.coverage ?? 'full'),
     proves: verdicts.some((v) => v.proves === 'bounded') ? 'bounded' : 'full',
-    boundedBy: [...new Set(verdicts.flatMap((v) => v.boundedBy))],
+    boundedBy: suiteBounds(verdicts, assertions),
     baseline: {
       probed: verdicts.every((v) => v.baseline.probed),
       windowMs: verdicts[0]?.baseline.windowMs ?? 0,
@@ -497,6 +583,79 @@ export function mergeVerdicts(
     durationMs: verdicts.reduce((total, v) => total + v.durationMs, 0),
     policy,
   };
+}
+
+/**
+ * What qualifies a suite, said about the suite.
+ *
+ * This was the set-union of every run's sentences, and a per-run sentence is
+ * about one run. Measured through MCP `run_scenario` and the CLI envelope: two
+ * datasets each with one undecided assertion under `--unevaluable warn` left
+ * "1 undecided assertion was not counted against this run, by policy" beside
+ * counts of 2 — the identical sentences collapsed into one. And a suite of
+ * three datasets, two refused before sending and one that passed its only
+ * assertion, said "no assertions were evaluated" over a checks line of 1/1.
+ *
+ * So a sentence that carries a count, or speaks for the whole run, is derived
+ * again from the suite's own numbers. A sentence true of only some datasets
+ * says how many. One that this function does not recognise — a newer
+ * producer's, a hand-edited file's — is kept, with how many datasets said it,
+ * because dropping a qualification is the direction this product cannot err in.
+ */
+function suiteBounds(verdicts: ReadonlyArray<RunVerdict>, assertions: AssertionCounts): string[] {
+  const n = verdicts.length;
+  // One dataset is the suite: its sentences are already about exactly this.
+  if (n <= 1) return [...(verdicts[0]?.boundedBy ?? [])];
+
+  const saying = (test: (bound: string) => boolean): number =>
+    verdicts.filter((v) => v.boundedBy.some(test)).length;
+  const share = (k: number): string => (k === n ? `in each of the ${n} datasets` : `in ${k} of ${n} datasets`);
+  const perRunWarningBounds = new Set(verdicts.flatMap((v) => warningBounds(v.warnings)));
+  const isUnchecked = (b: string): boolean => b === UNCHECKED_OBSERVED || b === UNCHECKED_UNOBSERVED;
+
+  const out: string[] = [];
+  for (const bound of new Set(verdicts.flatMap((v) => v.boundedBy))) {
+    if (bound === PARTIAL_BOUND) {
+      const k = saying((b) => b === bound);
+      out.push(
+        k === n
+          ? bound
+          : `${k} of ${n} datasets started mid-dataset, so earlier steps there left the database in ` +
+              'whatever state the previous run did',
+      );
+    } else if (bound === UNPROBED_BOUND) {
+      const k = saying((b) => b === bound);
+      out.push(
+        k === n
+          ? bound
+          : `the baseline was not probed ${share(k)}, so concurrent writes there would not have been detected`,
+      );
+    } else if (perRunWarningBounds.has(bound)) {
+      // Regrouped over every dataset's warnings, so one kind is one line whose
+      // tables are all of them.
+      out.push(...warningBounds(verdicts.flatMap((v) => v.warnings)));
+    } else if (BY_POLICY_BOUND.test(bound)) {
+      out.push(
+        byPolicyBound(
+          verdicts
+            .filter((v) => v.boundedBy.some((b) => BY_POLICY_BOUND.test(b)))
+            .reduce((total, v) => total + v.assertions.unevaluable, 0),
+        ),
+      );
+    } else if (isUnchecked(bound)) {
+      if (assertions.total === 0) {
+        out.push(saying((b) => b === UNCHECKED_OBSERVED) > 0 ? UNCHECKED_OBSERVED : UNCHECKED_UNOBSERVED);
+      } else {
+        const k = saying(isUnchecked);
+        out.push(`${k} of ${n} datasets evaluated no assertions, so nothing in ${k === 1 ? 'it' : 'them'} was checked`);
+      }
+    } else {
+      // Per-run and possibly count-bearing ("1 step never ran … : read"), so
+      // said with how many datasets said it rather than as if of the suite.
+      out.push(`${bound} (${share(saying((b) => b === bound))})`);
+    }
+  }
+  return [...new Set(out)];
 }
 
 // ─── exit codes ───────────────────────────────────────────────────────────────

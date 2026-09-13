@@ -32,10 +32,14 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); o
 button:disabled { cursor: not-allowed; opacity: .55; }
 code, pre { font-family: var(--mono); }
 
+/* Wraps, so the connectivity detail row can take a line of its own inside the
+   bar and push the columns down rather than cover them. `body` gives row 1 an
+   `auto` height, so the header simply grows. */
 .topbar {
-  min-height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  padding: 0 20px; border-bottom: 1px solid var(--rule); background: rgba(16, 25, 24, .96);
+  min-height: 60px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px;
+  padding: 8px 20px; border-bottom: 1px solid var(--rule); background: rgba(16, 25, 24, .96);
 }
+.topbar-right { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand > div { display: flex; align-items: baseline; gap: 12px; }
 .brand h1 { margin: 0; font-size: 15px; letter-spacing: -.015em; }
@@ -357,7 +361,11 @@ code, pre { font-family: var(--mono); }
   .topbar { height: auto; min-height: 60px; align-items: flex-start; padding: 12px 14px; }
   .brand > div { display: block; }
   .tagline { display: none; }
-  .topbar-meta { max-width: 55%; }
+  /* A line of its own rather than a squeezed third of one: at this width the two
+     indicators and the workspace chips cannot share the row with the brand
+     without one of them being cut off, and the indicators must not be it. */
+  .topbar-right { width: 100%; justify-content: flex-start; }
+  .topbar-meta { max-width: 100%; }
   .layout { display: block; }
   .col { min-height: 0; padding: 18px 14px 32px; border-bottom: 1px solid var(--rule); }
   .dataset-title-row { display: block; }
@@ -532,6 +540,14 @@ code, pre { font-family: var(--mono); }
 }
 .inspector-out { color: var(--ink); flex: 1; min-height: 0; }
 .inspector-err { color: var(--failed); border-top: 1px solid var(--rule); }
+/* A non-loopback target's banner, on every open. */
+.inspector-warn {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--review);
+  font-size: 12px;
+  border-bottom: 1px solid var(--rule);
+}
 
 /* ── first-use drawer ──────────────────────────────────────────────────────
    A drawer and not a modal: a modal is a thing the mouse can complete, and the
@@ -696,3 +712,102 @@ code, pre { font-family: var(--mono); }
   font-size: 11px;
   color: var(--review);
 }
+
+/* ── connectivity ──────────────────────────────────────────────────────────
+   Two indicators, three states each, and the time the answer was taken.
+
+   Three states, and three *shapes*: a filled disc answered, a square cross did
+   not, a dashed ring was never asked. Colour is the fast read and not the only
+   one — on the day this matters someone is looking at it over a shared screen,
+   and `not-checked` must never be mistaken for either of the other two. */
+.reach-strip { display: flex; flex-wrap: wrap; flex: none; align-items: center; gap: 7px; }
+.reach-announce { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.reach-chip {
+  display: inline-flex; max-width: min(330px, 100%); align-items: center; gap: 6px;
+  padding: 4px 9px 4px 5px; border: 1px solid var(--rule); border-radius: 999px;
+  color: var(--muted); background: var(--panel-soft);
+  font: 10px/1.4 var(--mono); text-align: left; cursor: pointer;
+}
+.reach-chip:hover { border-color: var(--rule-strong); }
+.reach-name { min-width: 0; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.reach-state, .reach-age { flex: none; }
+.reach-age { color: var(--faint); }
+/* The neutral, never-asked look is the base, so a state this page has never
+   heard of renders as a question rather than as a green. The two states that
+   claim something override it below. */
+.reach-glyph {
+  width: 15px; height: 15px; flex: none; display: grid; place-items: center;
+  border: 1px dashed currentColor; border-radius: 50%;
+  color: var(--faint); font-size: 8px; line-height: 1;
+}
+.reach-chip.reachable { border-color: color-mix(in srgb, var(--clean) 34%, transparent); }
+.reach-chip.reachable .reach-glyph { border-style: solid; color: var(--clean); background: color-mix(in srgb, var(--clean) 20%, transparent); }
+.reach-chip.reachable .reach-state { color: var(--clean); }
+.reach-chip.unreachable { border-color: color-mix(in srgb, var(--failed) 45%, transparent); }
+.reach-chip.unreachable .reach-glyph { border-style: solid; border-radius: 3px; color: var(--failed); background: color-mix(in srgb, var(--failed) 20%, transparent); }
+.reach-chip.unreachable .reach-state { color: var(--failed); }
+/* Nobody asked. Dashed all the way round — the same hollow treatment
+   `.status-dot.unknown` uses for a verdict that was never recorded. */
+.reach-chip.not-checked { border-style: dashed; }
+.reach-chip.not-checked .reach-state { color: var(--faint); }
+
+/* Older than two minutes, so it has stopped describing now: the colour drains
+   out of the glyph, the ring goes dashed, and the word goes into the past tense
+   — `was reachable`. The shape is what still separates a stale `unreachable`
+   (square) from `not-checked` (round) once both are grey, which is why the rules
+   below touch colour and border-style and never border-radius. */
+.reach-chip.stale { border-color: var(--rule); }
+.reach-chip.stale .reach-glyph { border-style: dashed; color: var(--faint); background: transparent; }
+.reach-chip.stale .reach-state { color: var(--muted); }
+.reach-chip.stale .reach-age { color: var(--review); }
+/* No `checkedAt` at all. The age slot says "no time reported" and is coloured
+   like something to look at, because a missing timestamp is the failure this
+   indicator exists to make visible. */
+.reach-chip.untimed .reach-age { color: var(--review); }
+
+/* "The last check did not complete" — about TupleScope's own runtime, not about
+   either side, so it sits beside the chips instead of inside one. */
+.reach-note {
+  flex: none; padding: 3px 7px; border: 1px dashed color-mix(in srgb, var(--review) 45%, transparent);
+  border-radius: 999px; color: var(--review); font: 10px/1.4 var(--mono); cursor: help;
+}
+
+/* The reason and the remedy. No `display` here on purpose: `[hidden]` is what
+   closes it. */
+.reach-detail {
+  flex: 1 1 100%; margin: 2px 0 4px; padding: 10px 12px;
+  border: 1px solid var(--rule-strong); border-radius: 6px;
+  background: var(--panel-raised); font-size: 11px; line-height: 1.55;
+}
+.reach-detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; }
+.reach-detail h3 { margin: 0; font-size: 12px; }
+.reach-detail p { margin: 5px 0 0; color: var(--muted); }
+.reach-verdict { font: 10px/1.4 var(--mono); }
+.reach-verdict.reachable { color: var(--clean); }
+.reach-verdict.unreachable { color: var(--failed); }
+.reach-verdict.not-checked { color: var(--faint); }
+/* After the three above, so it wins by source order exactly as the chip rules
+   at .reach-chip.stale do. A verdict drawn from a probe too old to describe now
+   must not keep the colour that says it does. */
+.reach-verdict.stale { color: var(--muted); }
+.reach-status { color: var(--faint); font: 10px/1.4 var(--mono); }
+.reach-detail p.reach-when { color: var(--faint); font: 10px/1.5 var(--mono); }
+/* Driver output. Monospaced, and allowed to break anywhere — a connection error
+   arrives as one long unspaced string often enough to matter. */
+.reach-detail p.reach-reason { font: 10.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.reach-detail p.reach-reason.warn { color: var(--review); }
+.reach-detail p.reach-remedy { color: var(--ink); }
+.reach-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* Why the control beside it is grey, in words — and the way out, because the
+   refusal rests on a probe that may be two minutes old and a reader who has just
+   started their database should not have to reload the page to say so. */
+.run-refusal {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0; padding: 7px 0 9px; border-top: 1px solid var(--rule);
+  color: var(--failed); font: 10px/1.5 var(--mono);
+}
+.run-refusal strong { font-weight: 600; }
+.run-refusal span { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.request-actions .run-refusal { flex-basis: 100%; padding: 9px 0 0; }

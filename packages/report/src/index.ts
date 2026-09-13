@@ -7,3 +7,5 @@
  */
 export * from './envelope.js';
 export * from './junit.js';
+export * from './stored.js';
+export * from './merge.js';

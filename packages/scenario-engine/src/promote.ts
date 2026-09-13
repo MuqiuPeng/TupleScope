@@ -68,7 +68,13 @@ function literalOf(
     if (captured === value.text) return `{{${name}}}`;
   }
   if (NUMERIC.has(value.pgType) && Decimal.isDecimal(value.text)) return value.text;
-  return JSON.stringify(value.text);
+  // The language's escapes are a backslash and the quote, nothing else: `\n`
+  // reads as the letter n. JSON.stringify wrote a newline in a key as `\n`, so
+  // the kept assertion asked about "anb" and matched nothing. A control
+  // character has no spelling here at all, so there is no honest literal to
+  // offer — the candidate is dropped, as for a masked value.
+  if (/[\u0000-\u001f\u007f]/.test(value.text)) return null;
+  return `"${value.text.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
 }
 
 /** `id = {{payment_id}}` — the predicate that pins a candidate to one row. */
@@ -222,15 +228,25 @@ function forChange(
   // step that wrote two ledger legs offered the same wrong assertion twice.
   if (change.kind !== 'update') return out;
 
+  // Columns that changed and were not offered, and why — so the fallback below
+  // says what is true of this row rather than that nothing changed.
+  const unoffered = new Map<string, 'masked' | 'volatile' | 'unspellable'>();
+
   // An update: one candidate per column that actually moved.
   for (const column of change.visibleColumns) {
-    if (VOLATILE.test(column)) continue;
+    if (VOLATILE.test(column)) {
+      unoffered.set(column, 'volatile');
+      continue;
+    }
     const before = change.before?.[column];
     const after = change.after?.[column];
     if (!after) continue;
     // The type, after the name, because the name list guesses and the type does
     // not. A wall clock differs on the next run by construction.
-    if (VOLATILE_TYPES.has(after.pgType ?? '')) continue;
+    if (VOLATILE_TYPES.has(after.pgType ?? '')) {
+      unoffered.set(column, 'volatile');
+      continue;
+    }
     // The hole this closes: the key guard above covered the *predicate*, and
     // this loop went on turning the column's own value into a literal. An
     // update to a masked column offered
@@ -240,6 +256,7 @@ function forChange(
     const literal = literalOf(after, variables);
     if (literal === null) {
       withheld.push(`${change.table}.${column}`);
+      unoffered.set(column, isVisible(after) ? 'unspellable' : 'masked');
       continue;
     }
 
@@ -274,15 +291,42 @@ function forChange(
   }
 
   if (out.length === 0) {
-    // A write with nothing visible to assert on is itself the finding.
+    // A write with nothing visible to assert on is itself the finding. The
+    // expression asks only whether the row was written, which is true whether
+    // or not a value moved, so it stands in both cases below; only the
+    // sentence differs.
     out.push({
       expression: `hasWrite(changes(${scoped})) == true`,
-      description: `${change.table} is written to without any value changing (${describeKey(change)})`,
+      description:
+        unoffered.size === 0
+          ? `${change.table} is written to without any value changing (${describeKey(change)})`
+          : // A value did change; it is not one an assertion can hold. This
+            // said "without any value changing" over a row whose only changed
+            // column was masked — the envelope beside it counted the same row
+            // `updated: 1, writtenNoVisibleChange: 0` (ts-verify
+            // re-honesty-runtime, maskprobe: customers.passwordHash).
+            `${change.table} is written to and ${describeUnoffered(unoffered)}, so only the write ` +
+            `is asserted (${describeKey(change)})`,
       changeIndex: index,
       ...(countCaveat(detection, change.table) ? { caveat: countCaveat(detection, change.table)! } : {}),
     });
   }
   return out;
+}
+
+const UNOFFERED_WHY = {
+  masked: 'masked',
+  volatile: 'different on every run',
+  unspellable: 'not writable as a literal',
+} as const;
+
+/** `passwordHash changed, but its value is masked` — which columns moved, and why none is offered. */
+function describeUnoffered(unoffered: ReadonlyMap<string, keyof typeof UNOFFERED_WHY>): string {
+  const columns = [...unoffered.keys()];
+  const named =
+    columns.length === 1 ? columns[0]! : `${columns.slice(0, -1).join(', ')} and ${columns[columns.length - 1]}`;
+  const why = [...new Set(unoffered.values())].map((reason) => UNOFFERED_WHY[reason]).join(' or ');
+  return `${named} changed, but ${columns.length === 1 ? 'its value is' : 'their values are'} ${why}`;
 }
 
 /**

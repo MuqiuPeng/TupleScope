@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { loadWorkspaceConfig } from './config.js';
+import { loadWorkspace } from './open.js';
 import { openWorkspace, WorkspaceError } from './session.js';
 
 const CONFIG = `
@@ -36,7 +36,11 @@ after(async () => {
 
 /** Opens against the fixture. Nothing here connects; the DSN points nowhere. */
 async function open() {
-  return openWorkspace(await loadWorkspaceConfig({ from: root, env: {} }), {
+  // Through the same door as every surface: the fixture names no secret, so
+  // no store is opened — and a config straight off disk no longer type-checks
+  // as something a session can open.
+  const { config } = await loadWorkspace({ from: root, env: {} });
+  return openWorkspace(config, {
     baselineWindowMs: 0,
     history: false,
   });

@@ -232,7 +232,8 @@ export function psqlDisclosure(binding: PsqlServiceBinding): {
           ? `  psql is not bound by maskColumns — it will show ${maskedColumns.join(', ')} in full.`
           : `  psql is not bound by maskColumns.`,
         ``,
-        `  \`${alias}\` is a name this repository chose. Bind it yourself, once:`,
+        // See adminer.ts: the binding exists here; this workspace lacks a grant.
+        `  \`${alias}\` is bound on this machine, but not enabled for this workspace. Enable it yourself, once:`,
         ``,
         `    tuplescope handoff enable psql-service --as ${alias} --service ${binding.service}`,
         ``,

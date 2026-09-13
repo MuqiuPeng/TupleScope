@@ -16,34 +16,61 @@ import { panelsFor } from './panels.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerResetRoute } from './reset-route.js';
 import { openUrl } from './open-url.js';
-import { addAssertion, ScenarioSaveError } from '@tuplescope/scenario-engine';
+import { registerAssertionRoute } from './assertion-route.js';
 import {
-  loadWorkspaceConfig,
-  openWorkspace,
-  } from '@tuplescope/workspace';
+  registerHealthRoute,
+  runRefusal,
+  startTheDatabase,
+  workspaceReachability,
+} from './health-route.js';
+import { createRunAdmission } from './run-admission.js';
+import { loadWorkspace, openWorkspace } from '@tuplescope/workspace';
 import type { Run, Scenario } from '@tuplescope/core';
 import { outcomeOfStep, verdictOf } from '@tuplescope/core';
 import { createGuard, mintToken, SECURITY_HEADERS } from './security.js';
 import { removeSession, writeSession } from './session.js';
 import { withRequestOverrides } from './request-overrides.js';
 import type { RequestOverride } from './request-overrides.js';
+import { scrubbingLogStream, scrubErrorBodies, scrubStepErrors } from './scrub.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env['TUPLESCOPE_PORT'] ?? 7420);
 
+/**
+ * Removes resolved credentials from text this process did not format.
+ *
+ * A PostgreSQL driver reports an authentication failure with the connection
+ * string inline, and that message is what a route sends back to the page. Set
+ * once the workspace has resolved its secrets; identity until then.
+ */
+let scrub: (text: string) => string = (text) => text;
+
 /** The message of anything thrown, without asserting it was an Error. */
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return scrub(error instanceof Error ? error.message : String(error));
 }
 
 async function main(): Promise<void> {
-  const config = await loadWorkspaceConfig();
+  // Load and resolve, through the one door. The runtime used to load the file
+  // and open it — and a workspace with its password in the keychain, which is
+  // what the README tells people to do, could not start.
+  const resolved = await loadWorkspace();
+  scrub = resolved.scrub;
+  const config = resolved.config;
   const token = process.env['TUPLESCOPE_TOKEN'] ?? mintToken();
 
   const workspace = openWorkspace(config);
   const { adapter, engine } = workspace;
 
-  const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'warn' } });
+  // Both through the workspace's scrub: every log line on its way to stdout, and
+  // every error body on its way out. See `scrub.ts` for the leak that measured.
+  const app = Fastify({
+    logger: {
+      level: process.env['LOG_LEVEL'] ?? 'warn',
+      stream: scrubbingLogStream(resolved.scrub),
+    },
+  });
+  scrubErrorBodies(app, resolved.scrub);
   app.addHook('onRequest', createGuard({ token, port: PORT, publicPaths: new Set(['/health']) }));
   // On every response, including the guard's own refusals and the 404s — a
   // policy that covers only the happy path is a policy with holes in the shapes
@@ -90,16 +117,47 @@ async function main(): Promise<void> {
 
   app.get('/health', async () => ({ ok: true, service: 'tuplescope' }));
 
-  app.get('/api/workspace', async () => ({
-    name: config.name,
+  app.get('/api/workspace', async () => {
+    // A database that is down is no longer fatal. This used to answer 503, which
+    // turned the whole page into an error screen — while the scenario list, the
+    // stored runs and the indicator that would have *explained* the 503 all need
+    // no database at all. It is now one of two reported states, and the page
+    // stays usable around it.
+    //
+    // `baseUrl` is probed rather than echoed. Echoing it let the page draw a
+    // backend nobody had asked about.
+    const { tables, database, backend } = await workspaceReachability({
+      adapter,
+      baseUrl: config.baseUrl,
+      scrub: resolved.scrub,
+    });
+    return {
+      // Scrubbed for the same reason `database` and `backend` are, and it was
+      // missed because it looks inert. This route reads a *resolved* workspace,
+      // so a `baseUrl` written `https://app:${secret:api_pw}@api.example.com`
+      // holds the real credential by the time it gets here — and it travels
+      // inside a 200, which `scrubErrorBodies` never sees. `name` too: a
+      // `${secret:…}` in it is accepted by the config loader.
+      name: resolved.scrub(config.name),
+      baseUrl: resolved.scrub(config.baseUrl),
+      identities: config.identities?.map((i) => i.id) ?? [],
+      tables,
+      captureMethod: adapter.captureMethod,
+      detection: adapter.detection,
+      fidelity: adapter.fidelity,
+      resetConfigured: Boolean(config.resetUrl),
+      database,
+      backend,
+    };
+  });
+
+  // The same two values, cheaply enough to ask on every window focus: no table
+  // listing, and no second copy of the rule that turns an outcome into a state.
+  registerHealthRoute(app, {
+    pingDatabase: () => adapter.ping(),
     baseUrl: config.baseUrl,
-    identities: config.identities?.map((i) => i.id) ?? [],
-    tables: await adapter.listTables(),
-    captureMethod: adapter.captureMethod,
-    detection: adapter.detection,
-    fidelity: adapter.fidelity,
-    resetConfigured: Boolean(config.resetUrl),
-  }));
+    scrub: resolved.scrub,
+  });
 
   app.get('/api/scenarios', async () => {
     await reloadScenarios();
@@ -121,7 +179,8 @@ async function main(): Promise<void> {
       // implementation of the verdict is the one thing this product cannot
       // afford to have.
       verdict: verdictOf(run),
-      steps: decorated.steps.map((step, index) => ({
+      // Step errors travel inside a 200, past the error-body hook.
+      steps: scrubStepErrors(decorated.steps, scrub).map((step, index) => ({
         ...step,
         outcome: outcomeOfStep(run.steps[index]!),
       })),
@@ -153,25 +212,20 @@ async function main(): Promise<void> {
     isRunning: () => [...runJobs.values()].some((job) => job.status === 'running'),
   });
 
+  // The admission rule lives in `run-admission.ts`, where it can be tested. It
+  // owns the 409, the id, and the order in which the database is asked — see
+  // that file for why the order is load-bearing.
+  const admitRun = createRunAdmission<RunJob>({
+    jobs: runJobs,
+    create: (id) => ({ id, status: 'running', createdAt: new Date().toISOString() }),
+    refuse: () => runRefusal({ pingDatabase: () => adapter.ping(), workspace: config.name }),
+  });
+
   app.post<{ Body: RunRequest }>('/api/run-jobs', async (request, reply) => {
-    const active = [...runJobs.values()].find((job) => job.status === 'running');
-    if (active) {
-      return reply.status(409).send({
-        error: 'RUN_IN_PROGRESS',
-        message: 'A dataset is already running in this workspace.',
-        jobId: active.id,
-      });
-    }
-
-    const id = `job_${Date.now().toString(36)}`;
-    const job: RunJob = { id, status: 'running', createdAt: new Date().toISOString() };
-    runJobs.set(id, job);
-    // A UI session needs only its recent jobs. Bound the in-memory list rather
-    // than turning a long-lived runtime into an accidental history store.
-    while (runJobs.size > 30) runJobs.delete(runJobs.keys().next().value!);
-
-    void runInJob(job, request.body ?? {});
-    return reply.status(202).send({ jobId: id });
+    const admission = await admitRun();
+    if (!admission.admitted) return reply.status(admission.status).send(admission.body);
+    void runInJob(admission.job, request.body ?? {});
+    return reply.status(202).send({ jobId: admission.job.id });
   });
 
   app.get<{ Params: { id: string } }>('/api/run-jobs/:id', async (request, reply) => {
@@ -225,7 +279,7 @@ async function main(): Promise<void> {
       } catch (error) {
         throw Object.assign(new Error(message(error)), {
           code: 'DATABASE_UNREACHABLE',
-          remedy: 'Start the database for this workspace, then run again.',
+          remedy: startTheDatabase('run'),
         });
       }
       const key = `${scenario.id}/${dataset}`;
@@ -263,28 +317,7 @@ async function main(): Promise<void> {
     }
   }
 
-  app.post<{
-    Body: { scenarioId?: string; datasetId?: string; stepId?: string; expression?: string };
-  }>('/api/assertions', async (request, reply) => {
-    const { scenarioId, datasetId, stepId, expression } = request.body ?? {};
-    const file = scenarioId ? files.get(scenarioId) : undefined;
-    if (!file || !datasetId || !stepId || !expression) {
-      return reply.status(400).send({
-        error: 'BAD_REQUEST',
-        message: 'scenarioId, datasetId, stepId and expression are all required.',
-      });
-    }
-    try {
-      const result = await addAssertion({ file, datasetId, stepId, expression });
-      await reloadScenarios();
-      return result;
-    } catch (error) {
-      if (error instanceof ScenarioSaveError) {
-        return reply.status(422).send({ error: 'CANNOT_SAVE', message: error.message });
-      }
-      throw error;
-    }
-  });
+  registerAssertionRoute(app, { files: () => files, reload: reloadScenarios });
 
 
   await app.listen({ port: PORT, host: '127.0.0.1' });
@@ -300,7 +333,9 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
   });
 
-  console.log(`
+  // Scrubbed: `baseUrl` is resolved config, and one with credentials in it is
+  // a URL people do write.
+  console.log(scrub(`
   TupleScope runtime
   ------------------
   UI        ${url}
@@ -308,7 +343,7 @@ async function main(): Promise<void> {
   Capture   ${adapter.captureMethod} (${adapter.detection} detection)
   Scenarios ${scenarios.length} loaded from ${config.scenariosDir}
 ${sessionFile ? `  Lost it?  tuplescope url  (reads ${sessionFile})` : ''}
-`);
+`));
 
   const shutdown = async (): Promise<void> => {
     removeSession(PORT);
@@ -321,6 +356,11 @@ ${sessionFile ? `  Lost it?  tuplescope url  (reads ${sessionFile})` : ''}
 }
 
 void main().catch((error: unknown) => {
-  console.error('[tuplescope] failed to start:', error);
+  // The stack, because a start failure is the one place a line number has
+  // earned its keep — but scrubbed, because it can carry the connection string.
+  console.error(
+    '[tuplescope] failed to start:',
+    scrub(error instanceof Error ? (error.stack ?? error.message) : String(error)),
+  );
   process.exit(1);
 });

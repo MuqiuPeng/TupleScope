@@ -7,7 +7,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DEFAULT_CONTEXT, resolveTemplate, secretIdFor, type CredentialContext } from './resolve.js';
 import { Secret } from './secret.js';
-import type { SecretId, SecretStore, StoredSecret } from './store.js';
+import {
+  SecretStoreRequired,
+  SecretStoreUnavailable,
+  type SecretId,
+  type SecretStore,
+  type StoredSecret,
+} from './store.js';
 
 function fakeStore(entries: Record<string, string>): SecretStore & { reads: string[] } {
   const reads: string[] = [];
@@ -106,6 +112,28 @@ describe('the lanes do not cross', () => {
         // ...and it must not suggest the boundary is negotiable.
         assert.match(message, /will not fall back to an\s+environment variable/);
         assert.match(message, /write\s+`\$\{SOME_VAR\}` instead/);
+        return true;
+      },
+    );
+  });
+
+  it('refuses with a typed error, in one line, so a caller can report it rather than crash', async () => {
+    // It was a plain Error: `ls`, `check`, `show` and `run` could not tell it
+    // from a bug and printed it as an uncaught exception, stack and exit 2.
+    // A SecretStoreUnavailable is what they already catch.
+    await assert.rejects(
+      () =>
+        resolveTemplate('${secret:api_token}', {
+          env: {},
+          where,
+          storeUnavailable: 'there is no D-Bus session bus here.\nUse environment variables with `${VAR}`.',
+        }),
+      (e: unknown) => {
+        assert.ok(e instanceof SecretStoreRequired, String(e));
+        assert.ok(e instanceof SecretStoreUnavailable);
+        assert.equal(e.secret, 'api_token');
+        assert.doesNotMatch(e.message, /\n/);
+        assert.match(e.message, /needs the secret `api_token`.*no D-Bus session bus/);
         return true;
       },
     );

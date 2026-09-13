@@ -107,9 +107,12 @@ before the fix.
   validation, exit 0. Its two policy-flag siblings both validate and exit 4.
 - [x] **13. `--pass-with-no-scenarios` is absent from HELP.** The person who needs
   it — wiring CI before any scenario exists — cannot discover it.
-- [x] **14. `rows(*)` parses and can never evaluate.** The engine's pre-fetch skips
-  any selector without a table (`scenario-engine/src/index.ts:329`), so it always
-  refuses. Refuse it at parse instead.
+- [x] **14. `rows(*)` and `rows()` parse and can never evaluate.** The engine's
+  pre-fetch skips any selector without a table (`scenario-engine/src/index.ts:329`),
+  so both always refuse; both are refused at parse. `rows()` stayed open until the
+  first real install found it. The same rule now covers a column read with no
+  side (`single(updated(t)).col`): the evaluator refuses every one it reaches, so
+  `parse` refuses it, in the same sentence.
 - [x] **15. Two dead routes.** `POST /api/runs` and `DELETE /api/assertions` have
   no callers repo-wide. The run path is implemented twice, and the dead copy's
   error handling has diverged in its favour — the UI shows worse messages than the
@@ -259,6 +262,72 @@ decision rather than a guess.
 
 ---
 
+## Open
+
+Found on the first real install (the Dcard payment service, 2026-09-12): every
+documented feature was turned into a command and an observation against a real
+service, fixed where it fell short, and measured again. What is left is below —
+each is safe in the direction it fails (undecided or refused, never green), or is
+a presentation gap.
+
+- [ ] **The web UI's whole-row view shows ignored columns.** `app.js` builds that
+  grid from every key of the row; the text diff and the UI's changed-column view
+  hide them. Arguably intended for a whole-row view; unmeasured.
+- [ ] **A stored run keeps the sentence its producer wrote.** A run saved before
+  the verdict wording was fixed still reads "4 assertions evaluated and passed"
+  over undecided counts through `get_run` and `report`. New runs are right.
+- [ ] **`secret list` calls a hand-written keychain item `configured`.** Telling
+  it apart means reading every value, which prompts per item. `get`, `status` and
+  every command that resolves it now name it in one line.
+- [ ] **`check` says "every run" leaves an assertion undecided** when the refused
+  question is the right operand of `and`/`or`, where the evaluator short-circuits.
+  Withholding the clean sentence is still right; only "every" is too strong.
+- [ ] **The templater still refuses a captured value holding a quote or a
+  backslash inside a predicate,** from when predicate values had no escapes. They
+  now read escapes like any literal, so it could escape instead. Safe as is.
+- [ ] **A raw newline inside a quoted predicate value is refused** while a
+  comparison literal accepts it — the clause regex has no `s` flag. Safe direction.
+- [ ] **Over a step that wrote no row of a table, a misspelled value column is
+  invisible to the run** — there is no row to ask. `check` catches it when the
+  table is named; under `changes(*)` nothing does.
+- [ ] **`--warnings off` could not be told apart from `default`** for
+  warn-severity warnings, which it leaves alone; unmeasured against an
+  error-by-default one.
+- [ ] **`$${` with no closing brace is not an escape** in the shared grammar, so
+  `$${abc` is sent as written. Matches the workspace file; decide whether
+  scenario files should differ.
+- [ ] **`SecretNotConfigured` overwrites its `name` parameter** with the class
+  name. Nothing reads it today.
+
+Found by the final re-verification of the same build, and left open on purpose:
+
+- [ ] **The scrub is textual.** With the common development password `postgres`,
+  the wal prerequisite's remedy prints `[secret db_password]ql.conf`, and a
+  database named `x/postgres` loses its name. Documented in the README. A
+  token-aware scrub would read better but must still catch a secret glued to
+  other text — `${secret:x}_nope` as a database name is exactly that case.
+- [ ] **A session file is judged live by its pid alone,** so a reused pid hands
+  back a dead URL; the README's "a stale one … is discarded on read" holds for a
+  dead pid. Check the port too.
+- [ ] **The run store prunes by file name,** so anything named `run_*` that sorts
+  among the newest fifty is kept whatever it contains.
+- [ ] **A `wal` prerequisite failure exits 2** — "a step could not be executed" —
+  though it is refused before any step runs; it is a workspace that will not run.
+- [ ] **`ls` and `show` resolve the workspace's secrets,** so an empty keychain slot
+  stops a listing that needs no database.
+- [ ] **Under value detection, `hasWrite(…) == true` is refused even where a value
+  visibly changed,** which does decide it. Safe direction.
+- [ ] **The runtime keeps its runs in memory:** after a restart `/api/runs` is
+  empty, and CLI runs never appear there.
+- [ ] **One unparseable scenario file stops every command for the workspace,** not
+  only its own scenario. Deliberate at load; the MCP error now says so, the CLI's
+  does not.
+- [ ] **Two messages name the wrong thing:** `report` of a non-JSON file prints the
+  raw `JSON.parse` error, and a predicate ending in a dangling `and` is refused as
+  "the value goes on after its closing quote".
+
+---
+
 ## Closed
 
 - [x] Departure tests crashed on a machine with no database, contradicting the
@@ -270,3 +339,65 @@ decision rather than a guess.
 - [x] `junit.ts` held its control-character class as literal bytes, so `file`
   and grep treated the whole file as binary and skipped it silently (`fe09ffa`).
   Found by three greps for symbols that were plainly there coming back empty.
+- [x] `pnpm start` and the MCP server could not open a workspace with a
+  `${secret:…}` reference in it — the setup the README recommends. Each loaded
+  the file and opened the session; only the CLI had the resolving step in
+  between, inline. `assertResolved` said so at startup, which is what it is
+  for, but it said so *after* the release. Found on the first real install
+  (the Dcard payment service, 2026-09-12). Now one door, `loadWorkspace`, and
+  `openWorkspace` takes a branded `CredentialedWorkspaceConfig`, so the
+  load-then-open shape no longer compiles — pinned by a `@ts-expect-error`
+  that `pnpm typecheck` refuses to leave unused (mutation: removing the brand
+  fails the check).
+
+Closed by the same pass (2026-09-12). Each was a measured gap between a
+documented claim and what the tool did; each fix has a test that fails without it.
+
+- [x] **False greens in the evaluator.** A misspelled column under `delta` read as
+  0 and under `.after` as NULL, so `sum(delta(wallets.balanse)) == "0"` passed over
+  money that moved; a predicate on a masked column, and a `sum` of one, answered
+  over an empty selection; a `bool` column never equalled `true` (PostgreSQL sends
+  `t`), so `!= true` passed on every active row. Each is refused or decided now.
+- [x] **`check` printed its clean sentence over assertions no run can decide** —
+  `atomic`/`writeCount` under net fidelity, `hasWrite`/`count(updated(…))` under
+  value detection, masked columns, a column read as a value that its table lacks
+  (panels too), a `${…}` in a request, a keyless table's refusals. A column with
+  no side and `rows()` are refused at parse. One implementation, shared with MCP.
+- [x] **Scenario files.** Unknown keys at every level were silently accepted
+  (`resetFrist:`, `expectStaus:`, `handoff:`); refused with a suggestion that now
+  counts a transposition as one edit, as the workspace file's does. `{{var}}`
+  inside a longer literal is spliced as text and escaped — a captured value can no
+  longer break out of a literal or add a predicate clause. `{{name}}` in a header
+  is templated. Every `${…}` in a request is refused instead of being sent to the
+  API as those characters; `$${` is the escape. A predicate value obeys the
+  lexer's escapes, so one quoted text is one value everywhere.
+- [x] **The verdict's own words.** "4 assertions evaluated and passed" over 2
+  undecided under `--unevaluable warn`, for a run and for a suite; a truncation
+  reason that named neither the warning nor a table; `boundedBy` repeating one
+  sentence 35 times; JUnit counting one error per table.
+- [x] **What the CLI prints.** `url --all` was a no-op while the CLI's hint named
+  it. A driver message echoing a resolved secret was printed verbatim; the CLI now
+  scrubs everything it writes once the workspace opens, and the runtime and MCP
+  scrub what they return. `status` stopped asking at an unreachable database and
+  exited 2 for a workspace that will not load. A keychain item TupleScope did not
+  write, and a machine with no secret store, surfaced as stack traces. `--junit -`
+  with `--json` produced neither format; an unwritable `--junit` path was a stack
+  trace, exit 2. `<command> --help` printed the global help. `--ascii` did not
+  reach `status`, `check` or `ls`. Keyless tables were not named. Ignored columns
+  showed on inserted rows. `keep` offered a literal the language reads as another
+  value for a key holding a control character.
+- [x] **`report` merging.** Totals and targets were the first file's; a failed
+  shard plus an undecided one exited 3. Recomputed over every run, the exit code
+  follows the merged outcome, and `--exit-zero` survives only when every shard had it.
+- [x] **MCP.** `check_scenarios` answered an unknown id with "0 selected";
+  `get_run` returned bare JSON; `describe_table` printed no columns, no types and
+  a workspace-wide mask list, and its database failure had no remedy;
+  `describe_workspace` printed none of the scope; `run_scenario` was never
+  `isError`, even for a failed run; `tuplescope-mcp` ignored every argument and
+  now takes `--config`.
+- [x] **Surfaces that described what does not exist.** The handoff usage,
+  `handoff list`, the runtime's `NOT_BOUND` message and the web drawer spoke of an
+  alias a repository chooses; nothing reads one. The README said there was no
+  Content-Security-Policy; a strict one is sent on every response. The runtime's
+  `/api/assertions` told a request naming an unknown scenario that all four
+  fields were required.

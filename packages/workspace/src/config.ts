@@ -147,7 +147,18 @@ export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promi
   if (explicit) {
     const path = resolve(explicit);
     if (!(await readable(path))) {
-      throw new WorkspaceConfigError(`no such workspace file: ${path}`);
+      // Which knob named it, and what to turn. This used to be the bare path,
+      // and through MCP — where the only visible input is an environment
+      // variable the agent did not set — nothing said where it came from.
+      throw new WorkspaceConfigError(
+        options.configPath
+          ? `no such workspace file: ${path} (named by --config)\n\n` +
+              'Point --config at an existing tuplescope.yaml, or leave it out to use ' +
+              'TUPLESCOPE_CONFIG or the nearest tuplescope.yaml above the working directory.'
+          : `no such workspace file: ${path} (named by TUPLESCOPE_CONFIG)\n\n` +
+              'Point TUPLESCOPE_CONFIG at an existing tuplescope.yaml, pass --config <path>, ' +
+              'or unset it to use the nearest tuplescope.yaml above the working directory.',
+      );
     }
     return path;
   }
@@ -170,7 +181,11 @@ export async function findWorkspaceConfig(options: DiscoveryOptions = {}): Promi
   throw new WorkspaceConfigError(
     `no ${FILE_NAME} found. Looked in:\n` +
       searched.map((p) => `  ${p}`).join('\n') +
-      `\n\nCopy tuplescope.example.yaml to ${FILE_NAME}, or pass --config.`,
+      // Both knobs, not just the flag: a server started by an MCP client takes
+      // its environment from the client's config, and the flag alone sent an
+      // agent looking for an argument it had no way to pass.
+      `\n\nCopy tuplescope.example.yaml to ${FILE_NAME}, pass --config <path>, ` +
+      `or set TUPLESCOPE_CONFIG=<path>.`,
   );
 }
 
@@ -291,14 +306,12 @@ export async function loadWorkspaceConfig(
   const file = await findWorkspaceConfig(options);
   const env = options.env ?? process.env;
 
+  const source = await readFile(file, 'utf8');
   let parsed: unknown;
   try {
-    parsed = YAML.parse(await readFile(file, 'utf8'));
+    parsed = YAML.parse(source);
   } catch (error) {
-    throw new WorkspaceConfigError(
-      error instanceof Error ? error.message : String(error),
-      file,
-    );
+    throw new WorkspaceConfigError(explainYamlError(error, source), file);
   }
 
   let expanded: unknown;
@@ -333,9 +346,38 @@ export function parseWorkspaceConfig(
   try {
     parsed = YAML.parse(source);
   } catch (error) {
-    throw new WorkspaceConfigError(error instanceof Error ? error.message : String(error), file);
+    throw new WorkspaceConfigError(explainYamlError(error, source), file);
   }
   return validate(interpolate(parsed, env), file);
+}
+
+/**
+ * The YAML parser's message, plus what it cannot know about a `${…}` reference.
+ *
+ * `${secret: db_password}` is refused by name when it is quoted. Unquoted — how
+ * the example workspace writes `connectionString` — YAML reads the `: ` inside
+ * it as a nested mapping and fails first, and the message was "Nested mappings
+ * are not allowed in compact mappings", which never mentions a secret. The
+ * scenario loader does the same for a `{{…}}` in a flow mapping.
+ */
+function explainYamlError(error: unknown, source: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const line = (error as { linePos?: ReadonlyArray<{ line: number }> } | undefined)?.linePos?.[0]
+    ?.line;
+  const text = line === undefined ? undefined : source.split(/\r?\n/)[line - 1];
+  const reference = text?.match(/\$\{[^}\s]*\s[^}]*\}/)?.[0];
+  if (!reference) return message;
+
+  const why = /Nested mappings/.test(message)
+    ? 'Unquoted, YAML read the `: ` inside it as the start of a nested mapping, so it never reached TupleScope as a reference.'
+    : /flow-map|flow-seq/.test(message)
+      ? 'Inside `{ … }`, YAML read its `{` as the start of another mapping, so it never reached TupleScope as a reference — quote the whole value.'
+      : 'It never reached TupleScope as a reference.';
+  return (
+    `${message.trimEnd()}\n\n` +
+    `Line ${line} holds \`${reference}\`. ${why} ` +
+    `A reference takes no spaces: write \`${reference.replace(/\s+/g, '')}\`.`
+  );
 }
 
 function validate(value: unknown, file: string): ResolvedWorkspaceConfig {
@@ -485,18 +527,32 @@ function nearest(input: string, candidates: ReadonlyArray<string>): string | und
   return best && best.distance <= Math.max(1, Math.floor(input.length / 3)) ? best.name : undefined;
 }
 
+/**
+ * Optimal string alignment distance: Levenshtein, plus two adjacent letters
+ * swapped counting as one edit.
+ *
+ * Plain Levenshtein charges a swap twice, and under six letters the threshold
+ * above allows one edit — so `nmae` got no "did you mean `name`" at all, and
+ * `enigen` (two swaps) none for `engine`; both measured with `tuplescope ls`.
+ * A swap is the commonest slip there is, which is why evaluate.ts's `close()`
+ * counts it as one too.
+ */
 function editDistance(a: string, b: string): number {
-  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
   for (let i = 1; i <= a.length; i++) {
-    const current = [i];
     for (let j = 1; j <= b.length; j++) {
-      current[j] = Math.min(
-        previous[j]! + 1,
-        current[j - 1]! + 1,
-        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      let best = Math.min(
+        d[i - 1]![j]! + 1,
+        d[i]![j - 1]! + 1,
+        d[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
       );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        best = Math.min(best, d[i - 2]![j - 2]! + 1);
+      }
+      d[i]![j] = best;
     }
-    previous = current;
   }
-  return previous[b.length]!;
+  return d[a.length]![b.length]!;
 }

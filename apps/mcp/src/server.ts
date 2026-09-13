@@ -34,31 +34,57 @@ import {
   auditScenarios,
   formatProblem,
   loadScenario,
+  ScenarioLoadError,
 } from '@tuplescope/scenario-engine';
 import {
-  loadWorkspaceConfig,
+  loadWorkspace,
   openWorkspace,
   WorkspaceError,
   type WorkspaceSession,
 } from '@tuplescope/workspace';
+import { parseServerArgs, USAGE } from './args.js';
 import { INSTRUCTIONS } from './instructions.js';
+import {
+  describeScope,
+  describeTable,
+  describeVerdict,
+  noSuchScenario,
+  noSuchStep,
+  notWritten,
+  runIsError,
+} from './messages.js';
 
 // ─── one session, opened lazily ───────────────────────────────────────────────
 
+/** The command line, read before anything can need the workspace it names. */
+const args = parseServerArgs(process.argv.slice(2));
+
 let session: WorkspaceSession | undefined;
+/**
+ * Removes resolved credentials from text this process did not format — a
+ * driver's message with the connection string inline, on its way to an agent's
+ * transcript. Identity until the workspace has resolved its secrets.
+ */
+let scrub: (text: string) => string = (text) => text;
 
 async function workspace(): Promise<WorkspaceSession> {
   if (session) return session;
-  const config = await loadWorkspaceConfig();
-  session = openWorkspace(config, { history: { keep: 50 } });
+  // Load and resolve, through the one door. This used to load and open — and
+  // a workspace with a `${secret:…}` reference in it could not be served.
+  const resolved = await loadWorkspace({ configPath: args.kind === 'serve' ? args.configPath : undefined });
+  scrub = resolved.scrub;
+  session = openWorkspace(resolved.config, { history: { keep: 50 } });
   return session;
 }
 
 /** Every tool answers as text; an agent reads prose better than a JSON blob. */
 type Result = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
-const ok = (text: string): Result => ({ content: [{ type: 'text', text }] });
-const fail = (text: string): Result => ({ content: [{ type: 'text', text }], isError: true });
+// Both go through the scrubber. `ok` used to pass its text straight through, so
+// an API that echoed a credential into a field an assertion reports would have
+// printed it in the clear here, while the CLI scrubs everything it writes.
+const ok = (text: string): Result => ({ content: [{ type: 'text', text: scrub(text) }] });
+const fail = (text: string): Result => ({ content: [{ type: 'text', text: scrub(text) }], isError: true });
 
 async function guarded(body: () => Promise<Result>): Promise<Result> {
   try {
@@ -67,46 +93,23 @@ async function guarded(body: () => Promise<Result>): Promise<Result> {
     if (error instanceof WorkspaceError) {
       return fail(`${error.message}${error.remedy ? `\n\n${error.remedy}` : ''}`);
     }
+    if (error instanceof ScenarioLoadError) {
+      // The message names the file and the fault. What it cannot say is that
+      // every tool reading scenarios stops at the first file that will not
+      // load, so this one blocks all of them until it is dealt with.
+      return fail(
+        `${error.message}\n\nEvery tool that reads scenarios stops at this file until it loads. ` +
+          'Fix it — write_scenario replaces a file whole — or move it out of the scenarios directory.',
+      );
+    }
     return fail(error instanceof Error ? error.message : String(error));
   }
 }
 
 // ─── how a verdict is spoken ──────────────────────────────────────────────────
 
-/**
- * The verdict in prose, before any structured data.
- *
- * `undecided` gets the longest treatment on purpose: it is the outcome an agent
- * has no prior for, and the one where the intuitive reading — "nothing failed,
- * so it passed" — is exactly backwards.
- */
-function describeVerdict(verdict: RunVerdict | ReturnType<typeof mergeVerdicts>): string {
-  const exit = exitCodeOf(verdict.outcome);
-  const head: Record<string, string> = {
-    clean: `CLEAN (exit ${exit}) — every assertion evaluated and passed.`,
-    failed: `FAILED (exit ${exit}) — the system under test is wrong. ${verdict.reason}`,
-    errored: `ERRORED (exit ${exit}) — a step could not be executed. ${verdict.reason}`,
-    undecided:
-      `UNDECIDED (exit ${exit}) — this is NOT a pass and NOT a failure. The run completed and ` +
-      `nothing contradicted it, but ${verdict.reason}. Do not report this as success, and do not ` +
-      `tell the user their code is broken: tell them which check could not run, and why.`,
-  };
-
-  const lines = [head[verdict.outcome]!];
-  lines.push(
-    `assertions: ${verdict.assertions.passed} passed, ${verdict.assertions.failed} failed, ` +
-      `${verdict.assertions.unevaluable} undecided, of ${verdict.assertions.total}.`,
-  );
-  if (verdict.proves === 'bounded') {
-    lines.push(
-      '',
-      'This run does not establish everything it looks like it does. Carry these when you summarise it:',
-      ...verdict.boundedBy.map((bound) => `  · ${bound}`),
-    );
-  }
-  return lines.join('\n');
-}
-
+// The verdict itself is spoken by `describeVerdict` in messages.ts, where it can
+// be tested without a server; this is the run beneath it.
 function describeRun(report: {
   selector: string;
   verdict: RunVerdict;
@@ -178,14 +181,21 @@ server.registerTool(
   'describe_workspace',
   {
     description:
-      'What this workspace points at: the API under test, the database, the capture engine, and the tables it can observe. Call this first — it is what tells you whether a scenario you write will resolve.',
+      'What this workspace points at: the API under test, the database, the capture engine, and the tables it can observe — and what it does not watch, or watches only partly: tables outside its schema, and tables with no primary key or unique index, with what each costs. Call this first — it is what tells you whether a scenario you write will resolve.',
     inputSchema: {},
   },
   async () =>
     guarded(async () => {
       const s = await workspace();
-      const { tables } = await s.preflight();
+      const { tables, scope } = await s.preflight();
       const scenarios = await s.scenarios();
+      // Whether a row leaving a keyless table can be seen is a fact about the
+      // engine and the table together, so it is read off the scope the engine
+      // builds — never inferred from the engine's name.
+      const observable =
+        scope.keyless.length > 0
+          ? new Map((await s.adapter.fullScope()).tables.map((t) => [t.table, t.departuresObservable !== false]))
+          : new Map<string, boolean>();
       return ok(
         [
           `workspace   ${s.config.name}`,
@@ -201,7 +211,15 @@ server.registerTool(
           `ignored     ${s.config.ignoreColumns?.join(', ') || '(none)'}`,
           `baseline    ${s.config.baselineWindowMs ? `${s.config.baselineWindowMs} ms idle probe` : 'not probed — concurrent writes would not be detected'}`,
           '',
-          `tables (${tables.length}): ${tables.join(', ')}`,
+          `tables (${tables.length}) in \`${scope.schema}\`: ${tables.join(', ')}`,
+          // What it does not watch, or watches only partly. This listed the
+          // tables and stopped, so a keyless one read like any other and the
+          // first an agent heard of it was an undecided run.
+          ...describeScope({
+            ...scope,
+            // Unknown reads as unobservable: the weaker claim about the capture.
+            keyless: scope.keyless.map((table) => ({ table, departuresObservable: observable.get(table) ?? false })),
+          }),
         ].join('\n'),
       );
     }),
@@ -243,11 +261,9 @@ server.registerTool(
   async ({ scenarioId }) =>
     guarded(async () => {
       const s = await workspace();
-      const found = (await s.scenarios()).find((entry) => entry.scenario.id === scenarioId);
-      if (!found) {
-        const known = (await s.scenarios()).map((e) => e.scenario.id);
-        return fail(`No scenario \`${scenarioId}\`. There is: ${known.join(', ') || '(none)'}.`);
-      }
+      const loaded = await s.scenarios();
+      const found = loaded.find((entry) => entry.scenario.id === scenarioId);
+      if (!found) return fail(noSuchScenario(scenarioId, loaded.map((entry) => entry.scenario.id)));
       const { readFile } = await import('node:fs/promises');
       return ok(`${found.file}\n\n${await readFile(found.file, 'utf8')}`);
     }),
@@ -265,15 +281,23 @@ server.registerTool(
   async ({ scenarioId }) =>
     guarded(async () => {
       const s = await workspace();
+      const all = await s.scenarios();
+      // An id that names no file is a mistake in the call, not a suite with
+      // nothing in it. This answered "0 scenario(s) selected" — true, and no
+      // help to an agent that had misspelled the id, when get_scenario names
+      // the typo and lists what exists for the same input. `tuplescope check
+      // nosuch` refuses it the same way, as a bad invocation (exit 4), and
+      // before touching the database: naming a typo needs none.
+      if (scenarioId && !all.some((entry) => entry.scenario.id === scenarioId)) {
+        return fail(noSuchScenario(scenarioId, all.map((entry) => entry.scenario.id)));
+      }
       // `columns` too. Destructuring only `tables` was the whole reason this
       // tool was weaker than `tuplescope check`: it could see a misspelled
       // table and not a misspelled predicate column, which is the one that
       // stays green forever.
       const { tables, columns } = await s.preflight();
       const known = new Set(tables);
-      const loaded = (await s.scenarios()).filter(
-        (entry) => !scenarioId || entry.scenario.id === scenarioId,
-      );
+      const loaded = all.filter((entry) => !scenarioId || entry.scenario.id === scenarioId);
       const selected = loaded.flatMap(({ scenario }) =>
         scenario.datasets.map((dataset) => ({ scenario, dataset })),
       );
@@ -281,14 +305,29 @@ server.registerTool(
       // implementations describing themselves identically and doing different
       // work, which is how this one came to validate no predicate columns and
       // no `except` names.
-      const audit = auditScenarios(selected, { tables: known, columns });
+      // Read off the scope a run builds, as `tuplescope check` does: whether a
+      // row leaving a keyless table is visible depends on the engine too.
+      const keyless = new Set(
+        (await s.adapter.fullScope()).tables
+          .filter((table) => table.departuresObservable === false)
+          .map((table) => table.table),
+      );
+      const audit = auditScenarios(selected, {
+        tables: known,
+        columns,
+        // Asked by capability, never by engine name (packages/core/src/abstraction.test.ts).
+        capture: { detection: s.adapter.detection, fidelity: s.adapter.fidelity },
+        ...(s.config.maskColumns ? { maskColumns: s.config.maskColumns } : {}),
+        keyless,
+      });
       const problems = audit.problems.map((p) => formatProblem(p));
       const assertions = audit.assertions;
 
       // A green check over nothing asserted is the failure this tool exists to
-      // prevent, and it used to hand back an unconditional all-clear for a
-      // scenarioId that matched no file. The CLI refuses the same shape and
-      // exits 3.
+      // prevent, and it used to hand back an unconditional all-clear. The CLI
+      // refuses a selection with no assertions in it and exits 3: the suite is
+      // not wrong, it establishes nothing. (An id that matches no file never
+      // gets here — see above; the CLI exits 4 for that one.)
       if (problems.length === 0 && assertions === 0) {
         return fail(
           `${loaded.length} scenario(s) selected, and not one assertion between them. ` +
@@ -313,7 +352,7 @@ server.registerTool(
   'run_scenario',
   {
     description:
-      'Run one dataset and report what the API wrote. READ THE VERDICT, NOT engineStatus: a run whose assertions could not be evaluated has engineStatus "passed" and verdict "undecided", and reporting it as a success is the worst mistake available here.',
+      'Run one dataset and report what the API wrote. READ THE VERDICT, NOT engineStatus: a run whose assertions could not be evaluated has engineStatus "passed" and verdict "undecided", and reporting it as a success is the worst mistake available here. The result is marked isError for every verdict but clean — failed, errored and undecided alike — so a caller that reads only isError is never told such a run went fine; the text says which outcome it was.',
     inputSchema: {
       scenarioId: z.string(),
       datasetId: z.string().optional().describe('Omit to run every dataset of the scenario.'),
@@ -410,9 +449,13 @@ server.registerTool(
 
       // Verdict first, always. An agent reads until it finds something that
       // looks like an answer, and the first thing here has to be the true one.
-      return ok(
-        [describeVerdict(suite), '', ...envelope.runs.map(describeRun)].join('\n'),
-      );
+      const text = [describeVerdict(suite), '', ...envelope.runs.map(describeRun)].join('\n');
+      // isError follows the verdict. This returned a plain result for FAILED
+      // and UNDECIDED alike, so an agent reading only the flag was told a red
+      // run went fine — what check_scenarios' rule exists to prevent. The text
+      // is the same either way: built as `ok` builds it, not scrubbed as `fail`
+      // scrubs a message this process did not format.
+      return runIsError(suite.outcome) ? { ...ok(text), isError: true } : ok(text);
     }),
 );
 
@@ -443,7 +486,8 @@ server.registerTool(
 server.registerTool(
   'get_run',
   {
-    description: 'One stored run in full, as the machine envelope. Use it to inspect a diff you did not keep in context.',
+    description:
+      'One stored run in full: its verdict in prose, then the machine envelope. Use it to inspect a diff you did not keep in context.',
     inputSchema: { runId: z.string().describe('A run id from list_runs, or "last".') },
   },
   async ({ runId }) =>
@@ -452,7 +496,11 @@ server.registerTool(
       if (!s.history) return fail('Run history is off for this session.');
       const stored = runId === 'last' ? await s.history.latest() : await s.history.get(runId);
       if (!stored) return fail(`No stored run \`${runId}\`. list_runs shows what is there.`);
-      return ok(JSON.stringify(stored, null, 2));
+      // Verdict first, in the words run_scenario uses. This returned the bare
+      // envelope, which opens with `selector`, `scenario` and `dataset`: the
+      // verdict was an object further down, and the first thing that looked
+      // like an answer could be `engineStatus: "passed"` on an undecided run.
+      return ok(`${describeVerdict(stored['verdict'] as RunVerdict)}\n\n${JSON.stringify(stored, null, 2)}`);
     }),
 );
 
@@ -474,12 +522,21 @@ server.registerTool(
   'describe_table',
   {
     description:
-      'One table: its columns, types, and how TupleScope will identify its rows. A table with no primary key or unique index can be counted but not matched to a previous version, and assertions over it are weaker.',
+      'One table: its columns and their declared types, which of them the workspace ignores or masks, and how TupleScope will identify its rows. A table with no primary key or unique index can be counted but not matched to a previous version, and assertions over it are weaker.',
     inputSchema: { table: z.string() },
   },
   async ({ table }) =>
     guarded(async () => {
       const s = await workspace();
+      // Through `preflight`, like every other tool that reads the catalogue.
+      // This went straight to the adapter, and an unreachable database came
+      // back as the driver's bare `connect ECONNREFUSED 127.0.0.1:1` — no
+      // workspace, no key, no remedy — where its siblings named all three.
+      await s.preflight();
+      // Declared types, in table order (`format_type`, so `numeric(18,8)`).
+      // Asked only once the preflight has answered, so an unreachable database
+      // still arrives in its siblings' words.
+      const columns = await s.adapter.listColumnTypes();
       const scope = await s.adapter.fullScope();
       const entry = scope.tables.find((t) => t.table === table);
       if (!entry) {
@@ -492,18 +549,14 @@ server.registerTool(
         async () => undefined,
       );
       return ok(
-        [
-          `${table}`,
-          `  row identity  ${entry.keyStrategy}${
-            entry.keyStrategy === 'full-row-multiset'
-              ? ' — no primary key or unique index, so rows here can be counted but not matched'
-              : ''
-          }`,
-          `  ignored       ${entry.ignoreColumns.join(', ') || '(none)'}`,
-          `  masked        ${entry.maskedColumns.join(', ') || '(none)'}`,
-          `  capture       ${changes.captureMethod}, ${changes.detection} detection, ` +
-            `${changes.fidelity} fidelity`,
-        ].join('\n'),
+        describeTable({
+          table,
+          keyStrategy: entry.keyStrategy,
+          columns: [...(columns.get(table) ?? [])],
+          ignoreColumns: s.config.ignoreColumns ?? [],
+          maskColumns: s.config.maskColumns ?? [],
+          capture: { method: changes.captureMethod, detection: changes.detection, fidelity: changes.fidelity },
+        }),
       );
     }),
 );
@@ -529,7 +582,13 @@ server.registerTool(
       // Validated by writing to a temporary path and loading it, so a file that
       // will not parse never replaces one that does.
       const temp = `${path}.mcp-tmp`;
-      await writeFile(temp, yaml, 'utf8');
+      try {
+        await writeFile(temp, yaml, 'utf8');
+      } catch (error) {
+        return fail(
+          notWritten(error, { temp, file: path, scenariosDir: s.config.scenariosDir, configFile: s.config.configFile }),
+        );
+      }
       try {
         const scenario = await loadScenario(temp);
         if (scenario.id !== scenarioId) {
@@ -570,7 +629,7 @@ server.registerTool(
       const s = await workspace();
       if (!s.history) return fail('Run history is off for this session.');
       const stored = runId === 'last' ? await s.history.latest() : await s.history.get(runId);
-      if (!stored) return fail(`No stored run \`${runId}\`.`);
+      if (!stored) return fail(`No stored run \`${runId}\`. list_runs shows what is there.`);
       const steps = (stored['steps'] ?? []) as Array<{
         id: string;
         candidates?: Array<{ expression: string; description: string; caveat?: { message: string } }>;
@@ -608,8 +667,13 @@ server.registerTool(
   async ({ scenarioId, datasetId, stepId, expression }) =>
     guarded(async () => {
       const s = await workspace();
-      const found = (await s.scenarios()).find((entry) => entry.scenario.id === scenarioId);
-      if (!found) return fail(`No scenario \`${scenarioId}\`.`);
+      const loaded = await s.scenarios();
+      const found = loaded.find((entry) => entry.scenario.id === scenarioId);
+      if (!found) return fail(noSuchScenario(scenarioId, loaded.map((entry) => entry.scenario.id)));
+      // Checked against the loaded scenario so the refusal can list what is
+      // there; the file edit would refuse too, naming only the miss.
+      const missing = noSuchStep(found.scenario, datasetId, stepId);
+      if (missing) return fail(missing);
       const result = await addAssertion({ file: found.file, datasetId, stepId, expression });
       return ok(
         result.added
@@ -638,4 +702,13 @@ async function shutdown(): Promise<void> {
 process.on('SIGINT', () => void shutdown());
 process.on('SIGTERM', () => void shutdown());
 
-await server.connect(new StdioServerTransport());
+if (args.kind === 'help') {
+  process.stdout.write(USAGE);
+} else if (args.kind === 'refused') {
+  // 4 is this CLI's "bad invocation"; `exitCode` rather than `exit()` so the
+  // message is not cut off on a pipe.
+  process.stderr.write(args.message);
+  process.exitCode = 4;
+} else {
+  await server.connect(new StdioServerTransport());
+}

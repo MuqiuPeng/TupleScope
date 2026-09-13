@@ -128,6 +128,71 @@ describe('verdictOf precedence', () => {
   });
 });
 
+// ─── what the sentence names ──────────────────────────────────────────────────
+
+const truncated = (table: string): CaptureWarning => ({
+  code: 'scope-truncated',
+  table,
+  message: `\`${table}\` was rewritten during this step`,
+});
+const FIVE = ['accounts', 'addresses', 'blocks', 'customers', 'devices'];
+
+describe('what the verdict sentence names', () => {
+  it('names the warning and its tables when a capture warning decides the run', () => {
+    // It used to read "the observation was incomplete: the observation was cut
+    // short, …" — the same noun twice, and no table, over a step that
+    // truncated thirty-five of them.
+    const v = verdictOf(
+      run({ steps: [step({ stepId: 'reset', assertions: [pass()], changes: changes(FIVE.map(truncated)) })] }),
+    );
+    assert.equal(v.outcome, 'undecided');
+    assert.match(v.reason, /^scope-truncated on accounts, addresses, blocks and 2 more: the observation was cut short/);
+    assert.doesNotMatch(v.reason, /observation was incomplete/);
+  });
+
+  it('says once per kind of warning what it bounds, and where', () => {
+    const v = verdictOf(
+      run({ steps: [step({ stepId: 'reset', assertions: [pass()], changes: changes(FIVE.map(truncated)) })] }),
+    );
+    const said = v.boundedBy.filter((b) => /cut short/.test(b));
+    assert.equal(said.length, 1, v.boundedBy.join('\n'));
+    assert.match(said[0]!, /\(accounts, addresses, blocks and 2 more\)$/);
+    // Every warning is still there to be read one by one.
+    assert.equal(v.warnings.length, 5);
+  });
+
+  it('does not say every assertion passed when some were let through undecided', () => {
+    // Under --unevaluable warn, the headline said "4 assertions evaluated and
+    // passed" directly above counts of 2 passed and 2 undecided.
+    const v = verdictOf(
+      run({ steps: [step({ stepId: 'a', assertions: [pass(), pass(), undecided(), undecided()] })] }),
+      lenient,
+    );
+    assert.equal(v.outcome, 'clean');
+    assert.equal(
+      v.reason,
+      '2 of 4 assertions evaluated and passed; 2 could not be evaluated and were not counted against this run, by policy',
+    );
+  });
+
+  it('says the same of a suite whose undecided assertions are spread over datasets', () => {
+    // Found through MCP run_scenario with no datasetId: each run's sentence was
+    // right, and the suite's said "5 assertions evaluated and passed" over 2
+    // undecided.
+    const a = verdictOf(
+      run({ steps: [step({ stepId: 'a', assertions: [pass(), pass(), undecided(), undecided()] })] }),
+      lenient,
+    );
+    const b = verdictOf(run({ datasetId: 'other', steps: [step({ stepId: 'a', assertions: [pass()] })] }), lenient);
+    const suite = mergeVerdicts([a, b], lenient);
+    assert.equal(suite.outcome, 'clean');
+    assert.match(
+      suite.reason,
+      /3 of 5 assertions evaluated and passed; 2 could not be evaluated and were not counted against this run, by policy$/,
+    );
+  });
+});
+
 // ─── policy ───────────────────────────────────────────────────────────────────
 
 describe('policy', () => {
@@ -283,6 +348,41 @@ describe('outcomeOfStep', () => {
     assert.equal(outcomeOfStep(step({ stepId: 'a', assertions: [undecided()] }, ), lenient), 'passed');
   });
 
+  it('is undecided for a step whose own capture the policy escalates, as the run is', () => {
+    // It said `passed` for the one step whose observation was cut short, inside
+    // a run verdictOf called undecided — and the web UI draws each step from
+    // this, so that step got a green tick (ts-verify run_mtxeox8c).
+    const cut = step({ stepId: 'reset', assertions: [pass()], changes: changes([truncated('customers')]) });
+    assert.equal(outcomeOfStep(cut), 'undecided');
+    const v = verdictOf(run({ steps: [cut] }));
+    assert.equal(v.outcome, 'undecided');
+    assert.equal(v.steps.undecided, 1);
+    assert.equal(v.steps.passed, 0);
+    // Policy-aware in both directions, exactly as verdictOf is.
+    assert.equal(outcomeOfStep(cut, { ...DEFAULT_POLICY, warnings: 'off' }), 'passed');
+    const noisy = step({
+      stepId: 'a',
+      assertions: [pass()],
+      changes: changes([{ code: 'concurrent-writes-detected', message: 'sessions' }]),
+    });
+    assert.equal(outcomeOfStep(noisy), 'passed');
+    assert.equal(outcomeOfStep(noisy, { ...DEFAULT_POLICY, warnings: 'strict' }), 'undecided');
+    // A failure still outranks it, as it does for the run.
+    assert.equal(outcomeOfStep({ ...cut, assertions: [fail()] }), 'failed');
+  });
+
+  it('does not count a step refused before it observed anything as unchecked', () => {
+    // `unchecked` is "observed, but checked by no one". The stored refused runs
+    // (ts-verify re-cli-run-flags, topup/ghost) said errored 1 and unchecked 1.
+    const v = verdictOf(
+      run({ steps: [step({ stepId: 'send', status: 'errored', error: { kind: 'configuration', message: 'refused' } })] }),
+    );
+    assert.equal(v.steps.errored, 1);
+    assert.equal(v.steps.unchecked, 0);
+    // A step that ran and asserted nothing still is.
+    assert.equal(verdictOf(run({ steps: [step({ stepId: 'a', changes: changes() })] })).steps.unchecked, 1);
+  });
+
   it('does not count a not-run step as unchecked', () => {
     const v = verdictOf(run({ steps: [step({ stepId: 'a', status: 'skipped' })] }));
     assert.equal(v.steps.notRun, 1);
@@ -420,6 +520,96 @@ describe('mergeVerdicts', () => {
     const suite = mergeVerdicts([a, b]);
     const unprobed = suite.boundedBy.filter((x) => /not probed/.test(x));
     assert.equal(unprobed.length, 1);
+  });
+});
+
+// ─── what bounds a suite ──────────────────────────────────────────────────────
+
+describe('what a suite is bounded by', () => {
+  // A step refused before it sent: a `${…}` in its request. It never observed.
+  const refused = () =>
+    verdictOf(
+      run({
+        steps: [
+          step({
+            stepId: 'send',
+            status: 'errored',
+            error: { kind: 'configuration', message: '`request.body.token` refers to `${secret:foo}`' },
+          }),
+        ],
+      }),
+    );
+
+  it('counts undecided-by-policy across datasets instead of collapsing identical sentences', () => {
+    // Measured through MCP run_scenario {unevaluable: "warn"} and the CLI
+    // envelope: "1 undecided assertion was not counted against this run, by
+    // policy" beside counts of 2 undecided.
+    const one = () =>
+      verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass(), pass(), undecided()] })] }), lenient);
+    const suite = mergeVerdicts([one(), one()], lenient);
+    assert.equal(suite.assertions.unevaluable, 2);
+    assert.deepEqual(suite.boundedBy, ['2 undecided assertions were not counted against this run, by policy']);
+  });
+
+  it('does not tell a suite that checked something that nothing was checked', () => {
+    // Measured: two datasets refused before sending and one that passed its
+    // only assertion; the suite said "no assertions were evaluated; the run
+    // observed changes but checked none of them" over a checks line of 1/1.
+    const ran = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass()], changes: changes() })] }));
+    const suite = mergeVerdicts([refused(), refused(), ran]);
+    assert.equal(suite.assertions.passed, 1);
+    assert.ok(!suite.boundedBy.some((b) => /^no assertions were evaluated/.test(b)), suite.boundedBy.join('\n'));
+    assert.ok(
+      suite.boundedBy.includes('2 of 3 datasets evaluated no assertions, so nothing in them was checked'),
+      suite.boundedBy.join('\n'),
+    );
+  });
+
+  it('does not say a step refused before sending observed changes', () => {
+    const v = refused();
+    assert.deepEqual(v.boundedBy, [
+      'no assertions were evaluated, and no step got as far as observing the database, so nothing was observed either',
+    ]);
+    // ...and a suite of nothing but those says it once, of the suite.
+    assert.deepEqual(mergeVerdicts([refused(), refused()]).boundedBy, v.boundedBy);
+  });
+
+  it('says how many datasets a per-run sentence came from', () => {
+    // "1 step never ran … : two" from each of two datasets is two steps, and
+    // said once as if of the suite it was one.
+    const halted = () =>
+      verdictOf(run({ declaredSteps: ['one', 'two'], steps: [step({ stepId: 'one', assertions: [pass()] })] }));
+    const clean = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass()] })] }));
+    assert.ok(
+      mergeVerdicts([halted(), halted(), clean]).boundedBy.includes(
+        '1 step never ran, so nothing here establishes anything about it: two (in 2 of 3 datasets)',
+      ),
+    );
+  });
+
+  it('says a mid-dataset start and an unprobed baseline of the datasets they are true of', () => {
+    const partial = verdictOf(
+      run({ coverage: 'partial', baseline: { probed: false, windowMs: 0 }, steps: [step({ stepId: 'a', assertions: [pass()] })] }),
+    );
+    const clean = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass()] })] }));
+    assert.deepEqual(mergeVerdicts([partial, clean]).boundedBy, [
+      '1 of 2 datasets started mid-dataset, so earlier steps there left the database in whatever state the previous run did',
+      'the baseline was not probed in 1 of 2 datasets, so concurrent writes there would not have been detected',
+    ]);
+  });
+
+  it('keeps one line per kind of warning, naming every dataset’s tables', () => {
+    const on = (table: string) =>
+      verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass()], changes: changes([truncated(table)]) })] }));
+    const cut = mergeVerdicts([on('accounts'), on('blocks')]).boundedBy.filter((b) => /cut short/.test(b));
+    assert.deepEqual(cut, [
+      'the observation was cut short, so an assertion that found nothing may only have been looking at less (accounts, blocks)',
+    ]);
+  });
+
+  it('leaves a single dataset’s sentences exactly as the run said them', () => {
+    const v = verdictOf(run({ steps: [step({ stepId: 'a', assertions: [pass(), undecided()] })] }), lenient);
+    assert.deepEqual(mergeVerdicts([v], lenient).boundedBy, v.boundedBy);
   });
 });
 

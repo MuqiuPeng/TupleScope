@@ -114,6 +114,21 @@ describe('parseWorkspaceConfig', () => {
     rejects(VALID.replace('database:', 'databse:'), /unknown key `databse`.*did you mean `database`/);
   });
 
+  it('counts two swapped letters as one slip, so a short key gets its suggestion too', () => {
+    // A swap cost two edits, and under six letters the threshold allows one:
+    // `nmae` was refused with no suggestion at all, and `enigen` (two swaps)
+    // got none for `engine`. Measured with `tuplescope ls`.
+    rejects(VALID.replace('name:', 'nmae:'), /unknown key `nmae` — did you mean `name`\?/);
+    rejects(`${VALID}\nenigen: mvcc-xmin\n`, /unknown key `enigen` — did you mean `engine`\?/);
+    // Longer keys already had theirs — one swap costs two, and the threshold
+    // there is at least two — and must keep them.
+    rejects(VALID.replace('database:', 'databsae:'), /unknown key `databsae` — did you mean `database`\?/);
+    rejects(
+      VALID.replace('scenariosDir:', 'scenairosDir:'),
+      /unknown key `scenairosDir` — did you mean `scenariosDir`\?/,
+    );
+  });
+
   it('does not invent a suggestion for something unrelated', () => {
     rejects(`${VALID}\nkubernetesNamespace: prod\n`, /unknown key `kubernetesNamespace`/);
     assert.throws(
@@ -235,6 +250,31 @@ describe('parseWorkspaceConfig', () => {
   it('names the file in every error', () => {
     assert.throws(() => parse('name: [unclosed'), new RegExp(dir.replace(/[/\\]/g, '.')));
   });
+
+  it('says a spaced ${…} reference is what YAML tripped on in an unquoted value', () => {
+    // Quoted, `${secret: x}` is refused by name. Unquoted — how the example
+    // workspace writes a connection string — YAML failed first, with "Nested
+    // mappings are not allowed in compact mappings", and never said secret.
+    const source = VALID.replace(
+      'postgresql://u:p@127.0.0.1:5432/app',
+      'postgresql://u:${secret: db_password}@127.0.0.1:5432/app',
+    );
+    rejects(source, /Nested mappings are not allowed/);
+    rejects(source, /Line 5 holds `\$\{secret: db_password\}`\. Unquoted, YAML read the `: ` inside it/);
+    rejects(source, /A reference takes no spaces: write `\$\{secret:db_password\}`\./);
+  });
+
+  it('inside a flow mapping, says to quote the value as well', () => {
+    const source = VALID.replace('value: "Bearer a"', 'value: Bearer ${secret: alice_token}');
+    rejects(source, /Line 9 holds `\$\{secret: alice_token\}`\. Inside `\{ … \}`.*quote the whole value/);
+  });
+
+  it('adds nothing to a YAML error with no reference on its line', () => {
+    assert.throws(() => parse('name: [unclosed'), (error: unknown) => {
+      assert.doesNotMatch((error as Error).message, /reference/);
+      return true;
+    });
+  });
 });
 
 // ─── discovery ────────────────────────────────────────────────────────────────
@@ -251,6 +291,25 @@ describe('findWorkspaceConfig', () => {
       findWorkspaceConfig({ configPath: join(dir, 'nope.yaml') }),
       /no such workspace file/,
     );
+  });
+
+  it('says which knob named a missing file, and what to turn instead', async () => {
+    // The bare path was the whole message. Through MCP the path usually came
+    // from an environment variable the agent never saw.
+    const missing = join(dir, 'nope.yaml');
+    await assert.rejects(findWorkspaceConfig({ configPath: missing, env: {} }), (error: unknown) => {
+      assert.match((error as Error).message, /\(named by --config\)/);
+      assert.match((error as Error).message, /Point --config at an existing tuplescope\.yaml/);
+      return true;
+    });
+    await assert.rejects(findWorkspaceConfig({ env: { TUPLESCOPE_CONFIG: missing } }), (error: unknown) => {
+      assert.match((error as Error).message, /\(named by TUPLESCOPE_CONFIG\)/);
+      assert.match(
+        (error as Error).message,
+        /Point TUPLESCOPE_CONFIG at an existing tuplescope\.yaml, pass --config <path>/,
+      );
+      return true;
+    });
   });
 
   it('reads TUPLESCOPE_CONFIG when no path is given', async () => {
@@ -296,6 +355,9 @@ describe('findWorkspaceConfig', () => {
       await assert.rejects(findWorkspaceConfig({ from: empty, env: {} }), (error: unknown) => {
         assert.match((error as Error).message, new RegExp(empty.replace(/[/\\]/g, '.')));
         assert.match((error as Error).message, /tuplescope\.example\.yaml/);
+        // Both knobs. The flag alone is not followable where there is no
+        // command line to put it on, which is an MCP client's config.
+        assert.match((error as Error).message, /pass --config <path>, or set TUPLESCOPE_CONFIG=<path>\./);
         return true;
       });
     } finally {
@@ -331,6 +393,25 @@ describe('loadWorkspaceConfig', () => {
       });
       assert.equal(config.baseUrl, 'http://example.test:9000');
       assert.equal(config.configFile, join(root, 'tuplescope.yaml'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('explains a spaced reference on the path every command takes, not only the parser', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tuplescope-load-'));
+    try {
+      await writeFile(
+        join(root, 'tuplescope.yaml'),
+        VALID.replace('u:p@', 'u:${secret: db_password}@'),
+        'utf8',
+      );
+      await assert.rejects(loadWorkspaceConfig({ from: root, env: {} }), (error: unknown) => {
+        assert.ok(error instanceof WorkspaceConfigError);
+        assert.match(error.message, /Nested mappings/);
+        assert.match(error.message, /write `\$\{secret:db_password\}`/);
+        return true;
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

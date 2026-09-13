@@ -10,7 +10,7 @@ import {
   valuesEqual,
   tablesNamedIn,
 } from './evaluate.js';
-import { textIfVisible, visible } from '@tuplescope/core';
+import { masked, textIfVisible, visible } from '@tuplescope/core';
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -136,6 +136,33 @@ const REFUND = changeSet([
   }),
 ]);
 
+// ─── columns whose side comes from outside them ───────────────────────────────
+
+describe('a column whose side is supplied from outside it', () => {
+  // `parse` now refuses a column with no side at load, because the evaluator
+  // refuses every one it reaches. These are the forms where a wrapper or a
+  // postfix supplies the side: each must still parse *and* be decided, or the
+  // parser's rule and the evaluator's disagree and a working file stops loading.
+  for (const source of [
+    'delta(single(updated(wallets, id = "wal_alice")).balance) == "100.00"',
+    'sum(delta(wallets.balance)) == "0.00"',
+    'after(single(updated(wallets, id = "wal_alice")).balance) == "1000.00"',
+    'before(single(updated(wallets, id = "wal_alice")).balance) == "900.00"',
+    'after(updated(wallets, id = "wal_alice").balance) == "1000.00"',
+    'max(after(updated(wallets).balance)) == "1000.00"',
+    'sum(after(inserted(ledger_entries).amount)) == "0.00"',
+    'delta(single(rows(wallets, id = "wal_alice")).balance) == "100.00"',
+    'single(updated(payments)).before.status == "COMPLETED"',
+    'single(updated(payments)).after.status == "REFUNDED"',
+    'single(updated(wallets, id = "wal_shop")).delta.balance == "-100.00"',
+    'sum(wallets.after.balance) == "1000.00"',
+  ]) {
+    it(`decides \`${source}\``, () => {
+      assert.equal(check(source, REFUND).passed, true);
+    });
+  }
+});
+
 // ─── value semantics ──────────────────────────────────────────────────────────
 
 describe('valuesEqual', () => {
@@ -164,6 +191,33 @@ describe('valuesEqual', () => {
   it('compares numeric by value, not by text', () => {
     assert.ok(valuesEqual(money('1.10'), money('1.1')));
     assert.equal(valuesEqual(money('1.10'), money('1.11')), false);
+  });
+
+  it('reads a boolean by its value, not its spelling', () => {
+    // PostgreSQL sends `t`; a scenario writes `true`. Found on the first real
+    // install: `after.isActive == true` failed against every active row with
+    // "expected true, got t" — and `!= true` would have passed against every
+    // one, which is the worse half.
+    assert.ok(valuesEqual(v('t', 'bool'), v('true', 'bool')));
+    assert.ok(valuesEqual(v('f', 'bool'), v('false', 'bool')));
+    assert.equal(valuesEqual(v('t', 'bool'), v('false', 'bool')), false);
+    // The wire form written as a string still names the same value.
+    assert.ok(valuesEqual(v('t', 'bool'), v('t', 'text')));
+    // A value that is not a spelling of either is not quietly one of them.
+    assert.equal(valuesEqual(v('t', 'bool'), v('yes', 'bool')), false);
+  });
+
+  it('lets an assertion say == true about a bool column', () => {
+    const active = changeSet([
+      change({
+        table: 'wallets',
+        kind: 'insert',
+        after: row({ id: v('wal_split'), isActive: v('t', 'bool') }),
+      }),
+    ]);
+    assert.equal(check('single(inserted(wallets)).after.isActive == true', active).passed, true);
+    assert.equal(check('single(inserted(wallets)).after.isActive != true', active).passed, false);
+    assert.equal(check('count(inserted(wallets).where(isActive = true)) == 1', active).passed, true);
   });
 
   it('compares citext case-insensitively and text case-sensitively', () => {
@@ -273,7 +327,14 @@ describe('refusals', () => {
   });
 
   it('refuses a column with no stated side', () => {
-    fails('single(updated(payments)).status == "REFUNDED"', REFUND, /needs a side/);
+    // At load now, not here. Every such column the evaluator reached was
+    // refused, so `parse` refuses the form (parse.test, `a column with no
+    // side`); the evaluator keeps its refusal, in the same sentence, for an
+    // `Expr` built without `parse`.
+    assert.throws(
+      () => check('single(updated(payments)).status == "REFUNDED"', REFUND),
+      (error: unknown) => error instanceof ExprSyntaxError && /needs a side/.test(error.message),
+    );
   });
 
   it('refuses a table name that does not exist, even with no watch list', () => {
@@ -950,6 +1011,203 @@ describe('a table whose departures cannot be observed', () => {
 
   it('answers a whole-scope claim once the blind table is excluded', () => {
     assert.equal(ask('hasWrite(changes(* except audit_log)) == false'), 'answered');
+  });
+});
+
+// ─── names, masks and escapes that used to be answered ────────────────────────
+
+/** A wallet that moved 10.00 → 90.00. `secret` is present, as a masked column is. */
+const MOVED = change({
+  table: 'wallets',
+  kind: 'update',
+  before: row({ id: v('w1'), balance: money('10.00'), secret: masked('text') }),
+  after: row({ id: v('w1'), balance: money('90.00'), secret: masked('text') }),
+});
+
+/** A scope in which `wallets.secret` is masked and `ledger_entries` masks nothing. */
+function maskedScope(changes: readonly RowChange[]): ChangeSet {
+  const base = changeSet(changes);
+  return {
+    ...base,
+    scope: {
+      ...base.scope,
+      tables: [
+        { table: 'wallets', ignoreColumns: [], maskedColumns: ['secret'], keyStrategy: 'primary-key' },
+        { table: 'ledger_entries', ignoreColumns: [], maskedColumns: [], keyStrategy: 'primary-key' },
+      ],
+    },
+  };
+}
+
+describe('a column the row does not have', () => {
+  // Every captured row carries every column, so a name missing from a row that
+  // exists is a misspelling. Read as absent, it was an answer.
+  const moved = maskedScope([MOVED]);
+  const typo = (e: unknown): boolean =>
+    e instanceof Unevaluable &&
+    e.message === 'there is no column `balanse` in `wallets` — did you mean `balance`?';
+
+  it('refuses a misspelled column under delta, rather than reading it as zero', () => {
+    // Measured before: {"passed":true} over a wallet that moved by 80.00.
+    assert.throws(() => check('sum(delta(wallets.balanse)) == "0"', moved), typo);
+    // Spelled right, the same assertion fails, with the movement.
+    assert.deepEqual(check('sum(delta(wallets.balance)) == "0"', moved), {
+      passed: false,
+      actual: '80.00',
+      expected: '0',
+    });
+  });
+
+  for (const source of [
+    'delta(single(updated(wallets)).balanse) == "0"',
+    'single(updated(wallets)).delta.balanse == "0"',
+    // Both were green before: the missing value came back as NULL.
+    'single(updated(wallets)).after.balanse == null',
+    'single(updated(wallets)).after.balanse != "90.00"',
+    'single(updated(wallets)).before.balanse == null',
+    'sum(wallets.after.balanse) == "90.00"',
+    'min(before(updated(wallets).balanse)) == "10.00"',
+    'max(after(updated(wallets).balanse)) == "90.00"',
+    'after(single(rows(wallets, id = "w1")).balanse) == "90.00"',
+    'sum(changes(*).delta.balanse) == "0"',
+  ]) {
+    it(`refuses \`${source}\`, naming the column and the table`, () => {
+      assert.throws(() => check(source, moved), typo);
+    });
+  }
+
+  it('asks the image that exists, whichever side is read', () => {
+    // An insert has no before image; its after image still says the table has
+    // no `balanse`. Before, the before side read as NULL and this passed.
+    const inserted = maskedScope([
+      change({ table: 'wallets', kind: 'insert', after: row({ id: v('w2'), balance: money('5.00') }) }),
+    ]);
+    assert.throws(() => check('single(inserted(wallets)).before.balanse == null', inserted), typo);
+    // A real column on the side that does not exist is still NULL: this is
+    // about names, not sides.
+    assert.equal(check('single(inserted(wallets)).before.balance == null', inserted).passed, true);
+    assert.equal(check('sum(delta(wallets.balance)) == "5.00"', inserted).passed, true);
+  });
+
+  it('lists the columns there are when none is close', () => {
+    assert.throws(
+      () => check('single(updated(wallets)).after.zzz == null', moved),
+      /^Unevaluable: there is no column `zzz` in `wallets` \(columns: id, balance, secret\)$/,
+    );
+  });
+
+  it('reads a masked column as masked, not as missing', () => {
+    assert.throws(
+      () => check('single(updated(wallets)).after.secret == "x"', moved),
+      (e: unknown) => e instanceof Unevaluable && /is masked at capture/.test(e.message),
+    );
+  });
+
+  it('answers over an empty selection, where there is no row to ask', () => {
+    // Nothing was written, so the sum really is zero. A run cannot tell a
+    // misspelling from here; `check` resolves a named table's column first.
+    assert.equal(check('sum(delta(wallets.balanse)) == "0"', maskedScope([])).passed, true);
+  });
+});
+
+describe('a masked column, refused from the scope', () => {
+  // With a row these were refused; without one they passed. An assertion that
+  // can pass and cannot fail is the thing this tool exists to refuse.
+  const nothing = maskedScope([]);
+  const refusal = (e: unknown): boolean =>
+    e instanceof Unevaluable &&
+    e.message ===
+      '`wallets.secret` is masked at capture, so this run does not have its value. ' +
+        'Remove the column from `maskColumns` if the assertion needs it.';
+
+  it('refuses a .where on it over an empty selection', () => {
+    // Measured before: {"passed":true}, `secret` masked and nothing inserted.
+    assert.throws(() => check('count(inserted(wallets).where(secret = "x")) == 0', nothing), refusal);
+  });
+
+  it('refuses it in a selector predicate', () => {
+    assert.throws(() => check('count(inserted(wallets, secret = "x")) == 0', nothing), refusal);
+    assert.throws(() => check('isEmpty(updated(wallets, secret = "x")) == true', nothing), refusal);
+  });
+
+  it('refuses it in rows(...) before any row is read', () => {
+    let read = false;
+    assert.throws(
+      () =>
+        evaluateAssertion(parse('count(rows(wallets, secret = "x")) == 0'), {
+          changes: nothing,
+          variables: {},
+          lookupRows: () => {
+            read = true;
+            return { rows: [], complete: true };
+          },
+        }),
+      refusal,
+    );
+    assert.equal(read, false);
+  });
+
+  it('refuses it under changes(*) when any table the selection spans masks it', () => {
+    assert.throws(() => check('count(changes(*).where(secret = "x")) == 0', nothing), refusal);
+    assert.throws(() => check('count(changes(*, secret = "x")) == 0', nothing), refusal);
+    // With the one table that masks it carved out, nothing left masks it.
+    assert.equal(check('count(changes(* except wallets).where(secret = "x")) == 0', nothing).passed, true);
+  });
+
+  it('refuses a sum of it, the one value read that answers over no rows', () => {
+    // Measured before: {"passed":true} — a sum of nothing is 0.
+    assert.throws(() => check('sum(inserted(wallets).after.secret) == "0"', nothing), refusal);
+    assert.throws(() => check('sum(delta(wallets.secret)) == "0"', nothing), refusal);
+    // With a row, the refusal names the column rather than `value 0`. (Under
+    // delta the column read itself refuses first, per value.)
+    assert.throws(() => check('sum(updated(wallets).after.secret) == "0"', maskedScope([MOVED])), refusal);
+  });
+
+  it('still answers a visible column over an empty selection', () => {
+    assert.equal(check('count(inserted(wallets).where(id = "x")) == 0', nothing).passed, true);
+    assert.equal(check('sum(inserted(wallets).after.balance) == "0"', nothing).passed, true);
+  });
+});
+
+describe("a predicate's quoted value", () => {
+  // One quoted text, one value, wherever it is written.
+
+  it('reads a backslash the way the comparison beside it does', () => {
+    // Source text `"a\\b"`. Measured before: three characters as a comparison
+    // literal, four as a predicate value.
+    const cmp = parse('x == "a\\\\b"');
+    assert.ok(cmp.node === 'compare' && cmp.right.node === 'literal');
+    assert.equal(cmp.right.value, 'a\\b');
+    assert.deepEqual(predicateClauses('id = "a\\\\b"'), [{ column: 'id', value: 'a\\b' }]);
+  });
+
+  it('takes an escaped quote as part of the value', () => {
+    // Measured before: `unterminated " in predicate`.
+    assert.deepEqual(predicateClauses('id = "a\\"b"'), [{ column: 'id', value: 'a"b' }]);
+    assert.deepEqual(predicateClauses("id = 'it\\'s'"), [{ column: 'id', value: "it's" }]);
+    assert.doesNotThrow(() => parse('count(rows(t, id = "a\\"b")) == 0'));
+  });
+
+  it('does not split a clause on a comma behind an escaped quote', () => {
+    assert.deepEqual(predicateClauses('note = "a\\", b = \\"c"'), [{ column: 'note', value: 'a", b = "c' }]);
+  });
+
+  it('matches the row the text names', () => {
+    const odd = changeSet([
+      change({ table: 't', kind: 'insert', after: row({ id: v('a\\b') }) }),
+      change({ table: 't', kind: 'insert', after: row({ id: v('q"r') }) }),
+    ]);
+    // Before, this looked for the four characters `a\\b`, matched nothing, and
+    // `== 0` passed over the row that was there.
+    assert.equal(check('count(inserted(t).where(id = "a\\\\b")) == 0', odd).passed, false);
+    assert.equal(check('count(inserted(t).where(id = "a\\\\b")) == 1', odd).passed, true);
+    assert.equal(check('count(inserted(t, id = "q\\"r")) == 1', odd).passed, true);
+  });
+
+  it('refuses a value that goes on after its closing quote', () => {
+    // Read before as the one value `a" "b`.
+    assert.throws(() => predicateClauses('id = "a" "b"'), /goes on after its closing quote/);
+    assert.throws(() => parse('count(rows(t, id = "a" "b")) == 0'), ExprSyntaxError);
   });
 });
 

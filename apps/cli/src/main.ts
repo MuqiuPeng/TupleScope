@@ -19,7 +19,6 @@
  */
 
 import { parseArgs } from 'node:util';
-import { writeFileSync } from 'node:fs';
 import {
   DEFAULT_POLICY,
   exitCodeOf,
@@ -28,16 +27,26 @@ import {
   type RunVerdict,
   type VerdictPolicy,
 } from '@tuplescope/core';
-import { RUN_REPORT_SCHEMA, buildEnvelope, toJUnit, type Envelope } from '@tuplescope/report';
+import {
+  RUN_REPORT_SCHEMA,
+  buildEnvelope,
+  envelopeOfStoredRun,
+  isStoredRun,
+  mergeEnvelopes,
+  toJUnit,
+  type Envelope,
+} from '@tuplescope/report';
 import {
   StaleRunError,
   WorkspaceConfigError,
   WorkspaceError,
+  loadWorkspace,
   loadWorkspaceConfig,
   namespaceOf,
   openWorkspace,
-  resolveWorkspaceSecrets,
+  probeBackend,
   secretsReferencedBy,
+  type Reachability,
   type ResolvedWorkspaceConfig,
 } from '@tuplescope/workspace';
 import {
@@ -46,7 +55,6 @@ import {
   formatProblem,
   ScenarioLoadError,
 } from '@tuplescope/scenario-engine';
-import { parse, predicateColumnsIn, tablesNamedIn } from '@tuplescope/expr';
 import { listSessions } from './sessions.js';
 import {
   renderRun,
@@ -54,7 +62,15 @@ import {
   renderScope,
   styleFor,
   unresolvedFilterColumns,
+  type ScopeReport,
 } from './output.js';
+import { panelProblems } from './panels.js';
+import { dash, dot, glyph, type Style } from './render.js';
+import { asciiDocument, installAsciiOutput, installScrubber, scrubbed } from './scrub.js';
+import { ignoreClosedPipes } from './pipes.js';
+import { baselineOverride, baselineWindowFor } from './baseline.js';
+import { junitTargetProblem, writeJUnitFile } from './junit-file.js';
+import { attributingStore, SecretUnreadable } from './store-read.js';
 import {
   DEFAULT_CONTEXT,
   SecretNotConfigured,
@@ -62,8 +78,8 @@ import {
   SecretStoreUnavailable,
   tryOpenSecretStore,
 } from '@tuplescope/secrets';
-import { commandHandoff } from './handoff.js';
-import { commandSecret } from './secrets.js';
+import { commandHandoff, HANDOFF_USAGE } from './handoff.js';
+import { commandSecret, SECRET_USAGE } from './secrets.js';
 
 /** One place, so `--version` and the envelope's `producer` cannot drift apart. */
 const VERSION = '0.4.0';
@@ -145,7 +161,7 @@ Run options
 
 Output
       --json                   the machine envelope on stdout
-      --junit <path>           JUnit XML; - for stdout
+      --junit <path>           JUnit XML; - for stdout, which --json also uses
       --diff <mode>            auto | all | failed | none            (auto)
       --columns <n|all>        columns per inserted row              (4)
       --wide                   do not truncate values
@@ -162,6 +178,11 @@ Exit codes
 `;
 
 async function main(argv: string[]): Promise<number> {
+  // Both before the first byte is written, so they cover every line after it,
+  // the usage text a bad flag prints included (`pipes.ts`, `ascii.ts`).
+  ignoreClosedPipes();
+  if (argv.includes('--ascii')) installAsciiOutput();
+
   // The return type depends on `allowPositionals`, so it has to be part of the
   // annotation or `positionals` infers as the empty tuple.
   type Parsed = ReturnType<
@@ -171,7 +192,14 @@ async function main(argv: string[]): Promise<number> {
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n${HELP}`);
+    // The usage of the command being typed, when it has one of its own. `secret
+    // set --value x` is refused, rightly, and the refusal printed the global
+    // help — fifteen commands, and not the line saying the value is read from
+    // the terminal or a pipe.
+    const attempted = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: false })
+      .positionals[0];
+    const usage = (attempted !== undefined ? SUBCOMMAND_USAGE.get(attempted) : undefined) ?? HELP;
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n${usage}`);
     return EXIT_USAGE;
   }
 
@@ -184,6 +212,15 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const command = positionals[0] ?? (values.help ? 'help' : undefined);
+  // A command with a surface of its own prints that surface. `--help` was
+  // answered here, before dispatch, with the global text — so `handoff --help`
+  // listed fifteen commands and not one of list, enable or disable, while the
+  // README called `--help` the full surface.
+  const own = command !== undefined ? SUBCOMMAND_USAGE.get(command) : undefined;
+  if (values.help && own) {
+    process.stdout.write(own);
+    return 0;
+  }
   if (!command || command === 'help' || values.help) {
     process.stdout.write(HELP);
     // Asking for help and receiving it is not a usage error. `run --help`
@@ -194,7 +231,7 @@ async function main(argv: string[]): Promise<number> {
 
   switch (command) {
     case 'url':
-      return commandUrl(positionals.slice(1));
+      return commandUrl(values.all === true);
     case 'run':
       return commandRun(positionals.slice(1), values, argv);
     case 'ls':
@@ -226,7 +263,12 @@ async function main(argv: string[]): Promise<number> {
 
 // ─── url ──────────────────────────────────────────────────────────────────────
 
-function commandUrl(args: string[]): number {
+/**
+ * `all` comes from the parsed flags. It used to be looked for among the
+ * positionals, where `--all` never is — `parseArgs` knows it as an option — so
+ * the flag did nothing while the hint below told people to pass it.
+ */
+function commandUrl(all: boolean): number {
   const sessions = listSessions();
   if (sessions.length === 0) {
     process.stderr.write(
@@ -234,7 +276,7 @@ function commandUrl(args: string[]): number {
     );
     return 1;
   }
-  if (args.includes('--all')) {
+  if (all) {
     for (const s of sessions) {
       process.stdout.write(`${s.url}    ${s.workspace} (pid ${s.pid}, since ${s.startedAt})\n`);
     }
@@ -286,17 +328,25 @@ function policyFrom(values: Values): VerdictPolicy | string {
  * A PostgreSQL driver reports an authentication failure with the whole
  * connection string in the message, password included, and that message goes
  * to stderr. Wrapping the value in a `Secret` cannot help there — the string
- * was built by someone else. This is the backstop.
+ * was built by someone else. This is the backstop. Once a workspace has opened
+ * it is applied to both streams (see `scrub.ts`); this is for text on its way
+ * somewhere else.
  */
-let scrubber: (text: string) => string = (text) => text;
-
 export function scrubSecrets(text: string): string {
-  return scrubber(text);
+  return scrubbed(text);
 }
+
+/** The commands whose `--help` is their own usage rather than the global one. */
+const SUBCOMMAND_USAGE: ReadonlyMap<string, string> = new Map([
+  ['handoff', HANDOFF_USAGE],
+  ['secret', SECRET_USAGE],
+]);
 
 async function withWorkspace<T>(
   values: Values,
   body: (session: Awaited<ReturnType<typeof open>>) => Promise<T>,
+  /** For `status`, which marks the unreadable secret in its table instead. */
+  onUnreadable?: (error: SecretUnreadable) => Promise<number>,
 ): Promise<T | number> {
   let session: Awaited<ReturnType<typeof open>>;
   try {
@@ -307,6 +357,14 @@ async function withWorkspace<T>(
       return EXIT_USAGE;
     }
     if (error instanceof SecretStoreUnavailable || error instanceof SecretNotConfigured) {
+      process.stderr.write(`${error.message}\n`);
+      return EXIT_USAGE;
+    }
+    // Stored, but not readable — an item this tool did not write, a locked
+    // keychain. The store's sentence says what to do; it reached the user as
+    // a stack trace and exit 2 from `ls`, `check` and `status`.
+    if (error instanceof SecretUnreadable) {
+      if (onUnreadable) return onUnreadable(error);
       process.stderr.write(`${error.message}\n`);
       return EXIT_USAGE;
     }
@@ -351,30 +409,23 @@ async function withWorkspace<T>(
 }
 
 async function open(values: Values) {
-  const loaded = await loadWorkspaceConfig({
-    ...(values.config !== undefined ? { configPath: values.config } : {}),
-  });
-
   // The workspace names credentials; this is where they become values. The
-  // store is only opened when something actually refers to one, so a workspace
-  // with no secrets never touches the keychain and never prompts.
-  const needed = secretsReferencedBy(loaded);
-  const opened =
-    needed.length > 0
-      ? await tryOpenSecretStore({ namespace: namespaceOf(loaded) })
-      : { store: undefined, reason: '' };
-  const { config, scrub } = await resolveWorkspaceSecrets(loaded, {
-    ...('store' in opened && opened.store ? { store: opened.store } : {}),
-    ...('reason' in opened && opened.reason ? { storeUnavailable: opened.reason } : {}),
+  // same door the runtime and MCP use — it lived here alone once, and they
+  // each skipped the step.
+  const { config, scrub } = await loadWorkspace({
+    ...(values.config !== undefined ? { configPath: values.config } : {}),
+    // The platform store, with a failed read carrying the secret it was for.
+    openStore: attributingStore,
   });
-  // Anything formatted from here on can have the values taken back out.
-  scrubber = scrub;
+  // Anything written from here on has the values taken back out — at the
+  // streams, because a print site that had to remember to ask is how `status`
+  // and `check` came to print a driver's message with the value in it.
+  installScrubber(scrub);
 
-  const baseline = values.baseline;
+  // The same reading of the flag the envelope's policy block reports (`baseline.ts`).
+  const baseline = baselineOverride(values.baseline);
   return openWorkspace(config, {
-    ...(baseline !== undefined
-      ? { baselineWindowMs: baseline === 'off' ? 0 : Number(baseline) }
-      : {}),
+    ...(baseline !== undefined ? { baselineWindowMs: baseline } : {}),
     // History is opt-in per surface. The CLI wants it because --continue-from
     // has nowhere else to read from; the runtime and MCP do not.
     history: values['no-save'] ? false : { keep: 50 },
@@ -426,106 +477,193 @@ async function commandList(values: Values): Promise<number> {
  * on the way to finding out. Asking the store whether an id exists is the whole
  * check; the value never leaves the keychain.
  */
-async function reportSecrets(
-  values: Values,
-): Promise<{ lines: string[]; allConfigured: boolean; config: ResolvedWorkspaceConfig }> {
+interface SecretsReport {
+  config: ResolvedWorkspaceConfig;
+  /** One per referenced secret; absent when there is no store to ask. */
+  entries?: Array<{ name: string; id: string; present: boolean }>;
+  unavailable?: { count: number; reason: string };
+}
+
+async function reportSecrets(values: Values): Promise<SecretsReport> {
   const config = await loadWorkspaceConfig({
     ...(values.config !== undefined ? { configPath: values.config } : {}),
   });
   const names = secretsReferencedBy(config);
-  if (names.length === 0) return { lines: [], allConfigured: true, config };
+  if (names.length === 0) return { config, entries: [] };
 
   const opened = await tryOpenSecretStore({ namespace: namespaceOf(config) });
-  if (!opened.store) {
-    return {
-      lines: [
-        `  secrets   ${names.length} referenced, and no secret store is available`,
-        `            ${opened.reason}`,
-      ],
-      allConfigured: false,
-      config,
-    };
-  }
-  const lines: string[] = [];
-  let allConfigured = true;
+  if (!opened.store) return { config, unavailable: { count: names.length, reason: opened.reason } };
+  const entries: NonNullable<SecretsReport['entries']> = [];
   for (const name of names) {
     const id = secretIdFor(name, DEFAULT_CONTEXT);
     // `has`, not `get`: reading the value is what raises the macOS permission
     // dialog and what blocks on a locked keychain, and this command's whole
     // job is to work when something is wrong.
-    const present = await opened.store.has(id);
-    if (!present) allConfigured = false;
-    lines.push(
-      `  ${lines.length === 0 ? 'secrets ' : '        '}  ${present ? '\u2713' : '\u2717'} ${name}` +
-        (present ? '' : ` \u2014 not configured; \`tuplescope secret set ${id}\``),
-    );
+    entries.push({ name, id, present: await opened.store.has(id) });
   }
-  return { lines, allConfigured, config };
+  return { config, entries };
 }
 
+/**
+ * The secrets block of `status`.
+ *
+ * `unreadable` is a secret the store has and could not hand back. `has` cannot
+ * see that — it never decrypts — so it is only known once opening the
+ * workspace tried to read it, and its line then carries the store's reason.
+ */
+function renderSecrets(style: Style, report: SecretsReport, unreadable?: SecretUnreadable): string[] {
+  if (report.unavailable) {
+    return [
+      `  secrets   ${report.unavailable.count} referenced, and no secret store is available`,
+      `            ${report.unavailable.reason}`,
+    ];
+  }
+  const entries = report.entries ?? [];
+  const lines = entries.map(({ name, id, present }, index) => {
+    const lead = `  ${index === 0 ? 'secrets ' : '        '}  `;
+    if (unreadable?.id === id) {
+      return `${lead}${glyph(style, 'fail')} ${name} ${dash(style)} ${unreadable.reason}`;
+    }
+    return present
+      ? `${lead}${glyph(style, 'pass')} ${name}`
+      : `${lead}${glyph(style, 'fail')} ${name} ${dash(style)} not configured; \`tuplescope secret set ${id}\``;
+  });
+  if (unreadable && !entries.some((entry) => entry.id === unreadable.id)) {
+    lines.push(`  secrets   ${glyph(style, 'fail')} ${unreadable.id} ${dash(style)} ${unreadable.reason}`);
+  }
+  return lines;
+}
+
+/**
+ * The third question. It needs nothing from the database or the secret store,
+ * so it is asked whatever they answered.
+ *
+ * The asking is `probeBackend`'s and the wording is its `reason` and `remedy`;
+ * what is left here is this surface's own layout — the label column, the
+ * separators and their `--ascii` spelling. The fetch, the deadline and the
+ * refusal to probe a `baseUrl` that still holds a marker used to live in this
+ * function *and* in the runtime, which never probed at all and printed
+ * `baseUrl` as if it had.
+ *
+ * `checkedAt` is not printed, and this is the one surface where leaving it out
+ * is still honest: this line is written in the same event-loop turn as the
+ * answer, by a process the reader started, so the invocation is the timestamp.
+ * A page that keeps a rendered indicator on screen while its evidence ages has
+ * no such alibi. If it is wanted here, it belongs on one line for the whole
+ * report — beside `config`, where the database and the backend can share a
+ * single moment — and that is a decision about `status`, not about this
+ * function.
+ */
+async function reportBackend(style: Style, baseUrl: string): Promise<boolean> {
+  // No `timeoutMs`: the module's default is the same 3s this passed explicitly,
+  // and a second spelling of one deadline is a deadline that drifts.
+  const backend = await probeBackend(baseUrl);
+  process.stdout.write(`  backend   ${backendHeadline(style, backend)}\n`);
+  // Whatever the value says to do, on the continuation line the unreachable
+  // case already used. Not re-worded here: the CLI's own copy of the remedy is
+  // how the terminal and the web page came to give different advice about the
+  // same dead server.
+  if (backend.remedy) process.stdout.write(`            ${backend.remedy}\n`);
+  // `not-checked` counts as not answering, exactly as the `return false` under
+  // the unresolved-secret branch did: nothing has proved the backend is there.
+  // It is only the *exit code* that merges the two — the line above keeps them
+  // apart, because "start your server" is the wrong errand for a reader whose
+  // server is already running.
+  return backend.state === 'reachable';
+}
+
+/** The `backend` line's own half, in the words this surface has always used. */
+function backendHeadline(style: Style, backend: Reachability): string {
+  switch (backend.state) {
+    case 'reachable':
+      // `status` is optional on the type; `probeBackend` sets it whenever
+      // anything answered, and "answering" alone is still true without it.
+      return backend.status === undefined
+        ? 'answering'
+        : `answering ${dot(style)} HTTP ${backend.status}`;
+    case 'not-checked':
+      return `not checked${backend.reason ? ` ${dash(style)} ${backend.reason}` : ''}`;
+    case 'unreachable':
+      // The reason is already a sentence naming the URL, so it carries the line
+      // on its own — and it now ends in the driver's word for the failure.
+      // Measured: a server that accepts the connection and never answers gave
+      // the identical "nothing is listening at …" as a closed port, and sent
+      // the reader to restart a process that was up the whole time. `:
+      // ENOTFOUND` and `: it did not answer in time` are three more words for
+      // two different errands. A refused connection carries no code of its own
+      // (the driver raises an AggregateError there), so that line is unchanged.
+      return backend.reason ?? 'not reachable';
+  }
+}
+
+/**
+ * Three questions, answered separately: whether the workspace resolved, whether
+ * the database is reachable, whether the backend answers.
+ *
+ * Exit 4 when the workspace will not load — a file that does not parse, a
+ * secret that is missing or cannot be read — which is what `ls`, `check` and
+ * `show` already said about the same file while `status` said 2. Exit 2 when
+ * it loads and the database or the backend does not answer.
+ */
 async function commandStatus(values: Values): Promise<number> {
+  const style = styleFor(values);
   // Before the workspace opens, because opening it resolves secrets and a
   // missing one would abort the very report that explains why.
-  let secretsOk = true;
-  let secretLines: string[] = [];
-  let known: ResolvedWorkspaceConfig | undefined;
+  let report: SecretsReport;
   try {
-    const report = await reportSecrets(values);
-    secretLines = report.lines;
-    secretsOk = report.allConfigured;
-    known = report.config;
+    report = await reportSecrets(values);
   } catch (error) {
     if (!(error instanceof WorkspaceConfigError)) throw error;
+    // The message names the file and the key.
+    process.stderr.write(`${scrubSecrets(error.message)}\n`);
+    return EXIT_USAGE;
   }
-  if (!secretsOk) {
-    // The workspace genuinely cannot open — `assertResolved` refuses any
-    // surviving marker — so the database and the backend go unchecked. What is
-    // *known* still gets said: this used to print the bare word `tuplescope`
-    // and a secret list, dropping the workspace name and the config path, which
-    // are the two things a reader needs in order to go and fix it. And it said
-    // nothing about the other two questions, so their absence read as a third
-    // failure rather than as a consequence of the first.
-    process.stdout.write(
-      known ? `${renderWorkspaceLine(styleFor(values), known)}\n` : 'tuplescope\n',
-    );
-    for (const line of secretLines) process.stdout.write(`${line}\n`);
-    process.stdout.write(
-      '  database  not checked — the workspace cannot open until every secret above resolves\n',
-    );
-    process.stdout.write('  backend   not checked, for the same reason\n');
-    return 2;
-  }
+  const known = report.config;
 
-  const result = await withWorkspace(values, async (session) => {
-    const style = styleFor(values);
-    process.stdout.write(`${renderWorkspaceLine(style, session.config)}\n`);
-    for (const line of secretLines) process.stdout.write(`${line}\n`);
-    try {
-      const { tables, scope } = await session.preflight();
-      process.stdout.write(
-        `  database  reachable · ${tables.length} tables in \`${scope.schema}\`\n`,
-      );
-      for (const line of renderScope(style, scope)) process.stdout.write(`${line}\n`);
-    } catch (error) {
-      const message = error instanceof WorkspaceError ? error.message : String(error);
-      const remedy = error instanceof WorkspaceError ? error.remedy : undefined;
-      process.stderr.write(`  database  ${message}\n${remedy ? `            ${remedy}\n` : ''}`);
-      return 2;
-    }
-    try {
-      const response = await fetch(new URL('/', session.config.baseUrl), {
-        signal: AbortSignal.timeout(3000),
-      });
-      process.stdout.write(`  backend   answering · HTTP ${response.status}\n`);
-    } catch {
-      process.stdout.write(
-        `  backend   nothing is listening at ${session.config.baseUrl}\n` +
-          `            Start it, then run again.\n`,
-      );
-      return 2;
-    }
-    return 0;
-  });
+  // The workspace genuinely cannot open — `assertResolved` refuses any
+  // surviving marker — so the database cannot be asked. What is *known* still
+  // gets said: the workspace name and the config path are the two things a
+  // reader needs to go and fix it. The backend is still asked; it used to be
+  // "not checked, for the same reason", about a question that shares no reason
+  // with the secrets.
+  const cannotOpen = async (unreadable?: SecretUnreadable): Promise<number> => {
+    process.stdout.write(`${renderWorkspaceLine(style, known)}\n`);
+    for (const line of renderSecrets(style, report, unreadable)) process.stdout.write(`${line}\n`);
+    process.stdout.write(
+      `  database  not checked ${dash(style)} the workspace cannot open until every secret above resolves\n`,
+    );
+    await reportBackend(style, known.baseUrl);
+    return EXIT_USAGE;
+  };
+  if (!report.entries || report.entries.some((entry) => !entry.present)) return cannotOpen();
+
+  const result = await withWorkspace(
+    values,
+    async (session) => {
+      process.stdout.write(`${renderWorkspaceLine(style, session.config)}\n`);
+      for (const line of renderSecrets(style, report)) process.stdout.write(`${line}\n`);
+      let reachable = true;
+      try {
+        const { tables, scope } = await session.preflight();
+        process.stdout.write(
+          `  database  reachable ${dot(style)} ${tables.length} tables in \`${scope.schema}\`\n`,
+        );
+        for (const line of renderScope(style, scope)) process.stdout.write(`${line}\n`);
+      } catch (error) {
+        // On stdout with the rest of the table: it went to stderr alone, so
+        // `status > file` kept every answer except the one that was wrong.
+        const message = error instanceof WorkspaceError ? error.message : String(error);
+        const remedy = error instanceof WorkspaceError ? error.remedy : undefined;
+        process.stdout.write(`  database  ${message}\n${remedy ? `            ${remedy}\n` : ''}`);
+        reachable = false;
+      }
+      // Measured: with the database down and the backend answering 200, this
+      // returned at the database line and the backend was never mentioned.
+      const answering = await reportBackend(style, session.config.baseUrl);
+      return reachable && answering ? 0 : 2;
+    },
+    cannotOpen,
+  );
   return typeof result === 'number' ? result : 0;
 }
 
@@ -592,7 +730,10 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     }
     let tables: string[];
     let columns: Map<string, Set<string>>;
-    let scope: { schema: string; watched: number; otherSchemas: ReadonlyArray<{ schema: string; tables: number }>; nameFiltered: ReadonlyArray<string>; partitionedParents: ReadonlyArray<string>; foreignTables: ReadonlyArray<string> };
+    // The same type `renderScope` takes. A copy of it written out here lagged
+    // behind the adapter's report, and a field missing from it is one `check`
+    // cannot print.
+    let scope: ScopeReport;
     try {
       ({ tables, columns, scope } = await session.preflight());
     } catch (error) {
@@ -610,44 +751,31 @@ async function commandCheck(targets: string[], values: Values): Promise<number> 
     problems.push(...unresolvedFilterColumns(session.config, everyColumn));
 
     // Panel sources are expressions in the same language, resolved against the
-    // same schema, and fail the same way — a misspelled table draws an empty
-    // chart rather than an error. `check` is where that is caught.
-    for (const panel of session.config.panels ?? []) {
-      for (const [name, source] of Object.entries(panel.sources)) {
-        let parsed;
-        try {
-          parsed = parse(source);
-        } catch (error) {
-          problems.push(
-            `  panel \`${panel.title}\`  source \`${name}\` will not parse: ` +
-              `${error instanceof Error ? error.message : String(error)}`,
-          );
-          continue;
-        }
-        for (const table of tablesNamedIn(parsed)) {
-          if (known.has(table)) continue;
-          problems.push(
-            `  panel \`${panel.title}\`  source \`${name}\` names table \`${table}\`, ` +
-              'which is not in this database',
-          );
-        }
-        for (const { table, column } of predicateColumnsIn(parsed)) {
-          const have = columns.get(table);
-          if (!have || have.has(column)) continue;
-          problems.push(
-            `  panel \`${panel.title}\`  source \`${name}\` matches on ` +
-              `\`${table}.${column}\`, which is not a column of \`${table}\``,
-          );
-        }
-      }
-    }
+    // same schema — tables, predicate columns and value columns (`panels.ts`).
+    problems.push(...panelProblems(session.config.panels ?? [], known, columns));
 
-    const audit = auditScenarios(selected, { tables: known, columns });
+    // Which tables a run cannot see a row leave. A fact about the table and the
+    // engine together — snapshot-diff sees a row leave a keyless table, the MVCC
+    // engines do not — so it is read off the scope a run builds, not off the
+    // identity report `status` prints.
+    const keyless = new Set(
+      (await session.adapter.fullScope()).tables
+        .filter((table) => table.departuresObservable === false)
+        .map((table) => table.table),
+    );
+    const audit = auditScenarios(selected, {
+      tables: known,
+      columns,
+      // Asked by capability, never by engine name (packages/core/src/abstraction.test.ts).
+      capture: { detection: session.adapter.detection, fidelity: session.adapter.fidelity },
+      ...(session.config.maskColumns ? { maskColumns: session.config.maskColumns } : {}),
+      keyless,
+    });
     assertions = audit.assertions;
     problems.push(...audit.problems.map((p) => formatProblem(p, '  ')));
 
     const out = [
-      `tuplescope · ${session.config.name}`,
+      `tuplescope ${dot(styleFor(values))} ${session.config.name}`,
       `  selected   ${selected.length} dataset(s), ${assertions} assertion(s)`,
       `  database   ${tables.length} tables in \`${scope.schema}\``,
       // The boundary belongs here more than anywhere: `check` is what a reader
@@ -699,13 +827,25 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
         process.stderr.write(`No stored run \`${id}\`. \`tuplescope runs\` lists what is there.\n`);
         return EXIT_USAGE;
       }
-      process.stdout.write(`${JSON.stringify(stored, null, 2)}\n`);
+      process.stdout.write(asciiDocument(`${JSON.stringify(stored, null, 2)}\n`, 'json'));
       return 0;
     }
 
-    const limit = Number(args[0] ?? 20) || 20;
-    const rows = await store.list(limit);
-    if (rows.length === 0) {
+    const asked = Number(args[0] ?? 20);
+    const limit = Number.isInteger(asked) && asked > 0 ? asked : 20;
+    // Every readable run, so the listing can say what it leaves out. It showed
+    // the newest 20 of 50 and said nothing — measured on a workspace holding
+    // 50 — which reads as "these are the runs". At most `keep` (50) files.
+    const all = await store.list(Number.MAX_SAFE_INTEGER);
+    const rows = all.slice(0, limit);
+    // A file the store cannot read is skipped by `list`; counted here so the
+    // total is not quietly smaller than the directory.
+    const { readdir } = await import('node:fs/promises');
+    const files = (await readdir(store.dir).catch(() => [] as string[])).filter((name) =>
+      name.endsWith('.json'),
+    ).length;
+    const unreadable = Math.max(0, files - all.length);
+    if (all.length === 0 && unreadable === 0) {
       process.stdout.write(`No stored runs yet. They land in ${store.dir} as runs happen.\n`);
       return 0;
     }
@@ -714,6 +854,18 @@ async function commandRuns(args: string[], values: Values): Promise<number> {
         `  ${row.id.padEnd(16)} ${row.outcome.padEnd(10)} ${`${row.scenarioId}/${row.datasetId}`.padEnd(28)}` +
         `${row.coverage === 'partial' ? 'partial  ' : '         '}${row.startedAt}`,
     );
+    if (rows.length < all.length) {
+      out.push(
+        '',
+        `  the newest ${rows.length} of ${all.length} stored runs; \`tuplescope runs ${all.length}\` lists every one`,
+      );
+    }
+    if (unreadable > 0) {
+      out.push(
+        ...(rows.length < all.length ? [] : ['']),
+        `  ${unreadable} more file(s) in ${store.dir} could not be read by this build, and are not listed`,
+      );
+    }
     process.stdout.write(`${out.join('\n')}\n`);
     return 0;
   });
@@ -849,7 +1001,26 @@ async function commandKeep(args: string[], values: Values): Promise<number> {
  * did not ask for, or wants several shards merged into one verdict — neither
  * of which should mean touching the database again.
  */
+/**
+ * `--json` and `--junit -` both claim stdout.
+ *
+ * Accepted together they wrote one document after the other — measured,
+ * `report shard.json --junit - --json` produced a file that is neither valid
+ * XML nor valid JSON, with exit 1 and no warning. Refused before any work.
+ */
+function streamConflict(values: Values): string | undefined {
+  return values.json && values.junit === '-'
+    ? '--json and --junit - both write to stdout, and one after the other is neither valid ' +
+        'JSON nor valid XML. Send the JUnit to a file: --junit <path>.'
+    : undefined;
+}
+
 async function commandReport(files: string[], values: Values): Promise<number> {
+  const conflict = streamConflict(values);
+  if (conflict) {
+    process.stderr.write(`${conflict}\n`);
+    return EXIT_USAGE;
+  }
   if (files.length === 0) {
     process.stderr.write('report needs at least one stored envelope: tuplescope report run.json\n');
     return EXIT_USAGE;
@@ -889,31 +1060,41 @@ async function commandReport(files: string[], values: Values): Promise<number> {
         );
         return EXIT_USAGE;
       }
-      envelopes.push(parsed);
+      // A stored run (`.tuplescope/runs/*.json`) passes the schema gate — it
+      // was saved as a one-run envelope with the header spread over the run —
+      // but has no `runs` list. It went straight into the merge below, which
+      // made a list of one `undefined`, and the crash named `.selector` rather
+      // than the file. Wrap it instead: everything the merge needs is on it.
+      if (isStoredRun(parsed)) {
+        envelopes.push(envelopeOfStoredRun(parsed));
+      } else if (Array.isArray(parsed.runs)) {
+        envelopes.push(parsed);
+      } else {
+        process.stderr.write(`${file}: carries the report schema but neither runs nor a run.\n`);
+        return EXIT_USAGE;
+      }
     } catch (error) {
       process.stderr.write(`${file}: ${error instanceof Error ? error.message : String(error)}\n`);
       return EXIT_USAGE;
     }
   }
 
-  const merged: Envelope = {
-    ...envelopes[0]!,
-    runs: envelopes.flatMap((e) => e.runs),
-    // The worst outcome across every file, by the same precedence a suite uses.
-    outcome: (['errored', 'failed', 'undecided', 'clean'] as const).find((outcome) =>
-      envelopes.some((e) => e.outcome === outcome),
-    )!,
-    exitCode: Math.max(...envelopes.map((e) => e.exitCode)),
-    proves: envelopes.some((e) => e.proves === 'bounded') ? 'bounded' : 'full',
-    boundedBy: [...new Set(envelopes.flatMap((e) => e.boundedBy))],
-  };
+  // Totals, targets and warnings recomputed over every run; the exit code from
+  // the merged outcome, so the two cannot disagree. See `merge.ts`.
+  const merged: Envelope = mergeEnvelopes(envelopes);
 
   if (values.junit !== undefined) {
     const xml = toJUnit(merged);
-    if (values.junit === '-') process.stdout.write(xml);
-    else writeFileSync(values.junit, xml, 'utf8');
+    if (values.junit === '-') process.stdout.write(asciiDocument(xml, 'xml'));
+    else {
+      const problem = writeJUnitFile(values.junit, xml);
+      if (problem) {
+        process.stderr.write(`${problem}\n`);
+        return EXIT_USAGE;
+      }
+    }
   }
-  if (values.json) process.stdout.write(`${JSON.stringify(merged, null, 2)}\n`);
+  if (values.json) process.stdout.write(asciiDocument(`${JSON.stringify(merged, null, 2)}\n`, 'json'));
   if (!values.json && values.junit === undefined) {
     const lines = [
       `${merged.runs.length} run(s) from ${files.length} file(s)`,
@@ -938,10 +1119,24 @@ async function commandReport(files: string[], values: Values): Promise<number> {
 // ─── run ──────────────────────────────────────────────────────────────────────
 
 async function commandRun(targets: string[], values: Values, argv: string[]): Promise<number> {
+  const conflict = streamConflict(values);
+  if (conflict) {
+    process.stderr.write(`${conflict}\n`);
+    return EXIT_USAGE;
+  }
   const policy = policyFrom(values);
   if (typeof policy === 'string') {
     process.stderr.write(`${policy}\n`);
     return EXIT_USAGE;
+  }
+  // Before a single request: a report path that cannot be written was found
+  // only after the whole suite had run against the database, as a stack trace.
+  if (values.junit !== undefined) {
+    const problem = junitTargetProblem(values.junit);
+    if (problem) {
+      process.stderr.write(`${problem}\n`);
+      return EXIT_USAGE;
+    }
   }
   const partial = (values.from ?? values.only) !== undefined;
   if (partial && targets.length !== 1) {
@@ -1092,7 +1287,8 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
       policy: {
         ...policy,
         escalatedCodes: suite.warnings.filter((w) => w.severity === 'error').map((w) => w.code),
-        baselineWindowMs: session.config.baselineWindowMs ?? 0,
+        // The window this invocation watched, not the workspace file's (`baseline.ts`).
+        baselineWindowMs: baselineWindowFor(values.baseline, session.config.baselineWindowMs),
         exitZero: values['exit-zero'] ?? false,
       },
       exitCode,
@@ -1119,19 +1315,29 @@ async function commandRun(targets: string[], values: Values, argv: string[]): Pr
     // reads as "TupleScope produced no report" rather than "the report has a
     // run summary stapled to the front of it".
     const human = values.junit === '-' ? process.stderr : process.stdout;
-    if (values.json) process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    // Documents go out escaped under --ascii, never transliterated: a value in
+    // the envelope must read back as the value the database held (`ascii.ts`).
+    if (values.json) process.stdout.write(asciiDocument(`${JSON.stringify(envelope, null, 2)}\n`, 'json'));
+    let unwritten: string | undefined;
     if (values.junit !== undefined) {
       const xml = toJUnit(envelope);
-      if (values.junit === '-') process.stdout.write(xml);
+      if (values.junit === '-') process.stdout.write(asciiDocument(xml, 'xml'));
       // Written synchronously: a report the exit code refers to must exist
       // before the process leaves, even on a signal.
-      else writeFileSync(values.junit, xml, 'utf8');
+      else unwritten = writeJUnitFile(values.junit, xml);
     }
     // `--quiet` means the summary alone, not silence: the outcome line is the
     // one thing a human always needs, and suppressing it made the flag useless.
     if (!values.json) {
       const { renderSummary } = await import('./render.js');
       human.write(`${renderSummary(styleFor(values), suite as RunVerdict, exitCode).join('\n')}\n`);
+    }
+    // Checked before the run, so this is a path that changed underneath it.
+    // The report the exit code would describe does not exist, so the exit
+    // code cannot be the run's.
+    if (unwritten) {
+      process.stderr.write(`${unwritten}\n`);
+      return EXIT_USAGE;
     }
     return exitCode;
   });

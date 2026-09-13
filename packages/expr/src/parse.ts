@@ -15,7 +15,7 @@
  */
 
 import type { Expr, CompareOp, Selector, SelectorKind, Temporal } from '@tuplescope/core';
-import { parsePredicate } from './evaluate.js';
+import { needsSide, parsePredicate } from './evaluate.js';
 
 const SELECTOR_KINDS: ReadonlySet<string> = new Set([
   'changes',
@@ -164,6 +164,9 @@ function validatePredicate(raw: string, source: string, at: number): void {
 export function parse(source: string): Expr {
   const tokens = tokenize(source);
   let pos = 0;
+  // Where each column was named, so `requireSides` can point at a side-less
+  // one once the whole tree is known.
+  const columnAt = new WeakMap<Expr, number>();
 
   const peek = (): Token | undefined => tokens[pos];
   const at = (text: string): boolean => peek()?.text === text;
@@ -247,19 +250,23 @@ export function parse(source: string): Expr {
         throw new ExprSyntaxError(`unknown method \`${name.text}\``, source, name.pos);
       }
 
+      // `response.body.id` keeps accumulating into one path. Ahead of the
+      // temporal check: a response is JSON, not a row, and has no sides — but
+      // `response.body.after` (a pagination cursor, one half of an audit pair)
+      // was taken for `.after` and refused as "must be followed by a column".
+      if (expr.node === 'response') {
+        expr = { node: 'response', path: expr.path ? `${expr.path}.${name.text}` : name.text };
+        continue;
+      }
+
       // `.before` / `.after` / `.delta` select which side the next column reads.
       if (TEMPORALS.has(name.text) && pendingTemporal === null) {
         pendingTemporal = name.text as Temporal;
         continue;
       }
 
-      // `response.body.id` keeps accumulating into one path.
-      if (expr.node === 'response') {
-        expr = { node: 'response', path: expr.path ? `${expr.path}.${name.text}` : name.text };
-        continue;
-      }
-
       expr = { node: 'column', source: expr, column: name.text, temporal: pendingTemporal };
+      columnAt.set(expr, name.pos);
       pendingTemporal = null;
     }
 
@@ -317,6 +324,20 @@ export function parse(source: string): Expr {
   function parseCall(name: Token): Expr {
     if (SELECTOR_KINDS.has(name.text)) {
       const selector: Selector = { kind: name.text as SelectorKind };
+      // `rows()` is `rows(*)` without the star and fails for the same reason:
+      // no table, so the engine's pre-fetch skips it and every run refuses it.
+      // It loaded and `check` passed it clean (measured: `count(rows()) == 0`,
+      // exit 0) while `rows(*)` one character away was refused here. The other
+      // kinds stay: with no table they mean every table, as `changes(*)` does,
+      // and the evaluator answers them.
+      if (name.text === 'rows' && at(')')) {
+        throw new ExprSyntaxError(
+          '`rows()` cannot be read — `rows` needs one table to select from. ' +
+            'Use `changes(*)` to ask about every table this run wrote to.',
+          source,
+          peek()!.pos,
+        );
+      }
       if (!at(')')) {
         const table = peek();
         if (!table || table.type !== 'ident') {
@@ -424,9 +445,60 @@ export function parse(source: string): Expr {
     throw new ExprSyntaxError(`unknown function \`${name.text}\``, source, name.pos);
   }
 
+  /**
+   * Refuses a column read with no side — `single(updated(wallets)).balance`.
+   *
+   * The evaluator refuses every such column it reaches, with this sentence,
+   * whatever the run did: no row and no engine makes "the balance" mean before
+   * or after. So it is always undecided, and like `rows(*)` it belongs here. It
+   * used to load and get `check`'s unconditional clean sentence, and be
+   * refused only by a run.
+   *
+   * On the finished tree, not while building it: `delta(x.balance)`,
+   * `before(...)` and `after(...)` parse their column side-less and supply the
+   * side on the way out, so a column is side-less only if nothing claimed it by
+   * the end. That is the evaluator's own test — `temporal === null` on a column
+   * node — and nothing wider: a predicate's columns are raw text and
+   * `response.body.x` is a path, and neither is a column node. Anywhere in the
+   * tree, including the far side of an `and` or `or`: reached, it is refused,
+   * and whether it is reached is decided by the other operand, never by it.
+   */
+  const requireSides = (node: Expr): void => {
+    switch (node.node) {
+      case 'column':
+        if (node.temporal === null) {
+          throw new ExprSyntaxError(needsSide(node.column), source, columnAt.get(node) ?? 0);
+        }
+        requireSides(node.source);
+        return;
+      case 'aggregate':
+      case 'predicate':
+      case 'hasWrite':
+      case 'isEmpty':
+      case 'atomic':
+      case 'writeCount':
+        requireSides(node.source);
+        return;
+      case 'compare':
+      case 'logical':
+        requireSides(node.left);
+        requireSides(node.right);
+        return;
+      case 'not':
+        requireSides(node.operand);
+        return;
+      case 'literal':
+      case 'response':
+      case 'variable':
+      case 'select':
+        return;
+    }
+  };
+
   const expr = parseOr();
   if (pos < tokens.length) {
     throw new ExprSyntaxError(`unexpected trailing \`${tokens[pos]!.text}\``, source, tokens[pos]!.pos);
   }
+  requireSides(expr);
   return expr;
 }

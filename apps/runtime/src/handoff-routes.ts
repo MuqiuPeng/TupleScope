@@ -21,6 +21,7 @@ import {
   isGranted,
   loadHandoffConfig,
   psqlScript,
+  remoteBanner,
   runPsql,
   workspaceKey,
   type Binding,
@@ -35,6 +36,8 @@ export interface HandoffRouteOptions {
   findRun: (runId: string) => Run | undefined;
   /** Opens a URL with the platform opener. Injected so tests never launch a browser. */
   openUrl: (url: string) => Promise<void>;
+  /** Where `handoff.json` is read from. Tests only; the default is the user's own. */
+  configPath?: string;
 }
 
 interface OpenBody {
@@ -56,7 +59,7 @@ export function registerHandoffRoutes(app: FastifyInstance, options: HandoffRout
     const here = await workspaceKey(options.workspaceRoot);
     let config;
     try {
-      config = await loadHandoffConfig(undefined, { allowRemote: true });
+      config = await loadHandoffConfig(options.configPath, { allowRemote: true });
     } catch (error) {
       // A malformed file is reported, not swallowed into "nothing bound" — the
       // difference decides whether the user goes and fixes their config or
@@ -72,6 +75,9 @@ export function registerHandoffRoutes(app: FastifyInstance, options: HandoffRout
         granted: isGranted(binding, here),
         where: describe(binding),
         standing: standingLine(binding),
+        // Separately as well, so the page can mark the standing line as a
+        // warning without parsing it.
+        banner: remoteBanner(binding),
       })),
     };
   });
@@ -102,14 +108,17 @@ export function registerHandoffRoutes(app: FastifyInstance, options: HandoffRout
     const here = await workspaceKey(options.workspaceRoot);
     let binding: Binding | undefined;
     try {
-      binding = (await loadHandoffConfig(undefined, { allowRemote: true })).bindings[alias];
+      binding = (await loadHandoffConfig(options.configPath, { allowRemote: true })).bindings[alias];
     } catch (error) {
       return reply.status(409).send({ error: 'BAD_CONFIG', message: message(error) });
     }
     if (!binding) {
       return reply.status(409).send({
         error: 'NOT_BOUND',
-        message: `\`${alias}\` is a name this repository chose. Nothing on this machine is bound to it.`,
+        // The alias comes from the page, which offers only this machine's own
+        // bindings. This used to say "a name this repository chose" — nothing
+        // in a repository names, creates or approves an alias.
+        message: `\`${alias}\` is not bound on this machine. \`tuplescope handoff list\` shows what is.`,
       });
     }
     if (!isGranted(binding, here)) {
@@ -131,11 +140,16 @@ export function registerHandoffRoutes(app: FastifyInstance, options: HandoffRout
         return reply.status(409).send({ error: 'NOT_ADDRESSABLE', message: built.detail });
       }
       await options.openUrl(built.url);
+      // On every open, not once at enable time: `handoff enable
+      // --i-know-this-is-not-local` promises the warning is "reprinted every
+      // time it is used", and this response is the use.
+      const banner = remoteBanner(binding);
       return {
         kind: 'url' as const,
         url: built.url,
         absent: handoff.absent ?? false,
         portable: handoff.portable,
+        ...(banner ? { banner } : {}),
       };
     }
 
@@ -172,8 +186,10 @@ function describe(binding: Binding): string {
 }
 
 function standingLine(binding: Binding): string {
+  const banner = remoteBanner(binding);
   return binding.preset === 'adminer-url'
-    ? `Adminer at ${new URL(binding.origin).host} as ${binding.username} · the key goes into browser history`
+    ? `Adminer at ${new URL(binding.origin).host} as ${binding.username} · the key goes into browser history` +
+        (banner ? ` · ⚠ ${banner}` : '')
     : `psql, service ${binding.service} · SQL on stdin, not in ps`;
 }
 

@@ -14,6 +14,8 @@ import type {
   RowChange,
   Scenario,
 } from '@tuplescope/core';
+import { visible } from '@tuplescope/core';
+import { Unevaluable } from '@tuplescope/expr';
 import type { Exchange, HttpRunner } from '@tuplescope/http-runner';
 import { ScenarioEngine, template } from './index.js';
 
@@ -48,6 +50,7 @@ interface FakeCall {
   idempotencyKey?: string;
   body?: unknown;
   as?: string;
+  headers?: Readonly<Record<string, string>>;
 }
 
 function fakes(options: {
@@ -64,12 +67,14 @@ function fakes(options: {
       idempotencyKey?: string;
       body?: unknown;
       as?: string;
+      headers?: Readonly<Record<string, string>>;
     }): Promise<Exchange> {
       calls.push({
         path: request.path,
         ...(request.idempotencyKey !== undefined ? { idempotencyKey: request.idempotencyKey } : {}),
         body: request.body,
         ...(request.as !== undefined ? { as: request.as } : {}),
+        ...(request.headers !== undefined ? { headers: request.headers } : {}),
       });
       const canned = options.responses[Math.min(index, options.responses.length - 1)]!;
       return {
@@ -479,6 +484,161 @@ describe('ScenarioEngine', () => {
   });
 });
 
+describe('a placeholder inside a string literal', () => {
+  it('is spliced as text, not quoted into the middle of the literal', () => {
+    // It was JSON-quoted unless both neighbours were quotes, so this became
+    // `"PVT-"pay_1""` and failed to parse.
+    assert.equal(
+      template('single(inserted(t)).after.ref == "PVT-{{x}}"', { x: 'pay_1' }, { quote: true }),
+      'single(inserted(t)).after.ref == "PVT-pay_1"',
+    );
+    assert.equal(
+      template("x == 'a-{{x}}-{{y}}'", { x: 'p', y: 'q' }, { quote: true }),
+      "x == 'a-p-q'",
+    );
+  });
+
+  it('escapes the literal\'s own quote and backslashes, by the lexer\'s rule', () => {
+    assert.equal(template('x == "PVT-{{v}}"', { v: 'a"b\\c' }, { quote: true }), 'x == "PVT-a\\"b\\\\c"');
+    // The other quote character is not special inside this literal.
+    assert.equal(template("x == 'PVT-{{v}}'", { v: 'a"b' }, { quote: true }), "x == 'PVT-a\"b'");
+    assert.equal(template("x == '{{v}}'", { v: "it's" }, { quote: true }), "x == 'it\\'s'");
+    // Standing alone, the same rule inside the quotes it is given. JSON's `\n`
+    // would have reached the lexer as the letter n.
+    assert.equal(template('x == {{v}}', { v: 'a"b\nc' }, { quote: true }), 'x == "a\\"b\nc"');
+  });
+
+  it('reads predicates as before when the value needs no escaping', () => {
+    assert.equal(
+      template('count(rows(t, id = "{{v}}")) == 1', { v: "it's" }, { quote: true }),
+      'count(rows(t, id = "it\'s")) == 1',
+    );
+  });
+
+  it('refuses a value a predicate could only read wrongly', () => {
+    // A predicate's quoted value has no escapes (parsePredicate reads it raw),
+    // so an escaped value would be matched as the escaped characters.
+    for (const [source, v] of [
+      ['count(rows(t, id = "{{v}}")) == 0', 'p1", status = "x'],
+      ["count(inserted(t).where(id = '{{v}}')) == 0", "it's"],
+      ['count(inserted(t).where(id = {{v}})) == 0', 'a\\b'],
+      ['count(inserted(t).where(id = "{{v}}")) == 0', 'a\\b'],
+    ] as const) {
+      assert.throws(
+        () => template(source, { v }, { quote: true }),
+        (error: unknown) => error instanceof Unevaluable && /predicate's quoted value, which has no escapes/.test(error.message),
+        source,
+      );
+    }
+  });
+
+  const exchangeStep = (assertion: string) =>
+    scenario([
+      { id: 'a', name: 'a', request: { method: 'POST', path: '/a' }, capture: { v: 'response.body.v' } },
+      { id: 'b', name: 'b', request: { method: 'GET', path: '/b' }, assert: [assertion] },
+    ]);
+
+  it('cannot break out of a literal the author quoted', async () => {
+    // Spliced raw because both neighbours were quotes, this value made the
+    // assertion `response.body.label == "nope" or "a" == "a"` — always true.
+    const f = fakes({
+      responses: [
+        { status: 201, body: { v: 'nope" or "a" == "a' } },
+        { status: 200, body: { label: 'something else' } },
+      ],
+    });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(exchangeStep('response.body.label == "{{v}}"'), 'd', SCOPE);
+    assert.equal(run.steps[1]!.assertions[0]!.status, 'failed');
+  });
+
+  it('compares a value with a quote and a backslash inside a longer literal', async () => {
+    const f = fakes({
+      responses: [
+        { status: 201, body: { v: 'a"b\\c' } },
+        { status: 200, body: { label: 'PVT-a"b\\c' } },
+      ],
+    });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(exchangeStep('response.body.label == "PVT-{{v}}"'), 'd', SCOPE);
+    assert.equal(run.steps[1]!.assertions[0]!.status, 'passed', run.steps[1]!.assertions[0]!.reason);
+  });
+
+  it('refuses, rather than answers, a predicate a captured value would rewrite', async () => {
+    // Raw, this was `where(id = "p1", status = "x")` — two clauses, one of
+    // them the API's. JSON-quoted, `a\b` was matched as `a\\b`. Either way the
+    // guard found nothing and passed over the row that was there.
+    const row: RowChange = {
+      table: 'payments',
+      key: null,
+      kind: 'insert',
+      before: null,
+      after: { id: visible('text', 'a\\b') },
+      changedColumns: ['id'],
+      visibleColumns: ['id'],
+      hasWrite: true,
+    };
+    for (const [assertion, v] of [
+      ['count(inserted(payments).where(id = "{{v}}")) == 0', 'p1", status = "x'],
+      ['count(inserted(payments).where(id = {{v}})) == 0', 'a\\b'],
+    ] as const) {
+      const f = fakes({
+        responses: [{ status: 201, body: { v } }, { status: 200, body: {} }],
+        changes: [emptyChanges(), emptyChanges('write', [row])],
+      });
+      const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+      const run = await engine.run(exchangeStep(assertion), 'd', SCOPE);
+      const result = run.steps[1]!.assertions[0]!;
+      assert.equal(result.status, 'unevaluable', `${assertion}: ${result.status}`);
+      assert.match(result.reason!, /captured `v`/);
+    }
+  });
+
+  it('does not mistake a captured value that looks like a placeholder for a missing one', async () => {
+    const f = fakes({
+      responses: [
+        { status: 201, body: { v: '{{zzz}}' } },
+        { status: 200, body: { label: '{{zzz}}' } },
+      ],
+    });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(exchangeStep('response.body.label == "{{v}}"'), 'd', SCOPE);
+    assert.equal(run.steps[1]!.assertions[0]!.status, 'passed', run.steps[1]!.assertions[0]!.reason);
+  });
+});
+
+describe('a variable nothing has captured yet', () => {
+  const steps = scenario([
+    { id: 'create', name: 'create', request: { method: 'POST', path: '/i' }, capture: { intent_id: 'response.body.id' } },
+    { id: 'read', name: 'read', request: { method: 'GET', path: '/i/{{intent_id}}' } },
+    { id: 'typo', name: 'typo', request: { method: 'GET', path: '/i/{{intnet_id}}' } },
+    { id: 'early', name: 'early', request: { method: 'GET', path: '/l/{{late_id}}' } },
+    { id: 'late', name: 'late', request: { method: 'POST', path: '/l' }, capture: { late_id: 'response.body.id' } },
+  ]);
+  const errorFor = async (only: string) => {
+    const f = fakes({ responses: [{ status: 200, body: {} }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(steps, 'd', SCOPE, { onlyStepId: only, variables: {} });
+    assert.equal(run.status, 'errored');
+    return run.steps[0]!.error!;
+  };
+
+  it('names the step whose capture defines it', async () => {
+    // "start from the step that does" left the reader to find it.
+    const error = await errorFor('read');
+    assert.match(error.message, /Step `read` needs `intent_id`/);
+    assert.match(error.remedy!, /start from the step that does: `intent_id` is captured by `create`\./);
+  });
+
+  it('says so when no earlier step captures it at all', async () => {
+    assert.match((await errorFor('typo')).remedy!, /No step before `typo` captures `intnet_id`/);
+    assert.match(
+      (await errorFor('early')).remedy!,
+      /`late_id` is captured only by `late`, which runs after `early`/,
+    );
+  });
+});
+
 describe('a secret reference written into a scenario', () => {
   it('is refused rather than sent as those characters', async () => {
     // Scenario files are not resolved — `${secret:…}` is a workspace thing,
@@ -525,5 +685,175 @@ describe('a secret reference written into a scenario', () => {
       SCOPE,
     );
     assert.notEqual(run.status, 'errored');
+  });
+});
+
+describe('a placeholder in a header', () => {
+  // Path, idempotency key and body were templated; a header was not, so a
+  // `{{name}}` there went out as those characters, captured or not, and the
+  // step passed (ts-fix2/engine-ws/probe.mjs).
+  it('is templated like the path and the body', async () => {
+    const f = fakes({ responses: [{ status: 200, body: { id: 'p1' } }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([
+        { id: 'a', name: 'a', request: { method: 'POST', path: '/a' }, capture: { id: 'response.body.id' } },
+        { id: 'b', name: 'b', request: { method: 'GET', path: '/b', headers: { 'x-intent': 'i-{{id}}' } } },
+      ]),
+      'd',
+      SCOPE,
+    );
+    assert.equal(run.status, 'passed', JSON.stringify(run.steps.map((s) => s.error)));
+    assert.deepEqual(f.calls[1]!.headers, { 'x-intent': 'i-p1' });
+  });
+
+  it('is refused, naming the variable, when nothing captured it', async () => {
+    const f = fakes({ responses: [{ status: 200, body: {} }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([{ id: 'b', name: 'b', request: { method: 'GET', path: '/b', headers: { 'x-intent': '{{never}}' } } }]),
+      'd',
+      SCOPE,
+    );
+    assert.equal(run.status, 'errored');
+    assert.match(run.steps[0]!.error!.message, /Step `b` needs `never`, which nothing has captured yet/);
+    assert.equal(f.calls.length, 0, 'nothing should have been sent');
+  });
+});
+
+describe('a `${…}` written into a request', () => {
+  // A scenario file resolves no `${…}` of any kind. Only the exact
+  // `${secret:name}` spelling used to be refused; every form below went out
+  // as those characters and the step passed (ts-fix/engine-ws/verbatim.mjs).
+  type Request = Scenario['datasets'][number]['steps'][number]['request'];
+  const runWith = async (request: Request) => {
+    const f = fakes({ responses: [{ status: 200, body: {} }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(scenario([{ id: 'send', name: 'send', request }]), 'd', SCOPE);
+    return { run, calls: f.calls };
+  };
+
+  const cases: Array<[string, Request, string]> = [
+    [
+      'an environment reference in a header',
+      { method: 'GET', path: '/h', headers: { authorization: 'Bearer ${DOSSH_TOKEN_ACCT_DEMO}' } },
+      '`request.headers.authorization` holds `${DOSSH_TOKEN_ACCT_DEMO}`',
+    ],
+    [
+      'one with a default, in the body',
+      { method: 'POST', path: '/h', body: { merchant: '${MERCHANT_ID:-m1}' } },
+      '`request.body.merchant` holds `${MERCHANT_ID:-m1}`',
+    ],
+    [
+      'a secret written with a space',
+      { method: 'GET', path: '/h', headers: { authorization: 'Bearer ${secret: alice_token}' } },
+      '`request.headers.authorization` holds `${secret: alice_token}`',
+    ],
+    [
+      'a secret written in upper case',
+      { method: 'GET', path: '/h/${SECRET:alice_token}' },
+      '`request.path` holds `${SECRET:alice_token}`',
+    ],
+    [
+      'one in the idempotency key',
+      { method: 'POST', path: '/h', idempotencyKey: 'k-${RUN}' },
+      '`request.idempotencyKey` holds `${RUN}`',
+    ],
+    [
+      'one in a key, deep in the body',
+      { method: 'POST', path: '/h', body: { items: [{ '${FIELD}': 1 }] } },
+      '`request.body.items.0` holds `${FIELD}` in a key',
+    ],
+  ];
+  for (const [label, request, named] of cases) {
+    it(`refuses ${label}, names the field, and sends nothing`, async () => {
+      const { run, calls } = await runWith(request);
+      assert.equal(run.status, 'errored');
+      const error = run.steps[0]!.error!;
+      assert.equal(error.kind, 'configuration');
+      assert.ok(error.message.includes(named), error.message);
+      assert.equal(calls.length, 0, 'nothing should have been sent');
+    });
+  }
+
+  it('says what to write instead, in one sentence', async () => {
+    const { run } = await runWith({
+      method: 'POST',
+      path: '/p/${TENANT}',
+      headers: { authorization: 'Bearer ${TOKEN}' },
+    });
+    assert.equal(
+      run.steps[0]!.error!.message,
+      'Step `send`: `request.path` holds `${TENANT}` and `request.headers.authorization` holds ' +
+        '`${TOKEN}`, and a scenario file resolves no `${…}` reference, so they would reach the API as ' +
+        'those characters — use `identities` in the workspace file with `as:` for a credential, ' +
+        '`capture:` and `{{name}}` for a value from an earlier response, or `$${` to send the ' +
+        'characters `${` themselves.',
+    );
+  });
+
+  it('keeps the secret sentence for a well-formed `${secret:name}`, and files it as configuration', async () => {
+    // It was filed as `capture`, which the step's status column prints.
+    const { run } = await runWith({
+      method: 'GET',
+      path: '/h',
+      headers: { authorization: 'Bearer ${secret:alice_token}' },
+    });
+    const error = run.steps[0]!.error!;
+    assert.equal(error.kind, 'configuration');
+    assert.match(
+      error.message,
+      /^Step `send` refers to `\$\{secret:alice_token\}`, and scenario files do not resolve secret references/,
+    );
+  });
+
+  it('sends `$${` as `${`, and still puts a captured value beside it', async () => {
+    const f = fakes({ responses: [{ status: 200, body: { id: 'p1' } }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([
+        { id: 'a', name: 'a', request: { method: 'POST', path: '/a' }, capture: { id: 'response.body.id' } },
+        {
+          id: 'b',
+          name: 'b',
+          request: {
+            method: 'POST',
+            path: '/b/{{id}}/$${literal}',
+            headers: { 'x-t': 'a $${b}' },
+            idempotencyKey: 'k-{{id}}-$${c}',
+            body: { t: 'Hello $${name}', 'k$${d}': ['$${e}', '{{id}}'] },
+          },
+        },
+      ]),
+      'd',
+      SCOPE,
+    );
+    assert.equal(run.status, 'passed', JSON.stringify(run.steps.map((s) => s.error)));
+    assert.deepEqual(f.calls[1], {
+      path: '/b/p1/${literal}',
+      headers: { 'x-t': 'a ${b}' },
+      idempotencyKey: 'k-p1-${c}',
+      body: { t: 'Hello ${name}', 'k${d}': ['${e}', 'p1'] },
+    });
+  });
+
+  it('sends a captured value as it came, even one that looks like a reference', async () => {
+    // A value from the API is data. The old check read the templated request,
+    // so a captured `${secret:x}` refused the step, and a `$${` would now be
+    // unescaped if the escape were applied after templating.
+    const value = '${secret:x} ${Y} $${z}';
+    const f = fakes({ responses: [{ status: 200, body: { v: value } }] });
+    const engine = new ScenarioEngine({ adapter: f.adapter, runner: f.runner, now: FIXED_NOW });
+    const run = await engine.run(
+      scenario([
+        { id: 'a', name: 'a', request: { method: 'POST', path: '/a' }, capture: { v: 'response.body.v' } },
+        { id: 'b', name: 'b', request: { method: 'POST', path: '/b/{{v}}', body: { v: '{{v}}' } } },
+      ]),
+      'd',
+      SCOPE,
+    );
+    assert.equal(run.status, 'passed', JSON.stringify(run.steps.map((s) => s.error)));
+    assert.equal(f.calls[1]!.path, `/b/${value}`);
+    assert.deepEqual(f.calls[1]!.body, { v: value });
   });
 });

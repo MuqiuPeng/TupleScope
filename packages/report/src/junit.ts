@@ -219,19 +219,41 @@ function casesForRun(report: RunReport, policy: VerdictPolicy): Case[] {
   }
 
   // Capture warnings get their own cases so that a run bounded by one shows up
-  // in a dashboard that only ever renders testcases.
+  // in a dashboard that only ever renders testcases — one per step and code,
+  // naming its tables. It was one per table: a step that truncated 35 tables
+  // came out as errors="35", thirty-five things wrong where one thing
+  // happened, which is also how the verdict's `boundedBy` came to be grouped.
+  // Every table's own message stays in the body.
+  const groups = new Map<string, Array<(typeof report.verdict.warnings)[number]>>();
   for (const warning of report.verdict.warnings) {
+    const where = warning.source === 'baseline' ? 'baseline' : (warning.stepId ?? 'step');
+    const id = `${where} ${warning.code}`;
+    groups.set(id, [...(groups.get(id) ?? []), warning]);
+  }
+  for (const same of groups.values()) {
+    const first = same[0]!;
+    const where = first.source === 'baseline' ? 'baseline' : (first.stepId ?? 'step');
+    const tables = [...new Set(same.flatMap((w) => (w.table ? [w.table] : [])))];
     out.push({
-      classname: `${suite} · capture`,
-      name: `${warning.code}${warning.table ? ` (${warning.table})` : ''}`,
+      classname: `${suite} · ${where} · capture`,
+      name: `${first.code}${tables.length > 0 ? ` (${capped(tables)})` : ''}`,
       timeMs: 0,
-      mapping: mapWarning(warning.severity),
-      message: warning.message,
-      detail: `${warning.message}\n\nbounds  ${warning.bounds}`,
+      mapping: mapWarning(same.some((w) => w.severity === 'error') ? 'error' : 'warn'),
+      message:
+        same.length === 1
+          ? first.message
+          : `${first.bounds}${tables.length > 0 ? ` (${capped(tables)})` : ''}`,
+      detail: `${same.map((w) => w.message).join('\n')}\n\nbounds  ${first.bounds}`,
     });
   }
 
   return out;
+}
+
+/** `accounts, addresses, blocks and 32 more` — the verdict's wording: names, capped, never only a count. */
+function capped(names: ReadonlyArray<string>): string {
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
 }
 
 export interface JUnitOptions {
@@ -248,6 +270,7 @@ export function toJUnit(envelope: Envelope, options: JUnitOptions = {}): string 
       cases.filter((c) => c.mapping.element === element).length;
 
     const body = cases.map((testcase) => renderCase(testcase, '    ')).join('\n');
+    const { total: declared, notRun } = report.verdict.steps;
     const properties = [
       ['tuplescope.schema', envelope.schema],
       ['tuplescope.runId', report.run.id],
@@ -255,7 +278,13 @@ export function toJUnit(envelope: Envelope, options: JUnitOptions = {}): string 
       ['tuplescope.dataset', report.dataset.id],
       ['tuplescope.file', report.scenario.file],
       ['tuplescope.outcome', report.verdict.outcome],
+      // Where the run started: `full` from the first step, `partial` from
+      // `--from`/`--only`. It is not whether every step ran — a run that halted
+      // with 2 of 4 steps unreached still says `full` here, which read as a
+      // claim of completeness (ts-verify re-honesty-runtime, notrun). Kept for
+      // the consumers that read it; how far the run got is `reach`.
       ['tuplescope.coverage', report.verdict.coverage],
+      ['tuplescope.reach', `${declared - notRun}/${declared} steps ran`],
       ['tuplescope.proves', report.verdict.proves],
       ['tuplescope.captureMethod', envelope.workspace.capture.method],
       ['tuplescope.detection', envelope.workspace.capture.detection],

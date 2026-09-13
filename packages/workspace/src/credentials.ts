@@ -37,8 +37,21 @@ export interface ResolveWorkspaceOptions {
   nonce?: string;
 }
 
+/**
+ * A config whose credential references have become values.
+ *
+ * A type, not a check: `openWorkspace` takes this and nothing else, so a
+ * caller that loaded the file and skipped resolving it does not compile. The
+ * runtime and MCP both had exactly that shape, and `assertResolved` — which
+ * stays, as the backstop behind a cast — only said so at startup.
+ */
+declare const credentialed: unique symbol;
+export type CredentialedWorkspaceConfig = ResolvedWorkspaceConfig & {
+  readonly [credentialed]: true;
+};
+
 export interface ResolvedCredentials {
-  config: ResolvedWorkspaceConfig;
+  config: CredentialedWorkspaceConfig;
   /** Everything the config actually used, for redaction. */
   secrets: ReadonlyArray<Secret>;
   /** Removes every resolved value from arbitrary text. */
@@ -95,7 +108,7 @@ export async function resolveWorkspaceSecrets(
 
   const secrets = [...used.values()];
   return {
-    config: resolved as ResolvedWorkspaceConfig,
+    config: resolved as CredentialedWorkspaceConfig,
     secrets,
     scrub: (text: string) => redact(text, secrets),
   };

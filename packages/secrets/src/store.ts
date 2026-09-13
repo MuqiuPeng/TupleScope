@@ -63,6 +63,36 @@ export class SecretStoreUnavailable extends Error {
   }
 }
 
+const FROM_THE_STORE_ONLY =
+  '`${secret:…}` reads only the secret store — it will not fall back to an environment ' +
+  'variable, because a credential whose origin depends on what happened to be exported ' +
+  'cannot be reasoned about. To use the environment deliberately, write `${SOME_VAR}` instead.';
+
+/**
+ * Thrown when a workspace refers to a secret and there is no store to read it
+ * from: Linux without a Secret Service, a container, a CI runner.
+ *
+ * A `SecretStoreUnavailable`, so every caller that already reports that one
+ * reports this. It was a plain `Error`, which nothing above could tell from a
+ * bug: `ls`, `check`, `show` and `run` printed it as an uncaught exception with
+ * a stack trace and exit 2, while `status`, which asks the store itself, gave
+ * one line and exit 4 for the same workspace. One line here too, as
+ * `SecretNotConfigured` is, with the store's own reason folded into it.
+ */
+export class SecretStoreRequired extends SecretStoreUnavailable {
+  constructor(
+    readonly secret: string,
+    readonly where: string,
+    why: string | undefined,
+  ) {
+    super(why ?? 'no secret store is available', FROM_THE_STORE_ONLY);
+    this.name = 'SecretStoreRequired';
+    this.message =
+      `${where} needs the secret \`${secret}\`, and no secret store is available` +
+      `${why ? `: ${why.trim().replace(/\s*\n\s*/g, ' ')}` : '.'} ${FROM_THE_STORE_ONLY}`;
+  }
+}
+
 /** Thrown when a reference names a secret nothing has been stored under. */
 export class SecretNotConfigured extends Error {
   constructor(

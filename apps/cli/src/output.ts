@@ -9,6 +9,9 @@
 import type { Run, RunVerdict } from '@tuplescope/core';
 import type { ResolvedWorkspaceConfig } from '@tuplescope/workspace';
 import {
+  arrow,
+  dash,
+  dot,
   glyph,
   paint,
   renderAssertion,
@@ -44,7 +47,7 @@ export function styleFor(values: Flags): Style {
 
 export function renderWorkspaceLine(style: Style, config: ResolvedWorkspaceConfig): string {
   return (
-    `tuplescope · ${config.name} → ${config.baseUrl}\n` +
+    `tuplescope ${dot(style)} ${config.name} ${arrow(style)} ${config.baseUrl}\n` +
     `  config    ${config.configFile}`
   );
 }
@@ -68,6 +71,8 @@ export interface ScopeReport {
   nameFiltered: ReadonlyArray<string>;
   partitionedParents: ReadonlyArray<string>;
   foreignTables: ReadonlyArray<string>;
+  /** Watched, but with no primary key and no unique index. */
+  keyless: ReadonlyArray<string>;
 }
 
 /**
@@ -109,7 +114,24 @@ export function renderScope(style: Style, scope: ScopeReport, indent = '        
   for (const name of scope.nameFiltered) gaps.push(`${name} (name begins with _)`);
   for (const name of scope.foreignTables) gaps.push(`${name} (foreign table)`);
   if (gaps.length > 0) {
-    out.push(paint(style, 'dim', `${indent}not watched · ${gaps.join(' · ')}`));
+    const sep = ` ${dot(style)} `;
+    out.push(paint(style, 'dim', `${indent}not watched${sep}${gaps.join(sep)}`));
+  }
+  if (scope.keyless.length > 0) {
+    // Watched, so not in the list above, but blind in one direction: with no
+    // key a row's changes are counted and never paired to its previous
+    // version, and a deletion there leaves nothing to find. Measured with a
+    // keyless table present: `status` and `check` described the schema exactly
+    // as they did without it, and the first a reader heard of the table was an
+    // undecided run.
+    out.push(
+      paint(
+        style,
+        'dim',
+        `${indent}watched without a key ${dot(style)} ${scope.keyless.join(', ')} ${dash(style)} ` +
+          'changes there are counted, not paired, and a deletion is invisible',
+      ),
+    );
   }
   if (scope.partitionedParents.length > 0) {
     // Not a gap — the partitions themselves are watched — but an assertion
@@ -118,7 +140,7 @@ export function renderScope(style: Style, scope: ScopeReport, indent = '        
       paint(
         style,
         'dim',
-        `${indent}watched through their partitions · ${scope.partitionedParents.join(', ')}`,
+        `${indent}watched through their partitions ${dot(style)} ${scope.partitionedParents.join(', ')}`,
       ),
     );
   }
