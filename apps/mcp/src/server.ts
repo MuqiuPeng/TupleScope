@@ -28,7 +28,7 @@ import {
   type RunVerdict,
   type VerdictPolicy,
 } from '@tuplescope/core';
-import { buildEnvelope } from '@tuplescope/report';
+import { buildEnvelope, RUN_REPORT_SCHEMA } from '@tuplescope/report';
 import {
   addAssertion,
   auditScenarios,
@@ -702,7 +702,11 @@ async function shutdown(): Promise<void> {
 process.on('SIGINT', () => void shutdown());
 process.on('SIGTERM', () => void shutdown());
 
-if (args.kind === 'help') {
+if (args.kind === 'version') {
+  // The CLI's line, with this binary's name. Imported rather than typed out,
+  // for the reason `tuplescope --version` gives.
+  process.stdout.write(`tuplescope-mcp ${VERSION} (schema ${RUN_REPORT_SCHEMA})\n`);
+} else if (args.kind === 'help') {
   process.stdout.write(USAGE);
 } else if (args.kind === 'refused') {
   // 4 is this CLI's "bad invocation"; `exitCode` rather than `exit()` so the

@@ -269,6 +269,12 @@ describe('tuplescope-mcp', { timeout: 60_000 }, () => {
       assert.match(stderr, /--config needs a path/);
     });
 
+    it('prints its version for --version and exits cleanly, as CI checks the linked shim with it', async () => {
+      const { code, stdout, stderr } = await runToExit(['--version'], root);
+      assert.equal(code, 0, stderr);
+      assert.match(stdout, /^tuplescope-mcp \d+\.\d+\.\d+ \(schema tuplescope\.run-report\/\d+\)\n$/);
+    });
+
     it('prints its usage for --help and exits cleanly', async () => {
       const { code, stdout } = await runToExit(['--help'], root);
       assert.equal(code, 0);
