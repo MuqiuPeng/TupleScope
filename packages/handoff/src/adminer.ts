@@ -12,7 +12,25 @@
 
 import type { KnownLocation } from '@tuplescope/core';
 import { isVisible, type Value } from '@tuplescope/core';
-import type { AdminerBinding } from './config.js';
+import { isLoopback, type AdminerBinding, type Binding } from './config.js';
+
+/**
+ * The banner a non-loopback binding carries on every use, or null.
+ *
+ * `handoff enable --i-know-this-is-not-local` promises "This will be reprinted
+ * every time it is used", and `assertOrigin` says such an origin "prints a
+ * banner on every use". Nothing printed one. Measured (round 3): the runtime's
+ * `standing` for a remote binding, `adminerDisclosure(remote).standing` and
+ * `firstUse` read exactly as they did for a loopback one. One sentence, here,
+ * so every surface that shows a use says the same thing.
+ */
+export function remoteBanner(binding: Binding): string | null {
+  if (binding.preset !== 'adminer-url' || isLoopback(binding.origin)) return null;
+  return (
+    `${new URL(binding.origin).host} is not loopback. An approved host can serve anything later, ` +
+    'and DNS moves under a stable name.'
+  );
+}
 
 /**
  * Adminer's operator vocabulary, measured from the select form's own markup:
@@ -123,8 +141,11 @@ export function adminerDisclosure(binding: AdminerBinding): {
   firstUse: (url: string, alias: string, maskedColumns: ReadonlyArray<string>) => string;
 } {
   const where = new URL(binding.origin).host;
+  const banner = remoteBanner(binding);
   return {
-    standing: `Inspect → Adminer at ${where} as ${binding.username} · the key goes into browser history`,
+    standing:
+      `Inspect → Adminer at ${where} as ${binding.username} · the key goes into browser history` +
+      (banner ? ` · ⚠ ${banner}` : ''),
     firstUse: (url, alias, maskedColumns) =>
       [
         `Open in Adminer  ·  not enabled on this machine`,
@@ -133,6 +154,7 @@ export function adminerDisclosure(binding: AdminerBinding): {
         ``,
         `    ${url}`,
         ``,
+        ...(banner ? [`  ⚠ ${banner}`, ``] : []),
         `  The key is in that URL, and the browser keeps it: history, address-bar`,
         `  autocomplete, and whatever this profile syncs. TupleScope cannot take that`,
         `  back. Adminer connects with its own credentials, as you, and is not bound`,
@@ -140,7 +162,10 @@ export function adminerDisclosure(binding: AdminerBinding): {
           ? `  by maskColumns — it will show ${maskedColumns.join(', ')} in full.`
           : `  by maskColumns.`,
         ``,
-        `  \`${alias}\` is a name this repository chose. Bind it yourself, once:`,
+        // Not "a name this repository chose": nothing in a repository names,
+        // creates or enables an alias. The binding passed in exists on this
+        // machine; what it lacks is a grant for this workspace.
+        `  \`${alias}\` is bound on this machine, but not enabled for this workspace. Enable it yourself, once:`,
         ``,
         `    tuplescope handoff enable adminer-url --as ${alias} \\`,
         `      --origin ${binding.origin} --server ${binding.server} --username ${binding.username}`,

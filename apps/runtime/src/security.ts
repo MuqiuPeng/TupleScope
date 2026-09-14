@@ -88,7 +88,12 @@ export function createGuard(options: GuardOptions) {
     if (!host || !allowedHosts.has(host.toLowerCase())) {
       await reply.status(403).send({
         error: 'BAD_HOST',
-        message: `Refusing a request addressed to \`${host ?? '(none)'}\`. TupleScope answers only to localhost.`,
+        // `!host`, not `host ?? …`: a request carrying `Host: ` with nothing
+        // after it reaches here as the empty string (measured with nc), and
+        // `??` let that through as "addressed to ``".
+        message: host
+          ? `Refusing a request addressed to \`${host}\`. TupleScope answers only to localhost.`
+          : 'Refusing a request that names no host. TupleScope answers only to localhost.',
       });
       return;
     }

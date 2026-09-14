@@ -18,15 +18,16 @@
 
 import { openSecretStore, SecretStoreUnavailable, type SecretStore } from '@tuplescope/secrets';
 import { loadWorkspaceConfig, namespaceOf } from '@tuplescope/workspace';
+import { writeVerbatim } from './scrub.js';
 
 const EXIT_USAGE = 4;
 const EXIT_ERROR = 2;
 
-const USAGE = `tuplescope secret — credentials a workspace refers to but does not contain
+export const SECRET_USAGE = `tuplescope secret — credentials a workspace refers to but does not contain
 
   tuplescope secret set <name>      store a value, read from the terminal or a pipe
   tuplescope secret get <name>      whether it is configured; --show to print it
-  tuplescope secret list            every secret this tool stored on this machine
+  tuplescope secret list            this workspace's secrets, and whose they are
   tuplescope secret delete <name>   remove one
 
 A workspace refers to these by name, and never contains the value:
@@ -45,9 +46,14 @@ export async function commandSecret(
   values: { show?: boolean; config?: string },
 ): Promise<number> {
   const [action, name] = args;
-  if (!action || action === 'help') {
-    process.stdout.write(USAGE);
-    return action ? 0 : EXIT_USAGE;
+  if (action === 'help') {
+    process.stdout.write(SECRET_USAGE);
+    return 0;
+  }
+  if (!action) {
+    // A bad invocation, so the usage goes where the other refusals go.
+    process.stderr.write(SECRET_USAGE);
+    return EXIT_USAGE;
   }
 
   // Secrets belong to a workspace, so these commands need one. Falling back to
@@ -93,7 +99,7 @@ export async function commandSecret(
     case 'rm':
       return commandDelete(store, name);
     default:
-      process.stderr.write(`Unknown secret command \`${action}\`.\n\n${USAGE}`);
+      process.stderr.write(`Unknown secret command \`${action}\`.\n\n${SECRET_USAGE}`);
       return EXIT_USAGE;
   }
 }
@@ -128,7 +134,16 @@ async function commandGet(
     process.stderr.write('Which secret? `tuplescope secret get <name>`\n');
     return EXIT_USAGE;
   }
-  const found = await store.get(name);
+  let found;
+  try {
+    found = await store.get(name);
+  } catch (error) {
+    // An item this tool did not write, a locked keychain: the store's sentence
+    // says which and what to do. It was an uncaught throw — a stack trace and
+    // exit 2 — for a credential the user can fix with one command.
+    process.stderr.write(`${(error as Error).message}\n`);
+    return EXIT_USAGE;
+  }
   if (!found) {
     process.stdout.write(`${name}  not configured\n`);
     return 1;
@@ -138,7 +153,7 @@ async function commandGet(
     // label. Everything else this command prints goes to stderr for that
     // reason.
     process.stderr.write(`${name}  showing the value; it will be in your shell history\n`);
-    process.stdout.write(`${found.reveal()}\n`);
+    writeVerbatim(process.stdout, `${found.reveal()}\n`);
     return 0;
   }
   process.stdout.write(`${name}  configured\n`);
@@ -177,6 +192,16 @@ async function commandDelete(store: SecretStore, name: string | undefined): Prom
   return removed ? 0 : 1;
 }
 
+/** The two ends of the prompt: the process's own, unless a test hands in fakes. */
+export interface Prompt {
+  input: NodeJS.ReadableStream & {
+    isTTY?: boolean;
+    isRaw?: boolean;
+    setRawMode(mode: boolean): unknown;
+  };
+  output: { write(text: string): unknown };
+}
+
 /**
  * The value, from the terminal with echo off, or from a pipe.
  *
@@ -184,39 +209,57 @@ async function commandDelete(store: SecretStore, name: string | undefined): Prom
  * shell's history file and shows it in `ps`, which are the two places it is
  * hardest to remove from afterwards.
  */
-async function readValue(name: string): Promise<string | undefined> {
-  if (!process.stdin.isTTY) {
+export async function readValue(
+  name: string,
+  { input, output }: Prompt = { input: process.stdin, output: process.stderr },
+): Promise<string | undefined> {
+  if (!input.isTTY) {
     const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    for await (const chunk of input) chunks.push(Buffer.from(chunk as Buffer));
     // One trailing newline is the pipe's, not the value's; anything more is.
     return Buffer.concat(chunks).toString('utf8').replace(/\n$/, '');
   }
 
-  process.stderr.write(`Value for \`${name}\` (not shown): `);
-  const input = process.stdin;
+  // Echo off *before* the prompt is on screen. The prompt used to be written
+  // first, and anything that arrived between it and `setRawMode` — a paste, an
+  // `expect` script answering the prompt — was echoed by the terminal into
+  // scrollback. Measured with expect sending the moment the prompt appeared:
+  // the value was in the pty transcript in 6 of 12 runs (0 of 12 when the send
+  // waited 50 ms). Keeping a credential out of scrollback is this command's
+  // whole promise.
   const wasRaw = input.isRaw === true;
   input.setRawMode(true);
 
-  return new Promise<string | undefined>((resolve) => {
+  return new Promise<string | undefined>((resolve, reject) => {
     let value = '';
-    const restore = () => {
-      input.setRawMode(wasRaw);
+    let settled = false;
+    // Every way out passes through here, so none of them can leave the
+    // terminal with its echo off.
+    const settle = (result: string | undefined, error?: unknown): void => {
+      if (settled) return;
+      settled = true;
       input.removeListener('data', onData);
+      input.removeListener('end', onEnd);
+      input.removeListener('error', onError);
+      input.setRawMode(wasRaw);
       input.pause();
-      process.stderr.write('\n');
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+      output.write('\n');
+      resolve(result);
     };
-    const onData = (chunk: Buffer) => {
-      for (const byte of chunk) {
+    const onData = (chunk: Buffer | string) => {
+      for (const byte of Buffer.from(chunk)) {
         // Ctrl-C and Ctrl-D: leave the terminal as it was found, and store
         // nothing. A half-typed credential is not a credential.
         if (byte === 3 || byte === 4) {
-          restore();
-          resolve(undefined);
+          settle(undefined);
           return;
         }
         if (byte === 13 || byte === 10) {
-          restore();
-          resolve(value);
+          settle(value);
           return;
         }
         if (byte === 127 || byte === 8) {
@@ -226,7 +269,18 @@ async function readValue(name: string): Promise<string | undefined> {
         value += String.fromCharCode(byte);
       }
     };
+    // The terminal went away before Enter: nothing complete was typed.
+    const onEnd = () => settle(undefined);
+    const onError = (error: unknown) => settle(undefined, error ?? new Error('stdin failed'));
     input.on('data', onData);
+    input.on('end', onEnd);
+    input.on('error', onError);
+    try {
+      output.write(`Value for \`${name}\` (not shown): `);
+    } catch (error) {
+      settle(undefined, error);
+      return;
+    }
     input.resume();
   });
 }

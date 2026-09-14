@@ -1,9 +1,11 @@
 /**
  * `~/.tuplescope/handoff.json` — the file a repository cannot write.
  *
- * The whole trust model of the row handoff lives in this split. A project's
- * `tuplescope.yaml` contributes exactly one string: an **alias**, which is
- * inert until the user binds it here. There is no `command:`, no `env:`, no
+ * The whole trust model of the row handoff lives in this split. The design lets
+ * a project's `tuplescope.yaml` contribute at most one string, an **alias**,
+ * inert until the user binds it here. That half is designed, not implemented:
+ * nothing in `tuplescope.yaml` names an alias today, so every alias is one the
+ * user chose with `tuplescope handoff enable --as`. There is no `command:`, no `env:`, no
  * `url:`, no `service:`, no `path:`, no `server:` — a config key whose value is
  * a path to a program is a command-execution primitive, and a repo-committed
  * consent flag is the repo author consenting on the user's behalf.
@@ -26,7 +28,7 @@ export const HANDOFF_POLICY_VERSION = 1;
 
 export interface HandoffConfigV1 {
   readonly v: 1;
-  /** Keyed by alias — the one string `tuplescope.yaml` is allowed to contribute. */
+  /** Keyed by alias — the name given with `handoff enable --as`. */
   readonly bindings: Readonly<Record<string, Binding>>;
 }
 

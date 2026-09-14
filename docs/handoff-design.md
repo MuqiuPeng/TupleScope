@@ -27,7 +27,7 @@ Interaction design was judged 50–60% complete. §7 is new.
 
 | Field | Who | Why |
 |---|---|---|
-| `handoff.target` — an **alias string** (`adminer`, `dev-psql`) | **Repo** (`tuplescope.yaml`) | A name is inert: it resolves to nothing until the user binds it, so an unbound alias is a refusal, not an action. |
+| `handoff.target` — an **alias string** (`adminer`, `dev-psql`) | **Repo** (`tuplescope.yaml`) — *designed, not implemented*: nothing reads this key, and a scenario file refuses it as unknown; the web UI offers only the machine's own bindings | A name is inert: it resolves to nothing until the user binds it, so an unbound alias is a refusal, not an action. |
 | Which tables/rows the scenario touches | **Repo** | It is the repo's database and the repo's scenario; the locator is built only from what the API actually wrote. |
 | `maskColumns`, `ignoreColumns`, `visibleColumns` | **Repo** | Redaction and noise policy are properties of the schema, and both only ever *remove* information. |
 | Target **preset id** (`adminer-url` \| `psql-service`) | **User** (`~/.tuplescope/handoff.json`) | Which mechanism runs is the whole trust decision; a repo naming a preset directly is a repo choosing a program. |
@@ -400,7 +400,9 @@ matches `/^[a-z][a-z0-9-]{0,31}$/`; `service` matches
 `/^[A-Za-z0-9._-]{1,253}(:\d{1,5})?$/`; `username` matches
 `/^[^\x00-\x1f\/?#&=]{1,63}$/`; `origin` parses as a URL with empty path, no
 query, no fragment, and a loopback host unless `--i-know-this-is-not-local` was
-given, which also prints a banner on every use. An unknown `preset` is a
+given. Such a binding carries a banner (`<host> is not loopback. An approved host
+can serve anything later, and DNS moves under a stable name.`) in its standing
+line and in the response to every open, which the page shows each time. An unknown `preset` is a
 refusal, not a skip. The file is written only by `tuplescope handoff enable`,
 mode 0600, via write-temp-then-rename.
 
@@ -544,7 +546,7 @@ Open in Adminer  ·  not enabled on this machine
   back. Adminer connects with its own credentials, as you, and is not bound
   by maskColumns — it will show card_number in full.
 
-  `adminer` is a name this repository chose. Bind it yourself, once:
+  `adminer` is bound on this machine, but not enabled for this workspace. Enable it yourself, once:
 
     tuplescope handoff enable adminer-url --as adminer \
       --origin http://127.0.0.1:7442 --server 172.17.0.3 --username postgres

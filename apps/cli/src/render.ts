@@ -19,6 +19,7 @@ import {
   isVisible,
   keyLabel,
   MASKED_TEXT,
+  outcomeOfStep,
   UNKNOWN_TEXT,
   visible,
 } from '@tuplescope/core';
@@ -90,7 +91,17 @@ export function glyph(style: Style, kind: 'pass' | 'fail' | 'undecided' | 'refus
   return paint(style, colour[kind]!, (style.ascii ? ascii : unicode)[kind]);
 }
 
-const arrow = (style: Style): string => (style.ascii ? '->' : '→');
+export const arrow = (style: Style): string => (style.ascii ? '->' : '→');
+
+/**
+ * The separators the info commands put between phrases.
+ *
+ * `--ascii` used to cover the run's glyphs only: `status`, `check` and `ls`
+ * went on printing `·`, `→`, `✓` and `✗` under it, which is the output a log
+ * viewer that needs the flag mangles first.
+ */
+export const dot = (style: Style): string => (style.ascii ? '-' : '·');
+export const dash = (style: Style): string => (style.ascii ? '--' : '—');
 
 /** Visible *and* not SQL NULL — the group that actually has something to show. */
 function hasText(value: Value | undefined): boolean {
@@ -223,8 +234,15 @@ export interface DiffOptions {
 function rankColumns(change: RowChange, options: DiffOptions): string[] {
   const row = change.after ?? change.before ?? {};
   const keys = new Set(change.key?.columns.map((c) => c.column) ?? []);
+  // `ignoreColumns` is "hidden from the diff", on every kind of row. This
+  // ranked every key of the row, so with `--columns all` an inserted row
+  // printed `updatedAt` while the updated rows beside it did not. The capture
+  // already says which ones: a column it recorded but left out of
+  // `visibleColumns` is one the workspace ignores.
+  const ignored = new Set(change.changedColumns.filter((c) => !change.visibleColumns.includes(c)));
   const groups: string[][] = [[], [], [], []];
   for (const name of Object.keys(row).sort()) {
+    if (ignored.has(name)) continue;
     if (options.interesting.has(name)) groups[0]!.push(name);
     else if (keys.has(name)) groups[1]!.push(name);
     // `has a value` means visible with text — not merely "not the literal
@@ -545,18 +563,16 @@ export function renderWarning(style: Style, warning: LocatedWarning, indent: str
   ];
 }
 
+/**
+ * A step's mark, by core's rule. This was a third copy of that rule, and it
+ * ignored capture warnings: `run` drew a tick on a scope-truncated step inside
+ * an undecided run — the disagreement the page once had with the verdict.
+ */
 export function stepGlyph(style: Style, step: StepResult, verdict: RunVerdict): string {
-  if (step.status === 'errored') return glyph(style, 'fail');
-  if (step.status === 'skipped' || step.status === 'pending') return glyph(style, 'notrun');
-  if (step.status === 'failed' || step.assertions.some((a) => a.status === 'failed')) {
-    return glyph(style, 'fail');
-  }
-  if (
-    verdict.policy.unevaluable === 'error' &&
-    step.assertions.some((a) => a.status === 'unevaluable')
-  ) {
-    return glyph(style, 'undecided');
-  }
+  const outcome = outcomeOfStep(step, verdict.policy);
+  if (outcome === 'errored' || outcome === 'failed') return glyph(style, 'fail');
+  if (outcome === 'not-run') return glyph(style, 'notrun');
+  if (outcome === 'undecided') return glyph(style, 'undecided');
   return glyph(style, 'pass');
 }
 

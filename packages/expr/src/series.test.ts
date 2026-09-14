@@ -115,6 +115,20 @@ describe('a series', () => {
     assert.equal(point.value.pgType, 'int4', 'and it still says what type it was');
   });
 
+  it('refuses a misspelled column, rather than drawing it as a row nobody touched', () => {
+    // Measured before: `unobserved` at a step that plainly changed X's on_hand,
+    // and `carried` after it — a typo drawn as a quiet chart.
+    const points = seriesFor(RUN, 'after(updated(stock, sku = "X").on_hnad)');
+    assert.deepEqual(
+      points.map((p) => [p.stepId, p.state]),
+      [['s1', 'unevaluable'], ['s2', 'unobserved'], ['s3', 'unevaluable']],
+    );
+    assert.equal(
+      points[0]!.state === 'unevaluable' ? points[0]!.reason : '',
+      'there is no column `on_hnad` in `stock` — did you mean `on_hand`?',
+    );
+  });
+
   it('marks a step that recorded no observation, rather than skipping it', () => {
     const points = seriesFor([{ stepId: 's1' }, ...RUN], SOURCE);
     assert.equal(points[0]!.state, 'unevaluable');

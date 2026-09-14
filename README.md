@@ -129,7 +129,10 @@ tuplescope run refund/happy    # one dataset
 
 `check` is worth running first and worth putting in front of a pipeline: it
 resolves names without sending a request, so a misspelled table or column is
-caught before the run rather than by it.
+caught before the run rather than by it — and so is an assertion no run could
+decide for a reason that is not your API: a masked column, a question your
+capture engine cannot answer, a table it cannot see a row leave, a `${…}` in a
+request.
 
 `tuplescope show <target>` prints a scenario in detail before you run it,
 `tuplescope runs` lists the runs it kept and `tuplescope runs show <id>` prints
@@ -165,6 +168,15 @@ For reading a diff and keeping what you see as an assertion:
 pnpm start                     # stays in the foreground — leave it running
 open "$(pnpm -s url)"          # in another terminal: the running instance, token and all
 ```
+
+The top bar says whether the backend and the database answer, and when each was
+last asked: on load, when the window regains focus, and just before a run — never
+on a timer in between, since the backend is yours and idle polling would spend
+its requests on nothing. An answer older than two minutes stops claiming to be
+current and reads *was reachable*. A database that does not answer no longer
+takes the page down: scenarios and stored runs stay readable, and **Run** is
+refused with the reason beside it rather than started against a database nothing
+could observe. `GET /api/health` returns the same two answers.
 
 ### A worked scenario, in full
 
@@ -240,16 +252,23 @@ is what makes the scenario say out loud which of the two it means.
 - run: pnpm exec tuplescope run --junit results.xml
 ```
 
-`check` resolves every name an assertion uses — tables, and the columns inside
-`.where(...)` and `rows(...)` — against the live schema, without sending a
-request. The columns matter more than they look. A predicate is only read when
+`check` resolves every name an assertion uses — tables, the columns inside
+`.where(...)` and `rows(...)`, and a column read as a value (`.after.balance`,
+`delta(wallets.balance)`) — against the live schema, without sending a request.
+Under `changes(*)` there is no one table to resolve a column against, so that
+case is left to the run. The columns matter more than they look. A predicate is only read when
 there is a row to read it against, so on a step that correctly writes nothing
 `count(inserted(refunds).where(nmae = "x")) == 0` is *true*, and stays green for
 as long as the typo lives. That is the shape of a "must not write twice" guard,
 which is the assertion this tool exists to make; `check` is where it is caught,
-because `check` holds a connection and depends on no rows. Sharded? `tuplescope report shard-*.json --junit merged.xml` folds
+because `check` holds a connection and depends on no rows. The run refuses what
+it can see — a column no captured row has, and a predicate on a masked column
+whether or not anything was written — but over a step that wrote no row of a
+table, a misspelled column there is invisible to it. Sharded? `tuplescope report shard-*.json --junit merged.xml` folds
 them into one verdict, keeping the worst — a shard's problem cannot be washed
-out by another shard's green.
+out by another shard's green. Totals are recomputed over every run, the exit
+code follows the merged outcome, and an `--exit-zero` cap survives the merge
+only when every shard was run with it.
 
 | exit | meaning |
 |---|---|
@@ -383,7 +402,9 @@ assertion keeps passing while the new table changes freely. That is the opposite
 failure direction from everything else here, which is why it has a form rather
 than a paragraph.
 
-An `except` naming a table that is not watched is refused, not ignored. An
+An `except` naming a table that is not watched is refused, not ignored — by the
+run, and by `tuplescope check` before it, which reads the scenario's `watch:`
+list. An
 exclusion that resolves to nothing excludes nothing, and the assertion would
 then quietly cover a table you believed you had carved out — this form's own
 failure, arriving through the form.
@@ -420,7 +441,7 @@ A step that never ran is the same problem one level up, and it used to be
 invisible: an early step failed, the scenario stopped, and the summary counted
 the steps it had *reached* — two of seven, reported as a total of two.
 Steps are now counted against what the file declares, the ones never reached are
-listed by name, and the run says what it did not establish:
+listed by id, and the run says what it did not establish:
 
 ```
 5 steps never ran, so nothing here establishes anything about them:
@@ -429,7 +450,9 @@ refund, settle, reconcile, close, audit
 
 The same list reaches JUnit as `<skipped type="tuplescope.not-run">`, which is
 the one place `skipped` means what CI thinks it means, so the dashboard shows
-the gap rather than a shorter green run.
+the gap rather than a shorter green run. Each `<testsuite>` also carries
+`tuplescope.reach` (`2/4 steps ran`); `tuplescope.coverage` says only whether
+the run started at the first step (`full`) or mid-dataset (`partial`).
 
 ### Money is exact
 
@@ -500,14 +523,18 @@ tuplescope · shop
   selected   3 dataset(s), 11 assertion(s)
   database   7 tables in `public`
              not watched · billing (2 tables, another schema) · _jobs (name begins with _)
+             watched without a key · audit_log — changes there are counted, not paired, and a deletion is invisible
              watched through their partitions · events
 ```
 
 `events` is not a gap — its partitions *are* watched — but an assertion naming
 the parent refuses, and saying so here saves the trip.
 
-A table with no primary key and no unique index is a gap of its own, and it says
-so on every run rather than only when it happens to have rows. Its changes can
+A table with no primary key and no unique index is a gap of its own: `status`
+and `check` name it on a `watched without a key` line, and every run says so
+rather than only when it happens to have rows. `check` also names each
+assertion a run will refuse because of it — `updated` or `deleted` of that
+table, or a question about every watched table that does not `except` it. Its changes can
 be counted but not paired to a previous version, and a deletion there cannot be
 seen at all — which without the warning read as "nothing was written", clean,
 exit 0, over rows that were really deleted.
@@ -564,7 +591,7 @@ written into the file, which is the one thing the syntax exists to avoid.
 ```
 tuplescope secret set <name>      store a value, from the terminal or a pipe
 tuplescope secret get <name>      whether it is configured; --show to print it
-tuplescope secret list            every secret this tool stored on this machine
+tuplescope secret list            this workspace's secrets, and whose they are
 tuplescope secret delete <name>
 ```
 
@@ -604,7 +631,18 @@ and `util.inspect` all yield `[secret alice_token]`, so it does not leak by
 being incidentally formatted into a report, a JUnit file or an MCP result. For
 text this tool did not format — a driver reporting an authentication failure
 with the whole connection string in the message — the values are substituted
-back out.
+back out: in the CLI, from everything it writes once the workspace has opened;
+in the runtime and the MCP server, from every error they return, and in the MCP
+server from every result. The runtime's successful responses are not
+substituted: they carry the rows a run observed, which a by-value substitution
+would rewrite.
+
+Two limits, both deliberate. A value shorter than six characters is not
+substituted, because it could not be taken out of every message without
+corrupting them. And the substitution is textual, so a secret that is also an
+ordinary word is replaced wherever that word appears — a password of `postgres`
+on a database whose user is `postgres` turns the user's name into
+`[secret db_password]` too. Choose credentials that are not also names.
 
 What it does not do is scrub the heap. V8 copies and interns strings; a
 credential that has been a JavaScript string cannot be reliably erased, and a
@@ -679,9 +717,12 @@ from a directory with a `tuplescope.yaml`, or pass `--config`.
 
 ### Not yet
 
-Scenario files do not resolve secret references — `identities` is where
-authentication belongs — and a reference written into one is refused with a
-message saying so rather than being sent verbatim.
+Scenario files resolve no `${…}` reference — `identities` is where
+authentication belongs, and `capture:` with `{{name}}` carries a value from an
+earlier response. Any `${…}` written into a request's path, headers,
+idempotency key or body is refused with a message naming the field, rather than
+being sent verbatim, and `tuplescope check` reports each one before a run. To
+send the characters `${` themselves, write `$${`.
 
 ---
 
@@ -876,6 +917,7 @@ indistinguishable from a bug.
 
 | | |
 | --- | --- |
+| `TUPLESCOPE_CONFIG` | The workspace file, for a process that cannot be started from the directory it lives in — `pnpm start` runs from this checkout, and the workspace it serves usually belongs to another repository. Same precedence everywhere: `--config`, then this, then a walk up from the working directory that stops at the repository root. |
 | `TUPLESCOPE_PORT` | Port for `pnpm start`. Default 7420. A second runtime on one machine needs this — otherwise the second start dies on `EADDRINUSE`. |
 | `TUPLESCOPE_TOKEN` | Fixes the runtime's access token instead of minting one per start. **Defeats the per-start property**, and on a command line it lands in shell history and in `ps`. For a supervisor that must know the URL in advance; not for convenience. |
 | `TUPLESCOPE_TEST_DATABASE_URL` | Where the integration tests look for PostgreSQL. Default `postgresql://postgres:postgres@127.0.0.1:7432/postgres` — what `pnpm testdb` starts. |
@@ -943,9 +985,13 @@ The token is also written to `~/.tuplescope/sessions/<port>.json`, mode 0600, so
 clean shutdown, and a stale one left by a crash is discarded on read rather than
 handed back as a dead URL.
 
-There is no Content-Security-Policy yet. The loopback bind, the `Host` and
-`Origin` allow-lists and the per-session token are what stand in for it; a CSP
-becomes necessary when dashboard plugins exist, and they do not.
+Every response — refusals and 404s included — carries a strict
+Content-Security-Policy: `default-src 'none'`, with scripts, styles and fetches
+allowed from the page's own origin only, and no base URI, form target or
+framing. `Referrer-Policy: no-referrer` keeps the token out of anything that
+leaves, and `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` ride
+along. The page loads no images and no fonts, so the policy allows none: the
+first one added should fail loudly, which makes widening it a decision.
 
 ## For agents
 
@@ -957,6 +1003,12 @@ becomes necessary when dashboard plugins exist, and they do not.
 The full path, not the bare name: an MCP client does not inherit the `PATH` you
 exported in the quick start, and that export was deliberately for one shell.
 
+It serves the workspace its client starts it in. To serve one that lives
+elsewhere, add `"args": ["--config", "/absolute/path/to/tuplescope.yaml"]`, or
+set `TUPLESCOPE_CONFIG` in the client's `env` — the same precedence as
+everywhere else: the flag, then the variable, then a walk up from the working
+directory.
+
 Twelve tools over the same engine everything else uses: describe the workspace,
 list the tables, write a scenario, check it, run it, read what changed, keep the
 assertions that run implies, run it again.
@@ -967,7 +1019,15 @@ assertion was undecided has `engineStatus: "passed"`. An agent reads until it
 finds something that looks like an answer, so every result leads with the
 verdict in prose, and an undecided run opens with *this is NOT a pass and NOT a
 failure*. The handshake instructions say the same thing before the first call,
-and there are tests asserting they still do.
+and there are tests asserting they still do. `run_scenario` also marks its
+result `isError` for every outcome but clean — failed, errored and undecided
+alike — so a client that reads only the flag is never told a red or undecided
+run went fine.
+
+`describe_workspace` names what the capture does not watch, or watches only in
+part, and what each gap costs; `describe_table` gives each column with its
+declared type (`numeric(18,8)`, not `numeric`), because the type decides how a
+value in an assertion compares.
 
 No shell, no process control, no arbitrary SQL. Scenario files are the only
 thing writable, they are validated before they land, and keeping an assertion
@@ -997,9 +1057,6 @@ first. None of them lose data, and each says how to avoid it.
 - **`tuplescope status` does not look at the scenarios directory,** so it can
   report a healthy workspace on which `ls`, `run` and `check` all exit 4. And
   `ls` over an empty directory prints the header and exits 0.
-- **A workspace file cannot name a handoff alias.** Every alias is bound by the
-  person at the keyboard. `tuplescope handoff --help` says otherwise; it is
-  wrong.
 - **The demo's `pg_hba.conf` rewrite handles the shapes `initdb` writes.** A
   hand-edited file using the two-field `IP-address IP-mask` form, or line
   continuations, is rewritten in place without a backup.

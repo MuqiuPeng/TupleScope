@@ -9,8 +9,10 @@
  */
 
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { readValue, type Prompt } from './secrets.js';
 
 const SOURCE = readFileSync(new URL('./secrets.ts', import.meta.url), 'utf8');
 
@@ -54,7 +56,8 @@ describe('the secret command surface', () => {
 
   it('reads from the terminal with the echo off, and from a pipe otherwise', () => {
     assert.match(SOURCE, /setRawMode\(true\)/);
-    assert.match(SOURCE, /process\.stdin\.isTTY/);
+    assert.match(SOURCE, /input: process\.stdin/);
+    assert.match(SOURCE, /if \(!input\.isTTY\)/);
     // Ctrl-C must leave the terminal usable rather than echo-less.
     assert.match(SOURCE, /byte === 3 \|\| byte === 4/);
     assert.match(SOURCE, /setRawMode\(wasRaw\)/);
@@ -78,5 +81,97 @@ describe('the workspace never has to hold a credential', () => {
     assert.match(SOURCE, /secret:alice_token/);
     // ...and no example that looks like a real token someone might copy.
     assert.doesNotMatch(SOURCE, /Bearer [a-z]{2,}_[A-Za-z0-9]{8,}/);
+  });
+});
+
+// ─── the prompt, driven without a terminal ────────────────────────────────────
+
+/**
+ * A terminal that records, in one list, when the echo went off and when the
+ * prompt was written. The order is the whole defect: measured with expect
+ * sending the moment the prompt appeared, the value landed in the pty
+ * transcript in 6 of 12 runs, because the prompt was written first and
+ * `setRawMode(true)` came after it.
+ */
+function fakeTerminal(wasRaw = false) {
+  const log: string[] = [];
+  const input = Object.assign(new EventEmitter(), {
+    isTTY: true,
+    isRaw: wasRaw,
+    setRawMode(mode: boolean) {
+      log.push(`raw ${mode}`);
+      input.isRaw = mode;
+      return input;
+    },
+    resume() {
+      log.push('resume');
+      return input;
+    },
+    pause() {
+      log.push('pause');
+      return input;
+    },
+  });
+  const output = {
+    write(text: string): boolean {
+      log.push(text.startsWith('Value for') ? 'prompt' : `write ${JSON.stringify(text)}`);
+      return true;
+    },
+  };
+  return { log, input, output, prompt: { input, output } as unknown as Prompt };
+}
+
+const bytes = (...codes: number[]) => Buffer.from(codes);
+const text = (value: string) => Buffer.from(value, 'utf8');
+
+describe('secret set at a terminal', () => {
+  it('turns the echo off before the prompt is on screen', async () => {
+    const t = fakeTerminal();
+    const pending = readValue('tty_secret', t.prompt);
+    assert.deepEqual(t.log, ['raw true', 'prompt', 'resume']);
+    t.input.emit('data', text('typed-on-tty-9f3'));
+    t.input.emit('data', bytes(13));
+    assert.equal(await pending, 'typed-on-tty-9f3');
+    assert.deepEqual(t.log.slice(3), ['raw false', 'pause', `write ${JSON.stringify('\n')}`]);
+  });
+
+  it('stores nothing and restores the terminal on Ctrl-C, Ctrl-D and a closed stdin', async () => {
+    for (const end of [
+      (t: ReturnType<typeof fakeTerminal>) => t.input.emit('data', bytes(104, 97, 108, 102, 3)),
+      (t: ReturnType<typeof fakeTerminal>) => t.input.emit('data', bytes(104, 4)),
+      (t: ReturnType<typeof fakeTerminal>) => t.input.emit('end'),
+    ]) {
+      const t = fakeTerminal();
+      const pending = readValue('x', t.prompt);
+      end(t);
+      assert.equal(await pending, undefined);
+      assert.equal(t.input.isRaw, false, t.log.join(', '));
+      assert.equal(t.input.listenerCount('data'), 0);
+    }
+  });
+
+  it('restores the terminal when stdin fails or the prompt cannot be written', async () => {
+    const failing = fakeTerminal();
+    const pending = readValue('x', failing.prompt);
+    failing.input.emit('error', new Error('read EIO'));
+    await assert.rejects(pending, /read EIO/);
+    assert.equal(failing.input.isRaw, false);
+
+    const mute = fakeTerminal();
+    mute.output.write = () => {
+      throw new Error('write EIO');
+    };
+    await assert.rejects(readValue('x', mute.prompt), /write EIO/);
+    assert.equal(mute.input.isRaw, false);
+    assert.equal(mute.input.listenerCount('data'), 0);
+  });
+
+  it('leaves a terminal that was already raw as raw', async () => {
+    const t = fakeTerminal(true);
+    const pending = readValue('x', t.prompt);
+    t.input.emit('data', text('v'));
+    t.input.emit('data', bytes(10));
+    assert.equal(await pending, 'v');
+    assert.equal(t.input.isRaw, true);
   });
 });

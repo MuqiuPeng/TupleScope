@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
-import { describeScope, readTableIdentities } from './introspect.js';
+import { describeScope, listColumnTypesByTable, readTableIdentities } from './introspect.js';
 
 const BASE_URL =
   process.env['TUPLESCOPE_TEST_DATABASE_URL'] ??
@@ -221,4 +221,49 @@ describe('describeScope', () => {
       await client.query(`DROP SCHEMA IF EXISTS scope_probe_other CASCADE`).catch(() => undefined);
     }
   });
+
+  it('gives each column its declared type, in table order', async (t) => {
+    // For MCP `describe_table`, which promised "its columns, types" and printed
+    // neither. The declared type, modifiers included, is what decides how a
+    // value in an assertion compares — `numeric(18,8)` is not `text`.
+    if (!available) return t.skip('no database');
+
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS scope_probe_typed (id text PRIMARY KEY, balance numeric(18,8), label varchar(40), active bool)`,
+    );
+    try {
+      const types = await listColumnTypesByTable(client as unknown as pg.PoolClient);
+      assert.deepEqual(types.get('scope_probe_typed'), [
+        { name: 'id', type: 'text' },
+        { name: 'balance', type: 'numeric(18,8)' },
+        { name: 'label', type: 'character varying(40)' },
+        { name: 'active', type: 'boolean' },
+      ]);
+    } finally {
+      await client.query(`DROP TABLE IF EXISTS scope_probe_typed`).catch(() => undefined);
+    }
+  });
+
+  it('names a watched table it cannot pair rows in', async (t) => {
+    // Found on a real service: a table with no primary key and no unique index
+    // made a run undecided, and `status` and `check` had described it exactly
+    // like every other table beforehand.
+    if (!available) return t.skip('no database');
+
+    await client.query(`CREATE TABLE IF NOT EXISTS scope_probe_keyless (x int)`);
+    await client.query(`CREATE TABLE IF NOT EXISTS scope_probe_keyed (id int PRIMARY KEY)`);
+    await client.query(`CREATE TABLE IF NOT EXISTS _scope_probe_keyless_hidden (x int)`);
+    try {
+      const scope = await describeScope(client as unknown as pg.PoolClient);
+      assert.ok(scope.keyless.includes('scope_probe_keyless'), 'no key and no unique index: a gap');
+      assert.equal(scope.keyless.includes('scope_probe_keyed'), false, 'a primary key is not a gap');
+      // Not watched at all is a different gap, already named elsewhere.
+      assert.equal(scope.keyless.includes('_scope_probe_keyless_hidden'), false);
+    } finally {
+      await client.query(`DROP TABLE IF EXISTS scope_probe_keyless`).catch(() => undefined);
+      await client.query(`DROP TABLE IF EXISTS scope_probe_keyed`).catch(() => undefined);
+      await client.query(`DROP TABLE IF EXISTS _scope_probe_keyless_hidden`).catch(() => undefined);
+    }
+  });
+
 });

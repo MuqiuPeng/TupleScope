@@ -104,7 +104,12 @@ export async function addAssertion(
   // Reject a bad expression before touching the file, so a typo cannot leave a
   // scenario that no longer loads.
   try {
-    parseExpr(edit.expression.replace(/\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/g, '"placeholder"'));
+    // Parsed as written, exactly as the loader parses it: the lexer reads a
+    // bare `{{name}}` as a variable, and inside a literal it is text. Swapping
+    // in `"placeholder"` broke every placeholder inside a longer literal —
+    // `"PVT-{{x}}"` became `"PVT-"placeholder""` — and refused a line the
+    // loader would have accepted.
+    parseExpr(edit.expression);
   } catch (error) {
     throw new ScenarioSaveError(
       `refusing to write an assertion that does not parse: ${

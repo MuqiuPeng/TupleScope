@@ -32,7 +32,10 @@ the user was relying on never happened and nothing said so.
 
 Four outcomes, and the exit code each maps to:
 
-  clean      0   every assertion evaluated and passed
+  clean      0   nothing failed and nothing was left unchecked — unless the
+                 run was told to let undecided assertions through
+                 (unevaluable "warn"); then the verdict's reason says how many
+                 were never decided
   failed     1   an assertion failed — the system under test is wrong
   errored    2   a step could not be executed at all
   undecided  3   it ran, nothing failed, and something was never checked
@@ -40,6 +43,10 @@ Four outcomes, and the exit code each maps to:
 **undecided is not a pass.** It is not a failure either — do not tell the user
 their code is broken. Tell them which check could not run and why; the reason is
 in the assertion's \`reason\` field and is usually actionable in one edit.
+
+\`run_scenario\` marks its result \`isError\` for every outcome except clean:
+failed, errored and undecided alike. That does not mean the call went wrong, or
+that the user's code is broken — read the text for which outcome it was.
 
 ## proves and boundedBy
 

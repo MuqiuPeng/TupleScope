@@ -54,6 +54,22 @@ describe('the handshake instructions', () => {
     }
   });
 
+  it('do not promise every assertion was decided on a clean run', () => {
+    // The row read "every assertion evaluated and passed". Under unevaluable
+    // "warn" a clean run holds undecided assertions — measured: 2 of 4.
+    const row = /^ {2}clean {6}0 {3}([\s\S]*?)\n {2}failed/m.exec(INSTRUCTIONS)?.[1]?.replace(/\s+/g, ' ');
+    assert.ok(row, 'the clean row is where the table puts it');
+    assert.doesNotMatch(row, /every assertion evaluated and passed/);
+    assert.match(row, /unevaluable "warn"/);
+    assert.match(row, /reason says how many/);
+  });
+
+  it('say what isError on a run means, and what it does not', () => {
+    // run_scenario returned isError=false for FAILED and UNDECIDED alike.
+    assert.match(FLAT, /`run_scenario` marks its result `isError` for every outcome except clean/);
+    assert.match(FLAT, /does not mean the call went wrong, or that the user's code is broken/);
+  });
+
   it('explain that a clean run can still be qualified', () => {
     assert.match(INSTRUCTIONS, /proves.*bounded/s);
     assert.match(FLAT, /carry the qualification/);

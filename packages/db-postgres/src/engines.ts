@@ -30,8 +30,21 @@ export type PostgresAdapter = DatabaseAdapter & {
   fullScope(overrides?: Partial<TableScope>): Promise<CaptureScope>;
   /** Every base table's columns, so `check` can resolve a predicate's names. */
   listColumns(): Promise<Map<string, Set<string>>>;
+  /** Every base table's columns with their declared types, in table order. */
+  listColumnTypes(): Promise<Map<string, ReadonlyArray<{ name: string; type: string }>>>;
   /** What is watched and what is not, so a gap is never silent. */
   describeScope(): Promise<ScopeReport>;
+  /**
+   * Is the database there, in one round trip.
+   *
+   * For a surface that asks repeatedly: the runtime's `/api/health` is polled on
+   * every window focus, and proving the database by listing its tables makes a
+   * per-focus cost out of a page-load one. It returns the count and the schema
+   * rather than nothing, because those two are what a reachability report says
+   * out loud — so a caller that only wants to know *whether* it is there never
+   * has to ask a second question to be able to say it.
+   */
+  ping(): Promise<{ tables: number; schema: string }>;
 };
 
 export const ENGINES = {

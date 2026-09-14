@@ -5,14 +5,16 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { ChangeSet, RowChange, Value } from '@tuplescope/core';
-import { visible } from '@tuplescope/core';
+import type { ChangeSet, RowChange, Run, StepResult, Value } from '@tuplescope/core';
+import { verdictOf, visible } from '@tuplescope/core';
 import {
+  glyph,
   jsonLeaves,
   renderDiff,
   renderKey,
   renderValue,
   renderWriteOrder,
+  stepGlyph,
   widthOf,
   type Style,
 } from './render.js';
@@ -172,6 +174,31 @@ describe('the diff grid', () => {
       { ...options, columns: 1, interesting: new Set(['zzz_status']) },
     );
     assert.match(lines[0]!, /zzz_status/);
+  });
+
+  it('hides an ignored column on an inserted or deleted row, as on an updated one', () => {
+    // "Hidden from the diff, never from hasWrite." Measured: with
+    // `--columns all`, inserted rows printed `updatedAt` and the updated rows
+    // beside them did not. `changedColumns` minus `visibleColumns` is exactly
+    // what the workspace ignores; the capture computed it for every kind.
+    const row = { id: v('p1'), amount: v('250.00'), updatedAt: v('2026-09-11 19:05:17') };
+    for (const kind of ['insert', 'delete'] as const) {
+      const lines = renderDiff(
+        set([
+          change({
+            table: 'payments',
+            kind,
+            key: keyed('id', 'p1'),
+            ...(kind === 'insert' ? { after: row } : { before: row }),
+            changedColumns: ['id', 'amount', 'updatedAt'],
+            visibleColumns: ['id', 'amount'],
+          }),
+        ]),
+        { ...options, columns: 'all' },
+      );
+      assert.ok(lines.some((l) => /amount\s+250\.00/.test(l)), `${kind}: ${lines.join('\n')}`);
+      assert.ok(!lines.some((l) => /updatedAt/.test(l)), `${kind}: ${lines.join('\n')}`);
+    }
   });
 
   it('shows an unkeyed row without collapsing the grid', () => {
@@ -419,6 +446,8 @@ describe('--wide', () => {
       before: null,
       after: { body: v(long, 'text') },
       changedColumns: ['body'],
+      // As every capture fills it: `changedColumns` minus what is ignored.
+      visibleColumns: ['body'],
     }),
   ]);
 
@@ -447,11 +476,55 @@ describe('--wide', () => {
           before: null,
           after: { body: v(huge, 'text') },
           changedColumns: ['body'],
+      // As every capture fills it: `changedColumns` minus what is ignored.
+      visibleColumns: ['body'],
         }),
       ]),
       { ...options, untruncated: true },
     ).join('\n');
     assert.equal(lines.includes(huge), false, 'MAX_VALUE_BYTES still applies');
     assert.match(lines, /200000B|⟨200000B⟩/);
+  });
+});
+
+describe('the step mark', () => {
+  // It was a third copy of the step rule and ignored capture warnings, so a
+  // step whose observation was cut short got a tick inside an undecided run.
+  const truncatedStep = (): StepResult => ({
+    stepId: 'reset',
+    name: 'reset',
+    status: 'passed',
+    startedAt: '2026-09-12T00:00:00.000Z',
+    finishedAt: '2026-09-12T00:00:01.000Z',
+    request: { method: 'POST', url: '/debug/reset', headers: {} },
+    assertions: [{ source: 'response.status == 200', status: 'passed' }],
+    changes: {
+      ...set([]),
+      warnings: [{ code: 'scope-truncated', table: 'accounts', message: '`accounts` was rewritten during this step' }],
+    },
+  });
+  const runOf = (step: StepResult): Run => ({
+    id: 'run_1',
+    scenarioId: 's',
+    datasetId: 'd',
+    coverage: 'full',
+    startedAt: '2026-09-12T00:00:00.000Z',
+    finishedAt: '2026-09-12T00:00:01.000Z',
+    status: 'passed',
+    baseline: { probed: true, windowMs: 0 },
+    steps: [step],
+    variables: {},
+  });
+
+  it('marks a step whose capture was cut short as undecided, as its run is', () => {
+    const step = truncatedStep();
+    const verdict = verdictOf(runOf(step));
+    assert.equal(verdict.outcome, 'undecided');
+    assert.equal(stepGlyph(style, step, verdict), glyph(style, 'undecided'));
+  });
+
+  it('still ticks a step that passed with nothing cut short', () => {
+    const step: StepResult = { ...truncatedStep(), changes: set([]) };
+    assert.equal(stepGlyph(style, step, verdictOf(runOf(step))), glyph(style, 'pass'));
   });
 });

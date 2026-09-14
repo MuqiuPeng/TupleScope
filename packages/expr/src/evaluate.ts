@@ -40,6 +40,20 @@ export class Unevaluable extends Error {
   }
 }
 
+/**
+ * What a column read with no side is told, by the parser and the evaluator alike.
+ *
+ * The parser refuses the form at load; the evaluator still refuses an `Expr`
+ * that reaches it without going through `parse`. One function, so the two
+ * cannot drift into saying different things about the same form.
+ */
+export function needsSide(column: string): string {
+  return (
+    `\`${column}\` needs a side: write .before.${column}, ` +
+    `.after.${column}, or delta(...${column}).`
+  );
+}
+
 export interface EvalContext {
   changes: ChangeSet;
   response?: { status: number; headers: Record<string, string>; body: unknown };
@@ -98,6 +112,22 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return keys.every((k) => Object.hasOwn(bx, k) && jsonEqual(ax[k], bx[k]));
 }
 
+const BOOL_TYPES = new Set(['bool', 'boolean']);
+
+/**
+ * PostgreSQL sends a boolean as `t` or `f`; a scenario writes `true` or
+ * `false`. They are one value with two spellings, and comparing the spellings
+ * said otherwise: `single(inserted(wallets)).after.isActive == true` failed
+ * against every active wallet with "expected true, got t" — and `!= true`
+ * would have passed against every one. Found on the first real install, by an
+ * author who worked around it with `== "t"`. Anything that is not one of the
+ * four spellings is left alone, so a genuinely wrong value still reads as one.
+ */
+const BOOL_TEXT: Readonly<Record<string, 't' | 'f'>> = { t: 't', true: 't', f: 'f', false: 'f' };
+function boolText(text: string): string {
+  return BOOL_TEXT[text.trim().toLowerCase()] ?? text;
+}
+
 /**
  * Equality under the semantics of the type, for two values this run has.
  *
@@ -110,6 +140,9 @@ function jsonEqual(a: unknown, b: unknown): boolean {
  */
 export function valuesEqual(a: VisibleValue, b: VisibleValue): boolean {
   if (a.text === null || b.text === null) return a.text === b.text;
+  if (BOOL_TYPES.has(a.pgType) || BOOL_TYPES.has(b.pgType)) {
+    return boolText(a.text) === boolText(b.text);
+  }
   const type = a.pgType || b.pgType;
   if (JSON_TYPES.has(type)) {
     try {
@@ -135,16 +168,55 @@ function requireVisible(value: Value | null | undefined, what: string): VisibleV
   if (value === undefined || value === null) {
     throw new Unevaluable(`${what} was not read, so there is nothing to compare`);
   }
-  if (value.state === 'masked') {
-    throw new Unevaluable(
-      `${what} is masked at capture, so this run does not have its value. ` +
-        'Remove the column from `maskColumns` if the assertion needs it.',
-    );
-  }
+  if (value.state === 'masked') throw new Unevaluable(maskedSentence(what));
   if (value.state === 'unknown') {
     throw new Unevaluable(`${what} could not be read (${value.reason}), so it cannot be compared`);
   }
   return value;
+}
+
+/**
+ * What a masked column is told, whether the refusal comes from a value or from
+ * the scope. One sentence, so the two cannot drift into different advice.
+ */
+function maskedSentence(what: string): string {
+  return (
+    `${what} is masked at capture, so this run does not have its value. ` +
+    'Remove the column from `maskColumns` if the assertion needs it.'
+  );
+}
+
+/**
+ * Refuses a column the row does not have, rather than reading it as absent.
+ *
+ * Every captured row carries every column — the capture reads `SELECT *`, and a
+ * masked column is present in its masked state — so a name missing from a row
+ * image that exists is a misspelling, never a value. Read as absent it became
+ * an answer. `delta` took the missing value for zero, so
+ * `sum(delta(wallets.balanse)) == "0"` passed over a wallet that moved from
+ * 10.00 to 90.00; `.after.balanse` came back as NULL, so `== null` and
+ * `!= "90.00"` both passed over the same row; and a panel drew it as a row the
+ * step never touched. `matchesPredicate` already refuses a predicate's column
+ * by the same rule.
+ *
+ * Both images are asked whichever side is read: an inserted row has no before
+ * image, but its after image still says which columns the table has.
+ *
+ * Over an empty selection there is no row to ask, so nothing can be learned
+ * here and nothing is refused — the answer really is "no rows". `check`
+ * resolves a named table's column against the live schema before the run,
+ * which is where that case is caught.
+ */
+function requireColumn(change: RowChange, column: string): void {
+  for (const image of [change.before, change.after]) {
+    if (!image || Object.hasOwn(image, column)) continue;
+    const columns = Object.keys(image);
+    const near = columns.find((c) => close(c, column));
+    throw new Unevaluable(
+      `there is no column \`${column}\` in \`${change.table}\`` +
+        (near ? ` — did you mean \`${near}\`?` : ` (columns: ${columns.join(', ') || 'none'})`),
+    );
+  }
 }
 
 function asDecimal(value: Value | null, what: string): Decimal {
@@ -274,6 +346,13 @@ function splitClauses(predicate: string): string[] {
   for (let i = 0; i < predicate.length; i += 1) {
     const ch = predicate[i]!;
     if (quote) {
+      // The lexer's rule (see `literalOf`): a backslash takes the next
+      // character with it, so an escaped quote neither closes the value nor
+      // lets a comma or `and` inside it split the clause.
+      if (ch === '\\') {
+        i += 1;
+        continue;
+      }
       if (ch === quote) quote = null;
       continue;
     }
@@ -322,7 +401,30 @@ function literalOf(raw: string, clause: string): string {
   const text = raw.trim();
   const first = text[0];
   if (first === '"' || first === "'") {
-    if (text.length >= 2 && text.endsWith(first)) return text.slice(1, -1);
+    // Read by the lexer's escape rule (`tokenize` in parse.ts), so one quoted
+    // text is one value everywhere: a backslash takes the next character,
+    // whatever it is, and only an unescaped quote closes. Read raw, as this
+    // used to, the same source text meant two things — `"a\\b"` was three
+    // characters in a comparison and four in a predicate, so the predicate
+    // asked about a value the comparison beside it did not — and `"a\"b"`
+    // could not be written in a predicate at all. A value that goes on after
+    // its closing quote (`"a" "b"`) is refused rather than read as `a" "b`.
+    let value = '';
+    for (let i = 1; i < text.length; i += 1) {
+      const ch = text[i]!;
+      if (ch === '\\' && i + 1 < text.length) {
+        value += text[i + 1];
+        i += 1;
+        continue;
+      }
+      if (ch === first) {
+        if (i === text.length - 1) return value;
+        throw new Unevaluable(
+          `cannot read predicate \`${clause.trim()}\`: the value goes on after its closing quote`,
+        );
+      }
+      value += ch;
+    }
     throw new Unevaluable(`cannot read predicate \`${clause.trim()}\`: the value is not closed`);
   }
   if (/['"]/.test(text)) {
@@ -492,6 +594,59 @@ function selectedTables(expr: Expr, into: Set<string> = new Set()): Set<string> 
   return into;
 }
 
+/**
+ * The tables a selection can draw rows from: the one it names, or — for
+ * `changes(*)` and the other table-less kinds — every watched table it does
+ * not carve out with `except`.
+ */
+function spannedTables(expr: Expr, changes: ChangeSet): string[] {
+  switch (expr.node) {
+    case 'select': {
+      if (expr.selector.table) return [expr.selector.table];
+      const excluded = new Set(expr.selector.exceptTables ?? []);
+      return changes.scope.tables.map((t) => t.table).filter((t) => !excluded.has(t));
+    }
+    case 'column':
+    case 'aggregate':
+    case 'predicate':
+    case 'hasWrite':
+    case 'isEmpty':
+    case 'atomic':
+    case 'writeCount':
+      return spannedTables(expr.source, changes);
+    default:
+      return [];
+  }
+}
+
+function predicateColumns(predicate: string): string[] {
+  return parsePredicate(predicate).map(({ column }) => column);
+}
+
+/**
+ * Refuses a question about a masked column from the scope, before any row.
+ *
+ * `matchesPredicate` refuses a masked column per row, and `filter` never calls
+ * it on an empty list — so over a selection that matched nothing the predicate
+ * was never asked, and `count(inserted(wallets).where(secret = "x")) == 0`
+ * passed with `secret` masked and nothing inserted. With a row it is refused,
+ * without one it passes: it can never fail. The scope says which columns each
+ * table masks, rows or no rows, so the refusal is taken from there. A
+ * selection with no one table (`changes(*)`) is refused if any table it spans
+ * masks the column — a row from that table could be the one asked about.
+ */
+function refuseMasked(
+  columns: ReadonlyArray<string>,
+  tables: ReadonlyArray<string>,
+  changes: ChangeSet,
+): void {
+  for (const table of tables) {
+    const masked = changes.scope.tables.find((t) => t.table === table)?.maskedColumns ?? [];
+    const hit = columns.find((column) => masked.includes(column));
+    if (hit !== undefined) throw new Unevaluable(maskedSentence(`\`${table}.${hit}\``));
+  }
+}
+
 /** Tables an expression carves out with `except`, which a whole-scope guard must honour. */
 function exceptedTables(expr: Expr, into: Set<string> = new Set()): Set<string> {
   switch (expr.node) {
@@ -646,6 +801,9 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
               (near ? ` — did you mean \`${near}\`?` : ''),
         );
       }
+      // Before any row is looked at — `rows(t, ...)` included, whose rows come
+      // from `lookupRows` below. See `refuseMasked`.
+      if (predicate) refuseMasked(predicateColumns(predicate), spannedTables(expr, ctx.changes), ctx.changes);
       const excluded = new Set(exceptTables ?? []);
       let rows = ctx.changes.changes.filter(
         (c) => (!table || c.table === table) && !excluded.has(c.table),
@@ -686,6 +844,7 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
     case 'predicate': {
       const evaluated = evaluate(expr.source, ctx);
       const source = asSelection(evaluated, 'where');
+      refuseMasked(predicateColumns(expr.predicate), spannedTables(expr.source, ctx.changes), ctx.changes);
       // Narrowing a partial set does not complete it: the rows that were never
       // read might have matched too.
       const partial = evaluated.kind === 'selection' && evaluated.partial;
@@ -697,12 +856,7 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
     }
 
     case 'column': {
-      if (expr.temporal === null) {
-        throw new Unevaluable(
-          `\`${expr.column}\` needs a side: write .before.${expr.column}, ` +
-            `.after.${expr.column}, or delta(...${expr.column}).`,
-        );
-      }
+      if (expr.temporal === null) throw new Unevaluable(needsSide(expr.column));
       const evaluated = evaluate(expr.source, ctx);
       const rows = asSelection(evaluated, 'a column read');
       // Reading a column off a truncated set does not complete it. The flag has
@@ -712,6 +866,10 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
         (evaluated.kind === 'selection' || evaluated.kind === 'column') && evaluated.partial
           ? { partial: true as const }
           : {};
+      // Every read below — delta, before, after, and through them sum, min,
+      // max, single(...).col, the bare-table shorthand and a panel — goes
+      // through this one check first. See `requireColumn`.
+      for (const change of rows) requireColumn(change, expr.column);
       if (expr.temporal === 'delta') {
         const values = rows.map((change) => {
           const before = change.before?.[expr.column] ?? null;
@@ -753,6 +911,16 @@ function evaluate(expr: Expr, ctx: EvalContext): EvalResult {
           return { kind: 'selection', rows };
         }
         case 'sum': {
+          // The one value read that answers over no rows: a sum of nothing is
+          // 0. So `sum(inserted(wallets).after.secret) == "0"`, with `secret`
+          // masked, passed when nothing was inserted and was refused when
+          // anything was — it could never fail. Refused from the scope, like a
+          // predicate. min/max refuse an empty set and single() anything but
+          // one row, so only this needs it; a panel keeps drawing a masked
+          // point as withheld rather than as missing.
+          if (expr.source.node === 'column') {
+            refuseMasked([expr.source.column], spannedTables(expr.source.source, ctx.changes), ctx.changes);
+          }
           requireWholeSet(source, 'sum()');
           const column = asColumn(source, 'sum');
           const total = column.values.reduce<Decimal>(

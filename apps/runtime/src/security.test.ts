@@ -168,6 +168,18 @@ describe('createGuard', () => {
     assert.equal((await call({ host: undefined, header: TOKEN })).status, 403);
   });
 
+  it('says there was no host when the Host header is empty, not "addressed to ``"', async () => {
+    // A raw `Host: ` (sent with nc) arrives as the empty string, not as no
+    // header, and was answered "Refusing a request addressed to ``".
+    for (const host of ['', undefined]) {
+      const result = await call({ host, header: TOKEN });
+      assert.equal(result.status, 403);
+      assert.equal(result.body?.error, 'BAD_HOST');
+      assert.doesNotMatch(result.body?.message ?? '', /``/);
+      assert.match(result.body?.message ?? '', /names no host/);
+    }
+  });
+
   it('refuses a cross-site Origin', async () => {
     const result = await call({ origin: 'https://evil.example', header: TOKEN });
     assert.equal(result.status, 403);

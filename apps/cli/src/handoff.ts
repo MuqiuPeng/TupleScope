@@ -1,13 +1,14 @@
 /**
- * `tuplescope handoff …` — binding a name the repository chose to a program
- * on this machine.
+ * `tuplescope handoff …` — binding a program on this machine to a name, so a
+ * row the web UI shows can be opened in it.
  *
- * The command exists because the binding cannot be made any other way. A
- * project's `tuplescope.yaml` contributes one alias and nothing else; until
- * someone types this, that alias resolves to nothing and every attempt to use
- * it is a refusal. There is deliberately no flag, no environment variable and
- * no config key that skips it — a confirmation the mouse can complete, or that
- * a file can pre-answer, is not a decision anybody made.
+ * The command exists because the binding cannot be made any other way. Nothing
+ * a repository contains names, creates or approves an alias: the only aliases
+ * there are come from `~/.tuplescope/handoff.json`, which this command writes,
+ * and the web UI offers exactly those. There is deliberately no flag, no
+ * environment variable and no config key that skips it — a confirmation the
+ * mouse can complete, or that a file can pre-answer, is not a decision anybody
+ * made.
  *
  * `enable` is scoped to one workspace at a time. A machine-wide grant is the
  * thing a "remember this" checkbox reaches within four clicks, chosen
@@ -18,6 +19,7 @@ import { realpath } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { access, constants } from 'node:fs/promises';
 import { findWorkspaceConfig, loadWorkspaceConfig } from '@tuplescope/workspace';
+import { asciiDocument } from './scrub.js';
 import {
   assertOrigin,
   HandoffConfigError,
@@ -38,7 +40,7 @@ import {
 const EXIT_USAGE = 4;
 const EXIT_ERROR = 2;
 
-const USAGE = `tuplescope handoff — open an observed row in a database tool of yours
+export const HANDOFF_USAGE = `tuplescope handoff — open an observed row in a database tool of yours
 
   tuplescope handoff list                     what is bound on this machine
   tuplescope handoff enable <preset> --as <alias> [options]
@@ -56,10 +58,21 @@ Presets
   psql-service   run your psql, with your credentials, SQL on stdin
       --service <name>     an entry in your own pg_service.conf
 
-A repository can name an alias. It cannot create one, point one somewhere, or
-approve one — that is what this file is for. Written to ~/.tuplescope/handoff.json,
+An alias is the name you give a binding with --as. A row's Open in… in the web
+UI lists every alias bound on this machine, and opens only the ones enabled for
+the workspace it belongs to. Nothing in a repository can create an alias, point
+one somewhere, or enable one: bindings are written to ~/.tuplescope/handoff.json,
 mode 0600, which no project can write.
 `;
+
+/**
+ * What the usage used to say, and `handoff list` with nothing bound: "A
+ * repository can name an alias", and "A scenario that names a handoff target
+ * will refuse and print the command to bind it". Nothing in the product reads
+ * an alias from a repository or refuses on one — a scenario's `handoff:` key
+ * was measured to be accepted and inert — so both described a mechanism that
+ * does not exist, and the README's Known issues had to warn against it.
+ */
 
 export interface HandoffValues {
   config?: string;
@@ -71,7 +84,11 @@ export interface HandoffValues {
   everywhere?: boolean;
   'i-know-this-is-not-local'?: boolean;
   json?: boolean;
+  ascii?: boolean;
 }
+
+/** `⚠` is the one glyph here, and `--ascii` is for the viewers that mangle it. */
+const warn = (values: HandoffValues): string => (values.ascii ? '[!]' : '⚠');
 
 export async function commandHandoff(args: string[], values: HandoffValues): Promise<number> {
   const action = args[0];
@@ -83,9 +100,17 @@ export async function commandHandoff(args: string[], values: HandoffValues): Pro
         return await enable(args[1], values);
       case 'disable':
         return await disable(args[1], values);
+      case 'help':
+        process.stdout.write(HANDOFF_USAGE);
+        return 0;
+      case undefined:
+        // No subcommand is a bad invocation, as it is for `secret`: the two
+        // answered the same case with 0 and 4. `--help` is the way to ask.
+        process.stderr.write(HANDOFF_USAGE);
+        return EXIT_USAGE;
       default:
-        process.stdout.write(USAGE);
-        return action === undefined ? 0 : EXIT_USAGE;
+        process.stderr.write(`Unknown handoff command \`${action}\`.\n\n${HANDOFF_USAGE}`);
+        return EXIT_USAGE;
     }
   } catch (error) {
     if (error instanceof HandoffConfigError) {
@@ -103,13 +128,14 @@ async function list(values: HandoffValues): Promise<number> {
   const entries = Object.entries(config.bindings);
 
   if (values.json) {
-    process.stdout.write(`${JSON.stringify({ workspace: here, ...config }, null, 2)}\n`);
+    process.stdout.write(asciiDocument(`${JSON.stringify({ workspace: here, ...config }, null, 2)}\n`, 'json'));
     return 0;
   }
   if (entries.length === 0) {
     process.stdout.write(
       'Nothing is bound on this machine.\n\n' +
-        'A scenario that names a handoff target will refuse and print the command to bind it.\n',
+        'Bind a tool with `tuplescope handoff enable <preset> --as <alias>`. A row’s Open in… ' +
+        'in the web UI then offers it, in the workspace you enabled it for.\n',
     );
     return 0;
   }
@@ -121,13 +147,13 @@ async function list(values: HandoffValues): Promise<number> {
       process.stdout.write(`  browser  ${binding.origin}\n`);
       process.stdout.write(`  database ${binding.server} as ${binding.username}\n`);
       if (!isLoopback(binding.origin)) {
-        process.stdout.write(`  ⚠ not loopback — an approved host can serve anything later\n`);
+        process.stdout.write(`  ${warn(values)} not loopback — an approved host can serve anything later\n`);
       }
     } else {
       process.stdout.write(`  service  ${binding.service}\n`);
       process.stdout.write(`  psql     ${binding.executable}\n`);
       if (binding.executable !== binding.realpath) {
-        process.stdout.write(`           → ${binding.realpath}\n`);
+        process.stdout.write(`           ${values.ascii ? '->' : '→'} ${binding.realpath}\n`);
       }
     }
     // The grants are the part worth reading: a binding that exists is not a
@@ -147,7 +173,10 @@ async function list(values: HandoffValues): Promise<number> {
 async function enable(preset: string | undefined, values: HandoffValues): Promise<number> {
   const alias = values.as;
   if (!alias) {
-    process.stderr.write('`--as <alias>` is required: it is the name the project refers to.\n');
+    process.stderr.write(
+      '`--as <alias>` is required: it is the name this binding goes by, in `handoff list`, ' +
+        'in the web UI’s Open in…, and to `handoff disable`.\n',
+    );
     return EXIT_USAGE;
   }
 
@@ -261,7 +290,7 @@ async function enable(preset: string | undefined, values: HandoffValues): Promis
     );
     if (!isLoopback(binding.origin)) {
       process.stdout.write(
-        '\n⚠ This origin is not loopback. An approved host can serve anything later, and DNS ' +
+        `\n${warn(values)} This origin is not loopback. An approved host can serve anything later, and DNS ` +
           'moves under a stable name. This will be reprinted every time it is used.\n',
       );
     }

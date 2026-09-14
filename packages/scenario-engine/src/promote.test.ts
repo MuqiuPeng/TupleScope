@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { ChangeSet, Detection, RowChange, Row, Value } from '@tuplescope/core';
-import { parse } from '@tuplescope/expr';
+import { parse, predicateClauses } from '@tuplescope/expr';
 import { promoteCandidates } from './promote.js';
 import { addAssertion, removeAssertion, ScenarioSaveError } from './save.js';
 import { masked, textIfVisible, visible } from '@tuplescope/core';
@@ -117,6 +117,49 @@ describe('promoteCandidates', () => {
       assert.match(candidate.expression, /\{\{payment_id\}\}/);
       assert.doesNotMatch(candidate.expression, /pay_ltx3k01/);
     }
+  });
+
+  it('writes a key holding a quote or a backslash so it reads back as the same value', async () => {
+    // Escaped by the lexer's own rule — a backslash and the quote, nothing else.
+    const id = 'a"b\\c';
+    const changes = changeSet([
+      change({
+        table: 'notes',
+        kind: 'update',
+        key: keyed('notes', 'id', id),
+        before: row({ id: v(id), body: v('x') }),
+        after: row({ id: v(id), body: v('y') }),
+      }),
+    ]);
+    const pinned = promoteCandidates(changes, {}).candidates.filter((c) => c.expression.includes('updated(notes, id = '));
+    assert.ok(pinned.length > 0);
+    for (const candidate of pinned) {
+      const predicate = /updated\(notes, (id = "(?:[^"\\]|\\.)*")\)/.exec(candidate.expression)?.[1];
+      assert.ok(predicate, candidate.expression);
+      assert.equal(predicateClauses(predicate)[0]!.value, id, candidate.expression);
+    }
+  });
+
+  it('offers nothing it would have to misspell: a key holding a control character', async () => {
+    // The language has no escape for a newline — `\n` reads as the letter n —
+    // so JSON.stringify's `"a\nb"` made a kept assertion ask about "anb", which
+    // matches no row. There is no honest literal to offer, so none is offered.
+    const id = 'a\nb';
+    const changes = changeSet([
+      change({
+        table: 'notes',
+        kind: 'update',
+        key: keyed('notes', 'id', id),
+        before: row({ id: v(id), body: v('x') }),
+        after: row({ id: v(id), body: v('y') }),
+      }),
+    ]);
+    const candidates = promoteCandidates(changes, {}).candidates;
+    assert.equal(
+      candidates.some((c) => c.expression.includes('updated(notes, id = ')),
+      false,
+      candidates.map((c) => c.expression).join('\n'),
+    );
   });
 
   it('does not match against the {{run}} and {{now}} built-ins', async () => {
@@ -274,7 +317,7 @@ const FILE = `# A scenario someone wrote by hand.
 version: 1
 id: refund
 title: Refund
-tags: [alpha, beta]
+ignoreColumns: [alpha, beta]
 why: >
   A refund must reverse the money exactly once.
   Asking twice must not move money twice.
@@ -324,6 +367,20 @@ describe('addAssertion', () => {
     });
   });
 
+  it('writes an assertion with a placeholder inside a longer literal, as the loader reads it', async () => {
+    // Refused as "does not parse" while every placeholder was swapped for
+    // `"placeholder"` first — `"PVT-{{x}}"` became `"PVT-"placeholder""`.
+    await withFile(async (file) => {
+      const result = await addAssertion({
+        file,
+        datasetId: 'happy',
+        stepId: 'pay',
+        expression: 'single(inserted(payments)).after.reference == "PVT-{{payment_id}}"',
+      });
+      assert.equal(result.added, true);
+    });
+  });
+
   it('leaves folded scalars and flow collections exactly as written', async () => {
     await withFile(async (file) => {
       const original = await readFile(file, 'utf8');
@@ -336,7 +393,7 @@ describe('addAssertion', () => {
       const after = await readFile(file, 'utf8');
       // Re-serialising would unfold the `>` block and pad `[a, b]` to `[ a, b ]`.
       assert.ok(after.includes('\nwhy: >'), 'the folded scalar marker should survive');
-      assert.ok(after.includes('tags: [alpha, beta]'), 'the flow collection should not be re-padded');
+      assert.ok(after.includes('ignoreColumns: [alpha, beta]'), 'the flow collection should not be re-padded');
       assert.ok(after.includes(original.split('\n').find((l) => l.includes('Asking twice'))!));
     });
   });
@@ -534,5 +591,68 @@ describe('a masked column', () => {
     ).candidates;
     assert.ok(candidates.some((c) => /status = "OPEN"/.test(c.expression)));
     for (const candidate of candidates) assert.doesNotMatch(candidate.expression, /•/);
+  });
+
+  const onlyWrite = (changed: RowChange) => {
+    const promoted = promoteCandidates(changeSet([changed]), {});
+    const write = promoted.candidates.find((c) => c.expression.startsWith('hasWrite('));
+    assert.ok(write, promoted.candidates.map((c) => c.expression).join('\n'));
+    return { write, withheld: promoted.withheld };
+  };
+
+  it('does not say no value changed when the only changed column is masked', () => {
+    // Measured (maskprobe --json): "customers is written to without any value
+    // changing (id cust_demo)" over passwordHash tsMaskProbe7q → tsMaskProbe8r,
+    // beside a table summary of updated 1, writtenNoVisibleChange 0.
+    const { write, withheld } = onlyWrite({
+      table: 'customers',
+      key: keyed('customers', 'id', 'cust_demo'),
+      kind: 'update',
+      before: { id: v('cust_demo'), passwordHash: maskedValue() },
+      after: { id: v('cust_demo'), passwordHash: maskedValue() },
+      changedColumns: ['passwordHash'],
+      visibleColumns: ['passwordHash'],
+      hasWrite: true,
+    });
+    assert.equal(
+      write.description,
+      'customers is written to and passwordHash changed, but its value is masked, so only the write is asserted (id cust_demo)',
+    );
+    // The expression asks only whether the row was written — true of this row,
+    // needs no masked value, and names it by its unmasked key.
+    assert.equal(write.expression, 'hasWrite(changes(customers, id = "cust_demo")) == true');
+    assert.doesNotThrow(() => parse(write.expression));
+    assert.deepEqual(withheld, ['customers.passwordHash']);
+  });
+
+  it('does not say no value changed when only a volatile column moved', () => {
+    const { write } = onlyWrite({
+      table: 'orders',
+      key: keyed('orders', 'id', 'o1'),
+      kind: 'update',
+      before: { id: v('o1'), updated_at: v('2026-01-01 00:00:00+00', 'timestamptz') },
+      after: { id: v('o1'), updated_at: v('2026-01-01 00:00:01+00', 'timestamptz') },
+      changedColumns: ['updated_at'],
+      visibleColumns: ['updated_at'],
+      hasWrite: true,
+    });
+    assert.equal(
+      write.description,
+      'orders is written to and updated_at changed, but its value is different on every run, so only the write is asserted (id o1)',
+    );
+  });
+
+  it('still says no value changed when none did', () => {
+    const { write } = onlyWrite({
+      table: 'orders',
+      key: keyed('orders', 'id', 'o1'),
+      kind: 'update',
+      before: { id: v('o1'), status: v('OPEN') },
+      after: { id: v('o1'), status: v('OPEN') },
+      changedColumns: [],
+      visibleColumns: [],
+      hasWrite: true,
+    });
+    assert.equal(write.description, 'orders is written to without any value changing (id o1)');
   });
 });

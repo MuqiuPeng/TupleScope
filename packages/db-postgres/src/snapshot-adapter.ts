@@ -40,7 +40,8 @@ import type {
   TableScope,
 } from '@tuplescope/core';
 import {
-  describeScope, listBaseTables, listColumnsByTable,
+  countBaseTables,
+  describeScope, listBaseTables, listColumnsByTable, listColumnTypesByTable,
   readLocation,
   readTableIdentities,
   type ScopeReport,
@@ -116,11 +117,31 @@ export class SnapshotPostgresAdapter implements DatabaseAdapter {
     }
   }
 
+  /** Is it there — for a caller that asks often and does not want the names. */
+  async ping(): Promise<{ tables: number; schema: string }> {
+    const client = await this.metaPool.connect();
+    try {
+      return await countBaseTables(client);
+    } finally {
+      client.release();
+    }
+  }
+
   /** Every base table's columns, for `check` to resolve a predicate against. */
   async listColumns(): Promise<Map<string, Set<string>>> {
     const client = await this.metaPool.connect();
     try {
       return await listColumnsByTable(client);
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Every base table's columns with their declared types, for `describe_table`. */
+  async listColumnTypes(): Promise<Map<string, ReadonlyArray<{ name: string; type: string }>>> {
+    const client = await this.metaPool.connect();
+    try {
+      return await listColumnTypesByTable(client);
     } finally {
       client.release();
     }

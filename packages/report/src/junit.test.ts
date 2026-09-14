@@ -289,6 +289,35 @@ describe('the file itself', () => {
     assert.match(xmlText, /name="tuplescope\.baseline" value="not-probed"/);
   });
 
+  it('says how far the run got, apart from where it started', () => {
+    // `tuplescope.coverage="full"` was the only word on a run where 2 of 4
+    // steps never ran (ts-verify re-honesty-runtime, notrun). It says where the
+    // run started, and stays; `reach` says how many steps ran.
+    const xmlText = toJUnit(
+      envelopeFor([step({ stepId: 'one', assertions: [pass()] })], DEFAULT_POLICY, {
+        declaredSteps: ['one', 'two', 'three', 'four'],
+      }),
+    );
+    assert.match(xmlText, /name="tuplescope\.coverage" value="full"/);
+    assert.match(xmlText, /name="tuplescope\.reach" value="1\/4 steps ran"/);
+    const whole = toJUnit(envelopeFor([step({ stepId: 'a', assertions: [pass()] })]));
+    assert.match(whole, /name="tuplescope\.reach" value="1\/1 steps ran"/);
+  });
+
+  it('stores a step with an escalated capture warning as undecided, as its run is', () => {
+    // The envelope kept `outcome: "passed"` for a `scope-truncated` step inside
+    // an undecided run (ts-verify re-honesty-runtime run_mtxeox8c).
+    const envelope = envelopeFor([
+      step({
+        stepId: 'reset',
+        assertions: [pass()],
+        changes: changes([{ code: 'scope-truncated', table: 'customers', message: 'rewritten' }]),
+      }),
+    ]);
+    assert.equal(envelope.runs[0]!.verdict.outcome, 'undecided');
+    assert.equal(envelope.runs[0]!.steps[0]!.outcome, 'undecided');
+  });
+
   it('shows a capture warning as its own case', () => {
     const xmlText = toJUnit(
       envelopeFor([
@@ -300,6 +329,30 @@ describe('the file itself', () => {
       ]),
     );
     assert.match(xmlText, /name="concurrent-writes-detected \(sessions\)"/);
+  });
+
+  it('counts one case per step and warning code, naming its tables', () => {
+    // Measured: a step that truncated 35 tables came out as errors="35" — 35
+    // cases of tuplescope.capture-warning for one thing that happened.
+    const tables = ['accounts', 'addresses', 'blocks', ...Array.from({ length: 32 }, (_, i) => `t${i}`)];
+    const truncated = (names: string[]) =>
+      changes(names.map((table) => ({ code: 'scope-truncated', table, message: `\`${table}\` was truncated` })));
+    const xmlText = toJUnit(
+      envelopeFor([
+        step({ stepId: 'wipe', assertions: [pass()], changes: truncated(tables) }),
+        step({ stepId: 'again', assertions: [pass()], changes: truncated(['ledger']) }),
+      ]),
+    );
+    const cases = [...xmlText.matchAll(/<error type="tuplescope\.capture-warning"/g)];
+    assert.equal(cases.length, 2, xmlText);
+    assert.equal(attr(xmlText, 'errors'), '2');
+    assert.match(
+      xmlText,
+      /classname="refund · duplicate · wipe · capture" name="scope-truncated \(accounts, addresses, blocks and 32 more\)"/,
+    );
+    assert.match(xmlText, /classname="refund · duplicate · again · capture" name="scope-truncated \(ledger\)"/);
+    // Capped in the name; every table's own message stays in the body.
+    for (const table of tables) assert.match(xmlText, new RegExp(`\`${table}\` was truncated`));
   });
 });
 

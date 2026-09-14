@@ -110,6 +110,7 @@ export interface HttpRequest {
    * token, and every interesting state machine is multi-party.
    */
   as?: string;
+  /** Templated, like `path`: a `{{name}}` nothing captured is refused, not sent. */
   headers?: Readonly<Record<string, string>>;
   /** Templated. Sent as `Idempotency-Key`; pair with `{{run}}` to stay unique across runs. */
   idempotencyKey?: string;
@@ -134,7 +135,13 @@ export interface HttpRequest {
  * product bug and is the fastest way to lose a new user.
  */
 export interface BuiltinVariables {
-  /** Short unique suffix, stable for the whole run. */
+  /**
+   * Short unique suffix, stable across one dataset's run.
+   *
+   * One dataset, not one `tuplescope run`: every dataset in a full run mints
+   * its own. A step that must replay a key an *earlier dataset* sent cannot
+   * reach it through this — write that key as a literal, and say why.
+   */
   run: string;
   /** ISO-8601 timestamp at run start. */
   now: string;

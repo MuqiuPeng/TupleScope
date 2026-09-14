@@ -14,7 +14,7 @@
  */
 
 import { createAdapter, type PostgresAdapter, type ScopeReport } from '@tuplescope/db-postgres';
-import { assertResolved } from './credentials.js';
+import { assertResolved, type CredentialedWorkspaceConfig } from './credentials.js';
 import { HttpRunner } from '@tuplescope/http-runner';
 import { ScenarioEngine, loadScenario } from '@tuplescope/scenario-engine';
 import type { CaptureScope, Scenario, TableScope } from '@tuplescope/core';
@@ -86,12 +86,13 @@ export interface OpenOptions {
 }
 
 export function openWorkspace(
-  config: ResolvedWorkspaceConfig,
+  config: CredentialedWorkspaceConfig,
   options: OpenOptions = {},
 ): WorkspaceSession {
-  // A reference that skipped resolution would be sent to the API as the
-  // literal characters `${secret:…}`, and the failure would read as an
-  // authentication problem rather than a missing step.
+  // The type already says the references were resolved; this is the backstop
+  // behind a cast. A reference that skipped resolution would be sent to the
+  // API as the literal characters `${secret:…}`, and the failure would read
+  // as an authentication problem rather than a missing step.
   assertResolved(config);
 
   // A lookup, not a branch. Past this line nothing knows which engine was

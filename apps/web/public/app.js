@@ -108,6 +108,7 @@ function selectDataset(scenarioId, datasetId) {
 
 function render() {
   renderWorkspace();
+  renderReachability();
   renderScenarios();
   renderProgress();
   renderSteps();
@@ -117,10 +118,18 @@ function render() {
 
 function renderWorkspace() {
   const host = $('#workspaceMeta');
-  host.innerHTML = '';
+  host.replaceChildren();
   if (!state.workspace) return;
-  [state.workspace.name, state.workspace.captureMethod, `${state.workspace.tables?.length ?? 0} tables`]
-    .forEach((value) => host.appendChild(el('span', 'meta-chip', value)));
+  const chips = [state.workspace.name, state.workspace.captureMethod];
+  // The table count is the database's own fact, so it is only stated when the
+  // database was actually reached. With it down the payload carries `tables: []`,
+  // and a `0 tables` chip reads as an empty schema — a claim about the database
+  // made out of a failure to reach it. The indicator beside it says what is
+  // known instead.
+  if (reachabilityOf('database').state === 'reachable') {
+    chips.push(`${state.workspace.tables?.length ?? 0} tables`);
+  }
+  chips.forEach((value) => host.appendChild(el('span', 'meta-chip', value)));
   $('#scenarioCount').textContent = `${state.scenarios.length} scenario${state.scenarios.length === 1 ? '' : 's'}`;
 }
 
@@ -186,8 +195,14 @@ function runActions() {
   const runLabel = current.resetFirst ? 'Reset & run dataset' : 'Run dataset';
   const run = el('button', 'primary-action', state.running ? 'Running…' : runLabel);
   run.type = 'button';
-  run.disabled = state.running;
-  if (current.resetFirst) run.title = 'Resets the configured baseline before running every step.';
+  // Only `unreachable` refuses. `not-checked` is not a failure — it is nobody
+  // having asked — and disabling Run over it would stop a reader from running
+  // against a database that is very probably fine, which is how an indicator
+  // stops being believed.
+  const refusal = databaseRefusal();
+  run.disabled = state.running || Boolean(refusal);
+  if (refusal) run.title = refusal.title;
+  else if (current.resetFirst) run.title = 'Resets the configured baseline before running every step.';
   run.onclick = () => startRun({});
 
   const actions = el('div', 'dataset-actions');
@@ -201,8 +216,9 @@ function runActions() {
   if (current.resetFirst && state.workspace?.resetConfigured) {
     const reset = el('button', 'secondary-action', 'Reset baseline');
     reset.type = 'button';
-    reset.disabled = state.running;
-    reset.title = 'Puts the database back to its baseline and stops there.';
+    // A reset writes to the same database, so it is refused by the same fact.
+    reset.disabled = state.running || Boolean(refusal);
+    reset.title = refusal ? refusal.title : 'Puts the database back to its baseline and stops there.';
     reset.onclick = () => resetBaseline(reset);
     actions.appendChild(reset);
   }
@@ -289,6 +305,10 @@ function renderProgress() {
   // a status word, so the slot keeps `Could not run` and the sentence gets a
   // line of its own.
   if (state.runError) host.appendChild(el('p', 'run-error', state.runError.message));
+  // Same row, same reasoning as the sentence above: why the button beside it is
+  // grey, in words, rather than a disabled control the reader has to guess at.
+  const refusalNote = databaseRefusalNote();
+  if (refusalNote) host.appendChild(refusalNote);
   host.appendChild(track);
 }
 
@@ -373,13 +393,23 @@ function renderRequestWorkspace() {
 
   const actions = el('div', 'request-actions');
   const missingDependencies = dependencies.some((dependency) => !dependency.available);
-  const only = el('button', 'send-action', state.running ? 'Running…' : missingDependencies ? 'Needs earlier steps' : 'Run this step');
-  only.disabled = state.running || missingDependencies;
+  // These send the same requests to the same database, so they are refused by
+  // the same fact as `Run dataset` — and say so here rather than only in the
+  // strip at the top of a column this panel can be scrolled well below.
+  const refusal = databaseRefusal();
+  const only = el('button', 'send-action', state.running
+    ? 'Running…'
+    : refusal ? 'Database unreachable' : missingDependencies ? 'Needs earlier steps' : 'Run this step');
+  only.disabled = state.running || missingDependencies || Boolean(refusal);
+  if (refusal) only.title = refusal.title;
   only.onclick = () => startRun({ onlyStepId: step.id });
   const from = el('button', 'secondary-action', 'Run from here');
-  from.disabled = state.running || missingDependencies;
+  from.disabled = state.running || missingDependencies || Boolean(refusal);
+  if (refusal) from.title = refusal.title;
   from.onclick = () => startRun({ fromStepId: step.id });
   actions.append(only, from, el('span', 'expectation-copy', step.expect || expectedStatus(step)));
+  const refusalNote = databaseRefusalNote();
+  if (refusalNote) actions.appendChild(refusalNote);
   host.appendChild(actions);
 
   const resultContext = renderResultContext(step, result);
@@ -953,14 +983,25 @@ function renderObservationBoundary(host) {
   // layout, which a reader learns by looking, once.
   const tables = el('details', 'candidate-block');
   const heading = el('summary', 'candidate-summary');
+  // An empty list has two causes and they are not the same answer. The workspace
+  // watching nothing is a fact about the workspace; the database not answering
+  // when this list was fetched is a fact about the database, and `0` said alone
+  // is the first one claimed on the strength of the second.
+  const watched = state.workspace?.tables ?? [];
   heading.append(
     el('strong', null, 'Watched tables'),
-    el('span', null, `${state.workspace.tables.length} · baseline is whatever is there when you run`),
+    el('span', null, watched.length
+      ? `${watched.length} · baseline is whatever is there when you run`
+      : reachState.stateAtLoad === 'reachable'
+        ? 'none · this workspace watches no table'
+        : 'not listed · the database was not reached when this page loaded · reload once it is'),
   );
   tables.appendChild(heading);
-  const list = el('div', 'table-chip-list');
-  state.workspace.tables.forEach((table) => list.appendChild(el('code', 'table-chip', table)));
-  tables.appendChild(list);
+  if (watched.length) {
+    const list = el('div', 'table-chip-list');
+    watched.forEach((table) => list.appendChild(el('code', 'table-chip', table)));
+    tables.appendChild(list);
+  }
   block.appendChild(tables);
   // Masking stays visible. It changes what the evidence is able to tell you,
   // it is nowhere else on the screen, and finding out afterwards that a column
@@ -1127,8 +1168,37 @@ async function keepCandidate(candidate, stepId, button) {
   }
 }
 
+/**
+ * Held while the pre-run probe is in flight.
+ *
+ * `state.running` is not set until after that await, and the three controls that
+ * call `startRun` are only disabled by a render — so without this, two clicks
+ * inside the probe both got through and the same dataset ran twice.
+ */
+let submitPending = false;
+
 async function startRun(options) {
+  if (state.running || submitPending) return;
+  // Immediately before sending, not on a timer. The indicators can be minutes
+  // old, and the moment worth knowing the database went away is before a run
+  // has written half a scenario into something that is not there.
+  submitPending = true;
+  try {
+    await probeReachability({ force: true });
+  } finally {
+    submitPending = false;
+  }
   if (state.running) return;
+  if (reachabilityOf('database').state === 'unreachable') {
+    // Refused rather than sent. The server would reject it, and the refusal is
+    // already on screen — `probeReachability` re-rendered the strip and the
+    // request actions when the state changed under us. This only makes sure the
+    // reader is looking at it.
+    renderProgress();
+    renderRequestWorkspace();
+    requestAnimationFrame(() => $('#runStrip')?.scrollIntoView({ block: 'start' }));
+    return;
+  }
   const context = { ...state.selected };
   const current = dataset();
   const start = options.fromStepId ? current.steps.findIndex((step) => step.id === options.fromStepId) : 0;
@@ -1179,6 +1249,10 @@ async function startRun(options) {
       await pause(180);
     }
   } catch (error) {
+    // A refusal carries the `Reachability` it was refused on — `checkedAt` and
+    // all — so the indicator moves from the refusal itself rather than standing
+    // there green until the next window focus explains what happened.
+    if (error.database || error.backend) adoptReachability(error);
     state.runErrors.set(contextKey(context), error);
     if (sameContext(context, state.selected)) state.runError = error;
   } finally {
@@ -1303,6 +1377,12 @@ async function boot() {
     // page that waits on a file read.
     void loadHandoffTargets().then(render);
     state.workspace = workspace;
+    // The load-time probe, already taken. The workspace payload carries a
+    // `Reachability` for each side, stamped by the runtime that took it — so
+    // asking `/api/health` here as well would spend a second request on the same
+    // two answers, and this page would have to guess at a `checkedAt` it was
+    // handed.
+    adoptReachability(workspace);
     state.scenarios = scenarios;
     runs.forEach((run) => {
       rememberRun(run);
@@ -1318,8 +1398,19 @@ async function boot() {
       state.knownVariables = state.knownVariablesByDataset.get(contextKey()) ?? {};
     }
     render();
+    watchReachability();
   } catch (error) {
-    document.body.innerHTML = `<main class="fatal"><h1>TupleScope could not start</h1><p>${String(error.message)}</p></main>`;
+    // Text, not markup: the message can be a driver's, and a `<` in it was parsed
+    // as HTML. The CSP stops a script there; it does not stop the page from
+    // rendering someone else's markup as its own.
+    const fatal = document.createElement('main');
+    fatal.className = 'fatal';
+    const heading = document.createElement('h1');
+    heading.textContent = 'TupleScope could not start';
+    const detail = document.createElement('p');
+    detail.textContent = String(error.message);
+    fatal.append(heading, detail);
+    document.body.replaceChildren(fatal);
   }
 }
 
@@ -1500,7 +1591,10 @@ async function openRow(change, index, alias, button) {
       method: 'POST',
       body: JSON.stringify({ runId: run?.id, stepId, changeIndex: index, alias }),
     });
-    if (result.kind === 'output') showInspector(change, result);
+    // A URL open shows nothing of its own — the browser is the answer — unless
+    // it carries a banner: a non-loopback binding was promised its warning
+    // "every time it is used", and this click is a use.
+    if (result.kind === 'output' || result.banner) showInspector(change, result);
   } catch (error) {
     showInspector(change, { kind: 'output', ok: false, stderr: String(error?.message ?? error), stdout: '' });
   } finally {
@@ -1522,7 +1616,9 @@ function showInspector(change, result) {
   const head = el('header', 'inspector-head');
   head.append(
     el('strong', null, `${change.table} · ${keyText(change.key)}`),
-    el('span', 'inspector-status', result.killed ? `stopped: ${result.killed}` : result.ok ? 'ok' : 'error'),
+    el('span', 'inspector-status',
+      result.kind === 'url' ? 'opened in the browser'
+        : result.killed ? `stopped: ${result.killed}` : result.ok ? 'ok' : 'error'),
   );
   const close = el('button', 'inspector-close', '×');
   close.setAttribute('aria-label', 'Close');
@@ -1530,6 +1626,8 @@ function showInspector(change, result) {
   head.appendChild(close);
   panel.appendChild(head);
 
+  if (result.banner) panel.appendChild(el('p', 'inspector-warn', `⚠ ${result.banner}`));
+  if (result.kind === 'url' && result.url) panel.appendChild(el('pre', 'inspector-script', result.url));
   if (result.script) panel.appendChild(el('pre', 'inspector-script', result.script.trim()));
   if (result.stdout) panel.appendChild(el('pre', 'inspector-out', result.stdout.trimEnd()));
   if (result.stderr) panel.appendChild(el('pre', 'inspector-err', result.stderr.trimEnd()));
@@ -1564,7 +1662,9 @@ function showDrawer(target, change) {
     'it will show masked columns in full. TupleScope cannot take that back once the row is open.'));
 
   drawer.appendChild(el('p', 'drawer-lead', target
-    ? `\`${target.alias}\` is a name this repository chose. Bind it yourself, once:`
+    // Not "a name this repository chose": the page lists only this machine's own
+    // bindings, and nothing in a repository names, creates or enables one.
+    ? `\`${target.alias}\` is bound on this machine, but not enabled for this workspace. Enable it yourself, once:`
     : 'Bind a target yourself, once:'));
   const alias = target?.alias ?? 'adminer';
   const s = handoffState.suggest;
@@ -1609,7 +1709,9 @@ function closeDrawer() {
 function handoffStandingLine() {
   if (handoffState.error) return el('p', 'handoff-standing warn', handoffState.error);
   const preferred = (handoffState.targets ?? []).find((t) => t.alias === handoffState.preferred);
-  if (preferred) return el('p', 'handoff-standing', `Inspect → ${preferred.standing}`);
+  if (preferred) {
+    return el('p', preferred.banner ? 'handoff-standing warn' : 'handoff-standing', `Inspect → ${preferred.standing}`);
+  }
   // Said once, where the standing disclosure goes when there *is* a target.
   // Without it the row controls read "Open in…" with nothing behind them and
   // no hint that anything is missing or how to supply it.
@@ -1670,4 +1772,458 @@ async function resetBaseline(button) {
     button.disabled = false;
     render();
   }
+}
+
+/* ── reachability ───────────────────────────────────────────────────────────
+ *
+ * Whether the two things a run needs are there: the API it sends to, and the
+ * database it reads from. The page used to answer both by not asking — it drew
+ * `baseUrl` and a table count, which are configuration, and configuration is
+ * not a connection. The runtime now sends a `Reachability` for each
+ * (`packages/workspace/src/reachability.ts`); this section only draws what it
+ * says, and adds no judgement of its own.
+ *
+ * Three rules it exists to keep:
+ *
+ *   · `not-checked` never becomes `unreachable`. Nothing here paints "we did not
+ *     ask" red, and `Run` is refused only by `unreachable` — telling someone to
+ *     start a database they already started is how they learn to ignore the
+ *     indicator.
+ *   · `checkedAt` is always on screen, as a relative time that keeps moving. A
+ *     green dot with no time on it is a claim about *now* made from evidence
+ *     taken at page load, which is the thing this product exists to refuse.
+ *   · No polling. It is the user's own API. A probe happens on load, when the
+ *     tab comes back, and immediately before a run — never because time passed.
+ */
+
+const reachState = {
+  /** The runtime's last word on each side, or null while it has said nothing. */
+  backend: null,
+  database: null,
+  /**
+   * Why the last *check* did not happen, which is a third thing again: the API
+   * and the database are both unaffected by TupleScope's own runtime not
+   * answering.
+   */
+  probeError: '',
+  probing: false,
+  finishedAt: 0,
+  inFlight: null,
+  /** Which indicator's detail row is open: 'backend', 'database' or null. */
+  expanded: null,
+  /** Kinds whose outage has already been opened once, so it is opened once. */
+  revealed: new Set(),
+  /**
+   * The database's state in the payload `state.workspace.tables` came from.
+   * A later probe cannot explain that list, only the load-time one can.
+   */
+  stateAtLoad: null,
+  announced: '',
+};
+
+/**
+ * Older than this and the indicator stops claiming to describe now.
+ *
+ * Two minutes is long enough that nobody watches it tick over while reading one
+ * screen, and short enough that a probe taken before a coffee is not still being
+ * presented as the current state of a server.
+ */
+const STALE_AFTER_MS = 120_000;
+/** Text-only repaint of the ages and the tense. Nothing on this timer fetches. */
+const FRESHNESS_TICK_MS = 5_000;
+/** `focus` and `visibilitychange` both fire when one tab comes back. */
+const REPROBE_DEBOUNCE_MS = 1_500;
+
+const REACH_GLYPH = { reachable: '●', unreachable: '✕', 'not-checked': '?' };
+const REACH_WORD = { reachable: 'reachable', unreachable: 'unreachable', 'not-checked': 'not checked' };
+/**
+ * Past tense once the probe is stale, because that is what is actually known: at
+ * 14:02 it answered. Whether it answers now is a question nobody has asked
+ * since, and the present tense would be the page answering it anyway.
+ */
+const REACH_WORD_STALE = { reachable: 'was reachable', unreachable: 'was unreachable', 'not-checked': 'not checked' };
+
+const reachName = (kind) => (kind === 'backend' ? backendLabel() : 'Database');
+
+/**
+ * What the user calls the backend: the API, at the address they configured.
+ *
+ * The database gets no address at all — its DSN carries a password and must
+ * never reach the page, and `reason` already says `35 tables in \`public\``,
+ * which is the part a reader can act on.
+ */
+function backendLabel() {
+  const baseUrl = state.workspace?.baseUrl ?? '';
+  if (!baseUrl) return 'API';
+  try {
+    const url = new URL(baseUrl);
+    return `API ${url.host}${url.pathname === '/' ? '' : url.pathname}`;
+  } catch {
+    // An unresolved `${secret:…}` lands here, and so does anything else that is
+    // not a URL. The runtime's own `reason` says which; this just does not
+    // pretend to have parsed it.
+    return `API ${baseUrl}`;
+  }
+}
+
+/**
+ * The stored `Reachability`, or the honest stand-in for not having one.
+ *
+ * No `checkedAt` is invented here. A runtime too old to report this has not
+ * checked, and stamping that with the time we noticed would put a fresh
+ * timestamp on a probe that never happened — the exact failure the field exists
+ * to prevent. The time slot says so instead.
+ */
+function reachabilityOf(kind) {
+  const reported = reachState[kind];
+  if (reported && typeof reported.state === 'string') return reported;
+  return {
+    state: 'not-checked',
+    reason: `this runtime did not report whether the ${kind === 'backend' ? 'API' : 'database'} could be reached`,
+    remedy: 'Restart it (`pnpm start`) and reload.',
+  };
+}
+
+/** Takes both sides out of a `/api/workspace` or `/api/health` payload. */
+function adoptReachability(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  if (payload.backend) reachState.backend = payload.backend;
+  if (payload.database) reachState.database = payload.database;
+  if (reachState.stateAtLoad === null) reachState.stateAtLoad = reachabilityOf('database').state;
+  for (const kind of ['backend', 'database']) {
+    const down = reachabilityOf(kind).state === 'unreachable';
+    // An outage opens its own detail row, once. A remedy behind a click is a
+    // remedy nobody reads, and `Start the database for this workspace, then
+    // reload.` is the whole value of the indicator on the day it goes red. Once
+    // per outage, and never stealing a row the reader opened themselves.
+    if (down && !reachState.revealed.has(kind)) {
+      reachState.revealed.add(kind);
+      reachState.expanded ??= kind;
+    }
+    if (!down) reachState.revealed.delete(kind);
+  }
+}
+
+/**
+ * How long ago, in the words a person would use.
+ *
+ * Null when there is no time to report, which the caller must render as its own
+ * sentence rather than as a blank — a missing timestamp beside a green dot is
+ * indistinguishable from a fresh one.
+ */
+function relativeAge(iso) {
+  if (!iso) return null;
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return null;
+  const ms = Date.now() - at;
+  // A runtime clock a few seconds ahead of the browser's would otherwise make
+  // `checkedAt` read as the future. It is still the newest thing we have.
+  if (ms < 10_000) return { ms: Math.max(ms, 0), text: 'just now' };
+  if (ms < 60_000) return { ms, text: `${Math.floor(ms / 1_000)}s ago` };
+  if (ms < 3_600_000) return { ms, text: `${Math.floor(ms / 60_000)}m ago` };
+  if (ms < 86_400_000) return { ms, text: `${Math.floor(ms / 3_600_000)}h ago` };
+  return { ms, text: `${Math.floor(ms / 86_400_000)}d ago` };
+}
+
+const isStale = (age) => Boolean(age && age.ms > STALE_AFTER_MS);
+
+function whenText(iso) {
+  const age = relativeAge(iso);
+  if (!age) return 'No check time was reported, so this page will not say when — it does not know.';
+  return `Checked ${age.text} · ${new Date(iso).toLocaleString()}${
+    isStale(age) ? ' · older than two minutes, so it no longer describes now' : ''
+  }`;
+}
+
+function renderReachability() {
+  const host = $('#reachStrip');
+  if (!host) return;
+  const parts = [reachChip('backend'), reachChip('database')];
+  if (reachState.probeError) {
+    // Visible without expanding anything. "The last check did not complete" is
+    // the one thing a reader cannot infer from two indicators that look exactly
+    // as they did a minute ago.
+    const note = el('span', 'reach-note', 'could not re-check');
+    note.title = reachState.probeError;
+    parts.push(note);
+  }
+  host.replaceChildren(...parts);
+  announceReachability();
+  renderReachDetail();
+  paintFreshness();
+}
+
+function reachChip(kind) {
+  const value = reachabilityOf(kind);
+  // A state this page has never heard of gets the neutral look rather than one
+  // of the three, because the three are the only ones it knows how to mean.
+  const chip = el('button', `reach-chip ${REACH_WORD[value.state] ? value.state : 'unknown'}`);
+  chip.type = 'button';
+  chip.dataset.reach = kind;
+  chip.dataset.state = value.state;
+  if (value.checkedAt) chip.dataset.checkedAt = value.checkedAt;
+  chip.setAttribute('aria-expanded', String(reachState.expanded === kind));
+  chip.setAttribute('aria-controls', 'reachDetail');
+  // Shape and glyph carry the state as well as colour: a filled disc, a square
+  // cross, a dashed ring with a question mark. Three states have to be three
+  // things to a reader who cannot tell the green from the red.
+  const glyph = el('span', 'reach-glyph', REACH_GLYPH[value.state] ?? '?');
+  glyph.setAttribute('aria-hidden', 'true');
+  chip.append(
+    glyph,
+    el('span', 'reach-name', reachName(kind)),
+    el('span', 'reach-state', REACH_WORD[value.state] ?? value.state),
+    // Filled by `paintFreshness`, which owns every timestamp on this strip.
+    el('span', 'reach-age'),
+  );
+  chip.onclick = () => {
+    reachState.expanded = reachState.expanded === kind ? null : kind;
+    renderReachability();
+  };
+  return chip;
+}
+
+/**
+ * The ages, the tense, and the titles. Called on a timer; fetches nothing.
+ *
+ * Separate from `renderReachability` because the interval must not rebuild the
+ * strip: the chips are buttons, one of them may have focus, and re-creating them
+ * every five seconds would take it away.
+ */
+function paintFreshness() {
+  document.querySelectorAll('.reach-chip').forEach((chip) => {
+    const age = relativeAge(chip.dataset.checkedAt);
+    const stale = isStale(age);
+    chip.classList.toggle('stale', stale);
+    chip.classList.toggle('untimed', !age);
+    const word = chip.querySelector('.reach-state');
+    const state = chip.dataset.state;
+    if (word) word.textContent = (stale ? REACH_WORD_STALE : REACH_WORD)[state] ?? state;
+    const slot = chip.querySelector('.reach-age');
+    if (slot) {
+      slot.textContent = reachState.probing
+        ? 'checking…'
+        : age ? `checked ${age.text}` : 'no time reported';
+    }
+    chip.title = reachTitle(chip.dataset.reach);
+  });
+  // The open detail row ages with everything else: its verdict word, its colour
+  // and its timestamp. Leaving the verdict out is how the row came to contradict
+  // the chip directly above it.
+  document.querySelectorAll('#reachDetail .reach-verdict').forEach((verdict) => {
+    const stale = isStale(relativeAge(verdict.dataset.checkedAt));
+    const state = verdict.dataset.state;
+    verdict.classList.toggle('stale', stale);
+    verdict.textContent = (stale ? REACH_WORD_STALE : REACH_WORD)[state] ?? state;
+  });
+  const when = $('#reachDetail .reach-when');
+  if (when) when.textContent = reachState.probing ? 'Checking now…' : whenText(when.dataset.checkedAt);
+}
+
+/** Everything the detail row says, for a reader who found the chip by hovering. */
+function reachTitle(kind) {
+  const value = reachabilityOf(kind);
+  const age = relativeAge(value.checkedAt);
+  const word = (isStale(age) ? REACH_WORD_STALE : REACH_WORD)[value.state] ?? value.state;
+  const lines = [`${reachName(kind)} · ${word}${value.status ? ` · answered HTTP ${value.status}` : ''}`];
+  lines.push(whenText(value.checkedAt));
+  if (value.reason) lines.push(value.reason);
+  if (value.remedy) lines.push(value.remedy);
+  if (reachState.probeError) lines.push(reachState.probeError);
+  lines.push(reachState.expanded === kind ? 'Click to close the details.' : 'Click for the reason in full.');
+  return lines.join('\n');
+}
+
+/**
+ * The reason and the remedy, in the page rather than in a tooltip.
+ *
+ * `title` is the floor and a hover is not a way to find something. This row
+ * opens on a click, opens itself on a new outage, and wraps the topbar to its own
+ * line rather than covering the columns — a database that is down is worth the
+ * height it takes to explain.
+ */
+function renderReachDetail() {
+  const host = $('#reachDetail');
+  if (!host) return;
+  const kind = reachState.expanded;
+  if (!kind) {
+    host.replaceChildren();
+    host.hidden = true;
+    return;
+  }
+  const value = reachabilityOf(kind);
+  const head = el('div', 'reach-detail-head');
+  // The verdict carries the same two data attributes the chips do, because
+  // `paintFreshness` has to be able to age it. It could not, and the row said a
+  // green "reachable" under a chip that already read "was reachable", with the
+  // line between them saying the probe no longer described now. Three surfaces,
+  // one fact, and the green one is where a reader's eye goes.
+  const verdict = el('span', `reach-verdict ${REACH_WORD[value.state] ? value.state : 'unknown'}`);
+  verdict.dataset.state = value.state;
+  if (value.checkedAt) verdict.dataset.checkedAt = value.checkedAt;
+  head.append(el('h3', null, reachName(kind)), verdict);
+  if (value.status !== undefined) head.append(el('span', 'reach-status', `answered HTTP ${value.status}`));
+  const when = el('p', 'reach-when');
+  if (value.checkedAt) when.dataset.checkedAt = value.checkedAt;
+  const rows = [head, when];
+  // `textContent`, via `el`. A probe's reason is a driver's sentence — this is
+  // where `database "x" does not exist` and a DNS failure arrive — and this page
+  // had an innerHTML fatal screen rewritten for exactly that reason.
+  if (value.reason) rows.push(el('p', 'reach-reason', value.reason));
+  if (value.remedy) rows.push(el('p', 'reach-remedy', value.remedy));
+  if (reachState.probeError) rows.push(el('p', 'reach-reason warn', reachState.probeError));
+
+  const actions = el('div', 'reach-detail-actions');
+  const again = el('button', 'secondary-action', reachState.probing ? 'Checking…' : 'Check again');
+  again.type = 'button';
+  again.disabled = reachState.probing;
+  again.onclick = () => probeReachability({ force: true });
+  const close = el('button', 'secondary-action', 'Close');
+  close.type = 'button';
+  close.onclick = () => {
+    reachState.expanded = null;
+    renderReachability();
+  };
+  actions.append(again, close);
+  rows.push(actions);
+  host.replaceChildren(...rows);
+  host.hidden = false;
+}
+
+/**
+ * Said once, when a state actually changes.
+ *
+ * The live region is in the markup and only its text is written, because a
+ * region created at announcement time is often not announced at all. It is
+ * deliberately not the strip itself: the ages tick every five seconds, and a
+ * live region repeating "checked 35s ago" into someone's ear is worse than none.
+ */
+function announceReachability() {
+  const slot = $('#reachAnnounce');
+  if (!slot) return;
+  const sentence = ['backend', 'database']
+    .map((kind) => {
+      const value = reachabilityOf(kind);
+      return `${reachName(kind)} ${REACH_WORD[value.state] ?? value.state}.${value.remedy ? ` ${value.remedy}` : ''}`;
+    })
+    .join(' ');
+  if (sentence === reachState.announced) return;
+  reachState.announced = sentence;
+  slot.textContent = sentence;
+}
+
+/**
+ * Asks again, for a reason.
+ *
+ * `/api/health` is the same two values the workspace payload carries, without
+ * the scenario list and table names that ride with it.
+ */
+function probeReachability({ force = false } = {}) {
+  if (reachState.inFlight) return reachState.inFlight;
+  if (!force && Date.now() - reachState.finishedAt < REPROBE_DEBOUNCE_MS) return Promise.resolve();
+  reachState.inFlight = runProbe();
+  return reachState.inFlight;
+}
+
+async function runProbe() {
+  const was = reachabilityOf('database').state;
+  reachState.probing = true;
+  paintFreshness();
+  try {
+    adoptReachability(await api('/api/health'));
+    reachState.probeError = '';
+  } catch (error) {
+    // The *check* failed, which says nothing about either the API or the
+    // database — it says TupleScope's own runtime did not answer. So each side
+    // keeps its last word, timestamp and all, and the staleness treatment stops
+    // that word claiming to be current. Overwriting it with `unreachable` would
+    // report this outage as theirs and send the reader to the wrong machine.
+    reachState.probeError = `The last check did not complete · ${error.message}`;
+  } finally {
+    reachState.probing = false;
+    reachState.finishedAt = Date.now();
+    reachState.inFlight = null;
+    renderReachability();
+    // Only when the database's state actually moved. These two rebuild the
+    // request panel, and doing that on every window focus would throw away the
+    // caret and the scroll position in a body someone was editing.
+    if (reachabilityOf('database').state !== was) {
+      renderWorkspace();
+      renderProgress();
+      renderRequestWorkspace();
+    }
+  }
+}
+
+let freshnessTimer = null;
+
+function watchReachability() {
+  if (freshnessTimer) return;
+  freshnessTimer = setInterval(paintFreshness, FRESHNESS_TICK_MS);
+  // Coming back to the tab is the one moment a stale indicator is certain to be
+  // read, so it is the one moment worth spending a request on. Both events fire
+  // on the same return; `REPROBE_DEBOUNCE_MS` makes that one probe.
+  window.addEventListener('focus', () => void probeReachability());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void probeReachability();
+  });
+}
+
+/**
+ * What a control that writes to the database is refused by, or null.
+ *
+ * Only `unreachable`. `not-checked` is not a failure, and a page that greys out
+ * `Run` because nobody asked is a page whose indicator gets ignored.
+ */
+function databaseRefusal() {
+  const value = reachabilityOf('database');
+  if (value.state !== 'unreachable') return null;
+  // No invented remedy. The runtime supplies one for every unreachable database
+  // (`startTheDatabase` in health-route.ts is its floor), and a fourth copy of
+  // that sentence here would be a copy that drifts from the three it was written
+  // to match. If a remedy ever does not arrive, saying nothing is honest and
+  // guessing is not.
+  const remedy = value.remedy ?? '';
+  return {
+    remedy,
+    title: ['The database did not answer when it was last checked.', value.reason, remedy].filter(Boolean).join('\n'),
+    reason: value.reason ?? '',
+  };
+}
+
+/**
+ * The sentence beside the control, and the way out of it.
+ *
+ * The button is grey for a reason that is two minutes old at worst; without
+ * `Check again` here, a reader who has just started their database is stuck
+ * looking at a refusal with no way to retract it but a reload.
+ */
+function databaseRefusalNote() {
+  const refusal = databaseRefusal();
+  if (!refusal) return null;
+  const note = el('p', 'run-refusal');
+  // Past tense, deliberately, and no time in it: this line is not on the
+  // freshness timer, so "the database is unreachable" would be a present-tense
+  // claim left standing by a render from four minutes ago. What it says is what
+  // stays true — the last check did not get an answer — and the indicator
+  // beside it carries the when.
+  note.append(
+    el('strong', null, 'The database did not answer'),
+    // Joined rather than interpolated: the remedy is whatever the runtime sent
+    // and is not invented here, so it can be absent, and `· ${''}` leaves a
+    // separator pointing at nothing.
+    el(
+      'span',
+      null,
+      ['nothing is sent until it does', refusal.remedy].filter(Boolean).map((part) => `· ${part}`).join(' '),
+    ),
+  );
+  const again = el('button', 'secondary-action', reachState.probing ? 'Checking…' : 'Check again');
+  again.type = 'button';
+  again.disabled = reachState.probing;
+  again.onclick = () => probeReachability({ force: true });
+  note.appendChild(again);
+  // The driver's sentence on hover, and in full in the indicator's detail row.
+  if (refusal.reason) note.title = refusal.reason;
+  return note;
 }

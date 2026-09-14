@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TupleScope</title>
-    <link rel="stylesheet" href="/styles.css?v=15" />
+    <link rel="stylesheet" href="/styles.css?v=17" />
   </head>
   <body>
     <header class="topbar">
@@ -15,7 +15,28 @@
           <span class="tagline">Run the story. Inspect the evidence.</span>
         </div>
       </div>
-      <div class="topbar-meta" id="workspaceMeta" aria-live="polite"></div>
+      <div class="topbar-right">
+        <!--
+          Connectivity before the workspace chips. The chip row is a horizontal
+          scroller that grows with the workspace name, and the two indicators
+          must not be the things that scroll or wrap out of sight.
+        -->
+        <div class="reach-strip" id="reachStrip" role="group" aria-label="API and database connectivity"></div>
+        <!--
+          Written only when a state changes. The strip cannot be the live region
+          itself: its timestamps tick every five seconds, and a region that
+          repeats "checked 40s ago" into someone's ear is worse than none.
+        -->
+        <span class="reach-announce" id="reachAnnounce" aria-live="polite"></span>
+        <div class="topbar-meta" id="workspaceMeta" aria-live="polite"></div>
+      </div>
+      <!--
+        The reason and the remedy for one indicator, on its own line inside the
+        topbar — so opening it grows the header instead of covering the column
+        the reader is working in. Closed by `hidden`, which is why no rule in
+        styles.css gives it a `display`.
+      -->
+      <div class="reach-detail" id="reachDetail" hidden></div>
     </header>
 
     <main class="layout">
@@ -62,6 +83,6 @@
     <script src="/steps.js?v=1"></script>
     <script src="/verdict.js?v=1"></script>
     <script src="/chart.js?v=1"></script>
-    <script src="/app.js?v=38"></script>
+    <script src="/app.js?v=40"></script>
   </body>
 </html>

@@ -6,5 +6,7 @@
  */
 export * from './config.js';
 export * from './credentials.js';
+export * from './open.js';
+export * from './reachability.js';
 export * from './session.js';
 export * from './history.js';

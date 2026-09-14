@@ -129,6 +129,44 @@ export async function listBaseTables(client: PoolClient): Promise<string[]> {
 }
 
 /**
+ * Is the database there — in one round trip, one row, two scalars.
+ *
+ * For a caller that asks repeatedly and does not want the names: the runtime's
+ * `/api/health` runs on every window focus, and `listBaseTables` returns a row
+ * per table so a reader can list them, which is a page-load cost rather than a
+ * per-focus one. The count and the schema are what a reachability report says
+ * out loud ("35 tables in `public`"), so this returns exactly those and nothing
+ * else.
+ *
+ * Same `current_schema()`, same `relkind = 'r'` and same `\_%` filter as
+ * `listBaseTables`, so the number here counts the tables that one would list.
+ * A count that narrowed differently would let two surfaces of the same product
+ * disagree about how many tables there are. Measured against a live server on a
+ * schema holding two ordinary tables, one `_internal` and one view: both
+ * answered two, and a `search_path` naming nothing that exists answered
+ * `(no current schema)` here and 0 tables rather than throwing.
+ */
+export async function countBaseTables(
+  client: PoolClient,
+): Promise<{ tables: number; schema: string }> {
+  const { rows } = await client.query<{ tables: string; schema: string | null }>(
+    `SELECT count(*)::text AS tables, current_schema()::text AS schema
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = current_schema()
+        AND c.relkind = 'r'
+        AND c.relname NOT LIKE '\\_%'`,
+  );
+  return {
+    tables: Number(rows[0]?.tables ?? 0),
+    // Null when `search_path` names nothing that exists. Same sentence
+    // `describeScope` reports, because an empty pair of backticks on screen
+    // reads as a bug in TupleScope rather than as a search path to fix.
+    schema: rows[0]?.schema ?? '(no current schema)',
+  };
+}
+
+/**
  * What is in scope, and — the part that matters — what is not.
  *
  * `listBaseTables` narrows three times in one WHERE clause, and until this
@@ -156,6 +194,11 @@ export interface ScopeReport {
   partitionedParents: string[];
   /** Not readable by this capture at all. */
   foreignTables: string[];
+  /**
+   * Watched, but with no primary key and no unique index: changes are counted
+   * and not paired to a previous version, and a deletion is invisible.
+   */
+  keyless: string[];
 }
 
 export async function describeScope(client: PoolClient): Promise<ScopeReport> {
@@ -196,8 +239,10 @@ export async function describeScope(client: PoolClient): Promise<ScopeReport> {
     nameFiltered: [],
     partitionedParents: [],
     foreignTables: [],
+    keyless: [],
   };
   const elsewhere = new Map<string, number>();
+  const watched: string[] = [];
 
   for (const row of rows) {
     if (!row.here) {
@@ -209,8 +254,17 @@ export async function describeScope(client: PoolClient): Promise<ScopeReport> {
     if (row.relkind === 'p') report.partitionedParents.push(row.table_name);
     else if (row.relkind === 'f') report.foreignTables.push(row.table_name);
     else if (row.table_name.startsWith('_')) report.nameFiltered.push(row.table_name);
-    else report.watched++;
+    else watched.push(row.table_name);
   }
+  report.watched = watched.length;
+
+  // Watched, but blind in one direction: with no primary key and no unique
+  // index a row's changes can be counted and not paired, and a deletion there
+  // leaves nothing to find. Only the run used to say so — `status` and `check`
+  // described a keyless table exactly like any other, and the first a reader
+  // heard of it was an undecided run. Same identity rule the engines use.
+  const identities = watched.length > 0 ? await readTableIdentities(client, watched) : new Map();
+  report.keyless = watched.filter((table) => identities.get(table)?.strategy === 'full-row-multiset');
 
   report.otherSchemas = [...elsewhere].map(([schema, tables]) => ({ schema, tables }));
   return report;
@@ -249,6 +303,41 @@ export async function listColumnsByTable(client: PoolClient): Promise<Map<string
     let columns = byTable.get(row.table_name);
     if (!columns) byTable.set(row.table_name, (columns = new Set()));
     columns.add(row.column_name);
+  }
+  return byTable;
+}
+
+/**
+ * Every base table's columns with their declared types, in table order.
+ *
+ * For MCP `describe_table`, whose description promised "its columns, types"
+ * and printed neither. `format_type` rather than `typname`, so a reader sees
+ * `numeric(18,8)` and `character varying(255)` — the declared type, modifiers
+ * and all — which is what decides how a value in an assertion compares. Same
+ * scope filter as `listColumnsByTable`, so the two describe the same tables.
+ */
+export async function listColumnTypesByTable(
+  client: PoolClient,
+): Promise<Map<string, Array<{ name: string; type: string }>>> {
+  const { rows } = await client.query<{ table_name: string; column_name: string; column_type: string }>(
+    `SELECT c.relname::text AS table_name,
+            a.attname::text AS column_name,
+            format_type(a.atttypid, a.atttypmod) AS column_type
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_attribute a ON a.attrelid = c.oid
+      WHERE n.nspname = current_schema()
+        AND c.relkind = 'r'
+        AND c.relname NOT LIKE '\\_%'
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+      ORDER BY c.relname, a.attnum`,
+  );
+  const byTable = new Map<string, Array<{ name: string; type: string }>>();
+  for (const row of rows) {
+    let columns = byTable.get(row.table_name);
+    if (!columns) byTable.set(row.table_name, (columns = []));
+    columns.push({ name: row.column_name, type: row.column_type });
   }
   return byTable;
 }

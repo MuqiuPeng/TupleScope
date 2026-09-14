@@ -13,7 +13,7 @@
  * the change that would otherwise ship a silent green into somebody's CI.
  */
 
-import { keyLabel } from '@tuplescope/core';
+import { keyLabel, outcomeOfStep } from '@tuplescope/core';
 import type {
   AssertionCandidate,
   AssertionResult,
@@ -427,18 +427,12 @@ function outcomeFor(
   step: Run['steps'][number],
   verdict: RunVerdict,
 ): StepOutcome {
-  // Re-derived through the same policy the verdict used, so a step can never
-  // read as passed inside a run the same policy called undecided.
-  if (step.status === 'errored') return 'errored';
-  if (step.status === 'skipped' || step.status === 'pending') return 'not-run';
-  if (step.status === 'failed' || step.assertions.some((a) => a.status === 'failed')) return 'failed';
-  if (
-    verdict.policy.unevaluable === 'error' &&
-    step.assertions.some((a) => a.status === 'unevaluable')
-  ) {
-    return 'undecided';
-  }
-  return 'passed';
+  // Core's rule, through the same policy the verdict used, so a step can never
+  // read as passed inside a run the same policy called undecided. This was a
+  // copy of that rule, and the copy looked only at assertions: a step whose
+  // capture was `scope-truncated` stored `outcome: "passed"` inside a run the
+  // verdict called undecided (ts-verify re-honesty-runtime run_mtxeox8c).
+  return outcomeOfStep(step, verdict.policy);
 }
 
 function stepDuration(step: Run['steps'][number]): number {

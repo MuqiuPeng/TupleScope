@@ -38,7 +38,12 @@
 
 import { parseTemplate, type Part } from './reference.js';
 import { Secret } from './secret.js';
-import { SecretNotConfigured, type SecretId, type SecretStore } from './store.js';
+import {
+  SecretNotConfigured,
+  SecretStoreRequired,
+  type SecretId,
+  type SecretStore,
+} from './store.js';
 
 /**
  * Who a run is resolving credentials as.
@@ -145,14 +150,7 @@ async function resolveSecret(
 
   // 3. The store — and only the store. Never the environment.
   if (!options.store) {
-    throw new Error(
-      `${options.where} needs the secret \`${name}\`, and no secret store is available. ` +
-        `${options.storeUnavailable ?? ''}\n` +
-        `\`\${secret:…}\` reads only the secret store — it will not fall back to an ` +
-        `environment variable, because a credential whose origin depends on what happened to ` +
-        `be exported cannot be reasoned about. To use the environment deliberately, write ` +
-        `\`\${SOME_VAR}\` instead.`,
-    );
+    throw new SecretStoreRequired(name, options.where, options.storeUnavailable);
   }
   const found = await options.store.get(id);
   if (!found) throw new SecretNotConfigured(name, id, options.where);

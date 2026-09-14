@@ -17,6 +17,15 @@ import {
 } from '@tuplescope/expr';
 import { HttpRunner, HttpRunnerError } from '@tuplescope/http-runner';
 import { promoteCandidates } from './promote.js';
+import {
+  describeReference,
+  INSTEAD_OF_A_REFERENCE,
+  referencesIn,
+  SECRET_REFERENCE,
+  unescapeDeep,
+  unescapeReferences,
+  type RequestReference,
+} from './references.js';
 import { ValueUnavailable } from '@tuplescope/core';
 import type {
   AssertionResult,
@@ -24,6 +33,7 @@ import type {
   ChangeSet,
   DatabaseAdapter,
   Dataset,
+  Expr,
   RowsRead,
   Run,
   Scenario,
@@ -144,7 +154,7 @@ export class ScenarioEngine {
     mutable.declaredSteps = declared.map((step) => step.id);
 
     for (const step of declared) {
-      const result = await this.runStep(step, scope, mutable, now);
+      const result = await this.runStep(step, scope, mutable, now, dataset.steps);
       steps.push(result);
       onProgress?.({ type: 'step-finished', run, step: result });
 
@@ -168,16 +178,30 @@ export class ScenarioEngine {
     scope: CaptureScope,
     run: { -readonly [K in keyof Run]: Run[K] },
     now: () => Date,
+    /** The whole dataset, in order — so a missing variable can name the step that captures it. */
+    steps: ReadonlyArray<Step>,
   ): Promise<StepResult> {
     const startedAt = now().toISOString();
+    // `$${` becomes `${` in the author's text, before any captured value is put
+    // in. A value from the API is data, so a `$${` inside one is sent as it came.
     const request = {
       ...step.request,
-      path: template(step.request.path, run.variables),
+      path: template(unescapeReferences(step.request.path), run.variables),
+      // Templated like the path and the body. A header was the one place a
+      // `{{name}}` went out as those characters, captured or not, and the step
+      // passed (measured: ts-fix2/engine-ws/probe.mjs).
+      ...(step.request.headers !== undefined
+        ? {
+            headers: templateDeep(unescapeDeep(step.request.headers), run.variables) as Readonly<
+              Record<string, string>
+            >,
+          }
+        : {}),
       ...(step.request.idempotencyKey !== undefined
-        ? { idempotencyKey: template(step.request.idempotencyKey, run.variables) }
+        ? { idempotencyKey: template(unescapeReferences(step.request.idempotencyKey), run.variables) }
         : {}),
       ...(step.request.body !== undefined
-        ? { body: templateDeep(step.request.body, run.variables) }
+        ? { body: templateDeep(unescapeDeep(step.request.body), run.variables) }
         : {}),
     };
 
@@ -187,13 +211,21 @@ export class ScenarioEngine {
       // it, which is the difference between a two-second fix and a hunt.
       const missing = unresolved(request);
       if (missing.length > 0) {
-        throw new MissingVariableError(missing, step.id);
+        throw new MissingVariableError(missing, step.id, steps);
       }
-      // Would otherwise go out verbatim and fail as an authentication problem
-      // rather than as the unsupported thing it is.
-      const secrets = secretReferences(request);
-      if (secrets.length > 0) {
-        throw new SecretInScenarioError(secrets, step.id);
+      // Every `${…}`, not only the exact `${secret:name}` spelling: `${VAR}` in
+      // a header, `${VAR:-default}` in a body, `${secret: x}` and `${SECRET:x}`
+      // all went out as those characters, and the step passed. Read off the
+      // author's text rather than the request about to be sent, because a `${`
+      // in a captured value is data, not a reference.
+      const references = referencesIn(step.request);
+      if (references.length > 0) {
+        throw references.every((r) => SECRET_REFERENCE.test(r.reference))
+          ? new SecretInScenarioError(
+              [...new Set(references.map((r) => SECRET_REFERENCE.exec(r.reference)![1]!))],
+              step.id,
+            )
+          : new ReferenceInScenarioError(references, step.id);
       }
 
       const { result: exchange, changes } = await this.options.adapter.capture(scope, () =>
@@ -355,13 +387,17 @@ export class ScenarioEngine {
     variables: Readonly<Record<string, string>>,
     current: CurrentRows,
   ): AssertionResult {
-    const templated = template(source, variables, { quote: true });
-    // A surviving `{{name}}` means nothing captured it. Predicates are raw
-    // source slices rather than parsed nodes, so the evaluator's own
-    // "no variable was captured" guard never sees them — the text is compared
-    // against the column literally, matches nothing, and every negative
-    // assertion built on it passes for the wrong reason.
-    const stranded = [...templated.matchAll(PLACEHOLDER)].map((m) => m[1]);
+    // A `{{name}}` nothing captured. Predicates are raw source slices rather
+    // than parsed nodes, so the evaluator's own "no variable was captured"
+    // guard never sees them — the text is compared against the column
+    // literally, matches nothing, and every negative assertion built on it
+    // passes for the wrong reason.
+    //
+    // Read from the source, not from the templated text: a captured value that
+    // itself contains `{{x}}` is data, and must not read as a missing variable.
+    const stranded = [
+      ...new Set([...source.matchAll(PLACEHOLDER)].map((m) => m[1]!).filter((n) => variables[n] === undefined)),
+    ];
     if (stranded.length > 0) {
       return {
         source,
@@ -373,6 +409,10 @@ export class ScenarioEngine {
     }
 
     try {
+      // Inside the try: a captured value that cannot be placed without
+      // changing the question is refused as `Unevaluable`, like any other
+      // assertion this run cannot decide.
+      const templated = template(source, variables, { quote: true });
       const expr = parseExpr(templated);
       const { passed, actual, expected } = evaluateAssertion(expr, {
         changes,
@@ -416,19 +456,179 @@ export function template(
   variables: Readonly<Record<string, string>>,
   options?: { quote?: boolean },
 ): string {
-  return text.replace(PLACEHOLDER, (match, name: string, offset: number) => {
-    const value = variables[name];
-    if (value === undefined) return match;
-    if (!options?.quote) return value;
-    // Already inside quotes — as `where(id = '{{payment_id}}')` is, matching how
-    // the examples quote every other literal. Quoting again yields `"p1"` with
-    // the quotes part of the value, which matches no row, so a `count(...) == 0`
-    // written to catch a duplicate passes while the duplicate sits in the diff.
-    const before = text[offset - 1];
-    const after = text[offset + match.length];
-    if ((before === '"' || before === "'") && before === after) return value;
-    return JSON.stringify(value);
+  if (options?.quote) return templateExpression(text, variables);
+  return text.replace(PLACEHOLDER, (match, name: string) => variables[name] ?? match);
+}
+
+/** One `{{name}}` in an assertion, and whether it stands inside a string literal. */
+interface Slot {
+  readonly start: number;
+  readonly end: number;
+  readonly name: string;
+  /** The literal's quote character, or null for a placeholder standing on its own. */
+  readonly quote: '"' | "'" | null;
+}
+
+/**
+ * Every placeholder in an assertion, located by the expression lexer's rules.
+ *
+ * Mirrors `tokenize` in packages/expr/src/parse.ts: outside a string, `{{`
+ * runs to the next `}}` as one token and a quote there opens nothing; inside a
+ * string, a backslash takes the next character with it, and only the opening
+ * quote closes it. Deciding by the characters either side of the placeholder
+ * — which is what this replaced — saw `"PVT-{{x}}"` as a bare placeholder and
+ * produced `"PVT-"pay_1""`, and saw `"{{x}}"` as safely quoted however many
+ * quotes the captured value itself contained.
+ */
+function slotsIn(text: string): Slot[] {
+  const slots: Slot[] = [];
+  const at = (index: number, quote: Slot['quote']): number | undefined => {
+    const match = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/y;
+    match.lastIndex = index;
+    const found = match.exec(text);
+    if (!found) return undefined;
+    slots.push({ start: index, end: index + found[0].length, name: found[1]!, quote });
+    return index + found[0].length;
+  };
+  let quote: Slot['quote'] = null;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === '\\' && i + 1 < text.length) {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+        i++;
+        continue;
+      }
+      i = at(i, quote) ?? i + 1;
+      continue;
+    }
+    if (text.startsWith('{{', i)) {
+      const close = text.indexOf('}}', i + 2);
+      // Unterminated: the lexer refuses it, in its own words.
+      if (close === -1) break;
+      at(i, null);
+      i = close + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    i++;
+  }
+  return slots;
+}
+
+/**
+ * Puts captured values into an assertion so each lands as exactly one literal.
+ *
+ * A captured value comes from an API response, so it is data that must never
+ * become syntax. Standing on its own a placeholder becomes a quoted literal;
+ * inside a literal it is spliced as text, escaped by the lexer's rule — a
+ * backslash before the quote character and before a backslash. Before this, a
+ * placeholder the author had quoted was spliced raw, so a value of
+ * `x" or "a" == "a` turned `response.body.label == "{{v}}"` into a comparison
+ * that is always true.
+ *
+ * Predicates are the exception, and the reason is in packages/expr: a
+ * predicate is handed to `parsePredicate` as raw source, and its quoted values
+ * have no escapes at all. There, `\"` is a backslash followed by a closing
+ * quote, and `a\\b` is four characters — an escaped value would silently ask a
+ * different question than the one written, which is a green nobody can see
+ * through. So a value that needs escaping inside a predicate is refused,
+ * rather than spliced wrongly. An ordinary id needs no escaping, which is why
+ * `rows(t, id = "{{id}}")` and `.where(id = '{{id}}')` read as before.
+ */
+function templateExpression(text: string, variables: Readonly<Record<string, string>>): string {
+  const slots = slotsIn(text).filter((slot) => variables[slot.name] !== undefined);
+  const needsEscape = (slot: Slot): boolean =>
+    /[\\]/.test(variables[slot.name]!) || variables[slot.name]!.includes(slot.quote ?? '"');
+  const inPredicate = slots.some(needsEscape) ? predicateSlots(text, slots) : undefined;
+
+  let out = '';
+  let from = 0;
+  slots.forEach((slot, index) => {
+    const value = variables[slot.name]!;
+    out += text.slice(from, slot.start);
+    from = slot.end;
+    if (needsEscape(slot) && (inPredicate === null || inPredicate?.has(index))) {
+      const quote = slot.quote ?? '"';
+      throw new Unevaluable(
+        `the captured \`${slot.name}\` contains ${value.includes(quote) ? `a \`${quote}\`` : 'a backslash'}, ` +
+          `and it would land inside a predicate's quoted value, which has no escapes — spliced in, ` +
+          `it would change what the predicate asks. Select the row by a column whose value is ` +
+          `plain, or compare \`{{${slot.name}}}\` outside the predicate.`,
+      );
+    }
+    const escaped = value.replace(slot.quote === "'" ? /[\\']/g : /[\\"]/g, (c) => `\\${c}`);
+    out += slot.quote ? escaped : `"${escaped}"`;
   });
+  return out + text.slice(from);
+}
+
+/**
+ * Which slots sit inside a predicate, read off the real parser.
+ *
+ * Each slot is swapped for a marker the lexer takes as plain string content,
+ * and the predicates of the parsed tree are searched for the markers. `null`
+ * when the source will not parse — then no slot can be placed, and the caller
+ * refuses rather than guess.
+ */
+function predicateSlots(text: string, slots: ReadonlyArray<Slot>): ReadonlySet<number> | null {
+  // NUL can sit in a string literal and in a predicate's quoted value, and no
+  // scenario file writes one, so a marker cannot be mistaken for authored text.
+  const marker = (index: number): string => `\u0000${index}\u0000`;
+  let marked = '';
+  let from = 0;
+  slots.forEach((slot, index) => {
+    marked += text.slice(from, slot.start) + (slot.quote ? marker(index) : `"${marker(index)}"`);
+    from = slot.end;
+  });
+  marked += text.slice(from);
+  let expr: Expr;
+  try {
+    expr = parseExpr(marked);
+  } catch {
+    return null;
+  }
+  const predicates: string[] = [];
+  const walk = (node: Expr): void => {
+    switch (node.node) {
+      case 'select':
+        if (node.selector.predicate) predicates.push(node.selector.predicate);
+        return;
+      case 'predicate':
+        predicates.push(node.predicate);
+        walk(node.source);
+        return;
+      case 'column':
+      case 'aggregate':
+      case 'hasWrite':
+      case 'isEmpty':
+      case 'atomic':
+      case 'writeCount':
+        walk(node.source);
+        return;
+      case 'compare':
+      case 'logical':
+        walk(node.left);
+        walk(node.right);
+        return;
+      case 'not':
+        walk(node.operand);
+        return;
+      default:
+        return;
+    }
+  };
+  walk(expr);
+  const found = new Set<number>();
+  slots.forEach((_, index) => {
+    if (predicates.some((p) => p.includes(marker(index)))) found.add(index);
+  });
+  return found;
 }
 
 function templateDeep(value: unknown, variables: Readonly<Record<string, string>>): unknown {
@@ -471,13 +671,17 @@ function extract(
 }
 
 function describe(error: unknown): NonNullable<StepResult['error']> {
+  // A problem in the scenario file. These fell through to `capture`, which is
+  // what the step's status column and the web UI print, and it sent the reader
+  // to the database for a line they had written.
+  if (error instanceof SecretInScenarioError || error instanceof ReferenceInScenarioError) {
+    return { kind: 'configuration', message: error.message };
+  }
   if (error instanceof MissingVariableError) {
     return {
       kind: 'configuration',
       message: error.message,
-      remedy:
-        'Run the whole dataset once so the earlier steps capture it, or start from ' +
-        'the step that does.',
+      remedy: error.remedy,
     };
   }
   if (error instanceof HttpRunnerError) {
@@ -545,19 +749,60 @@ function selectSteps(dataset: Dataset, options: RunOptions): ReadonlyArray<Step>
 }
 
 class MissingVariableError extends Error {
+  /**
+   * What to do about it, naming the step that captures each variable.
+   *
+   * "Start from the step that does" left the reader to open the file and find
+   * it — and when no earlier step captures the name at all (a typo, or a
+   * capture placed after its first use), no step would ever do, and the advice
+   * sent them looking for one.
+   */
+  readonly remedy: string;
+
   constructor(
     readonly names: ReadonlyArray<string>,
     readonly stepId: string,
+    steps: ReadonlyArray<Step>,
   ) {
     super(
       `Step \`${stepId}\` needs ${names.map((n) => `\`${n}\``).join(', ')}, which nothing has captured yet.`,
     );
     this.name = 'MissingVariableError';
+
+    const index = steps.findIndex((s) => s.id === stepId);
+    const capturing = (list: ReadonlyArray<Step>, name: string): string[] =>
+      list.filter((s) => s.capture && Object.hasOwn(s.capture, name)).map((s) => `\`${s.id}\``);
+    const found: string[] = [];
+    const lost: string[] = [];
+    for (const name of names) {
+      const earlier = capturing(steps.slice(0, Math.max(index, 0)), name);
+      if (earlier.length > 0) {
+        found.push(`\`${name}\` is captured by ${earlier.join(' or ')}`);
+        continue;
+      }
+      const later = capturing(steps.slice(Math.max(index, 0)), name);
+      lost.push(
+        later.length > 0
+          ? `\`${name}\` is captured only by ${later.join(' or ')}, which runs after \`${stepId}\``
+          : `No step before \`${stepId}\` captures \`${name}\``,
+      );
+    }
+    this.remedy =
+      lost.length === 0
+        ? 'Run the whole dataset once so the earlier steps capture it, or start from the step ' +
+          `that does: ${found.join('; ')}.`
+        : `${lost.join('; ')} — check the spelling, or capture it in an earlier step.` +
+          (found.length > 0 ? ` (${found.join('; ')}.)` : '');
   }
 }
 
 /** Names still wrapped in braces after templating — i.e. never captured. */
-function unresolved(request: { path: string; body?: unknown; idempotencyKey?: string }): string[] {
+function unresolved(request: {
+  path: string;
+  body?: unknown;
+  idempotencyKey?: string;
+  headers?: Readonly<Record<string, string>>;
+}): string[] {
   const found = new Set<string>();
   const scan = (text: string): void => {
     for (const match of text.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) {
@@ -567,6 +812,7 @@ function unresolved(request: { path: string; body?: unknown; idempotencyKey?: st
   scan(request.path);
   if (request.idempotencyKey) scan(request.idempotencyKey);
   if (request.body !== undefined) scan(JSON.stringify(request.body) ?? '');
+  if (request.headers !== undefined) scan(JSON.stringify(request.headers));
   return [...found];
 }
 
@@ -599,12 +845,29 @@ export class SecretInScenarioError extends Error {
   }
 }
 
-function secretReferences(request: unknown): string[] {
-  const found = new Set<string>();
-  for (const match of (JSON.stringify(request) ?? '').matchAll(/\$\{secret:([a-z0-9][a-z0-9_-]*)\}/g)) {
-    found.add(match[1]!);
+/**
+ * Any other `${…}` that reached a request: an environment reference, a
+ * misspelled secret, anything else of that shape.
+ *
+ * Refused, not sent. Nothing in a scenario file resolves one, so the characters
+ * would reach the API unchanged, and a header that went out as
+ * `Bearer ${TOKEN}` failed as an authentication problem, if it failed at all. A
+ * body field that went out as `${MERCHANT_ID:-m1}` failed nowhere. The sentence
+ * names each field and says what to write instead.
+ */
+export class ReferenceInScenarioError extends Error {
+  constructor(
+    readonly references: ReadonlyArray<RequestReference>,
+    stepId: string,
+  ) {
+    const found = references.map(describeReference);
+    super(
+      `Step \`${stepId}\`: ${found.length === 1 ? found[0] : `${found.slice(0, -1).join(', ')} and ${found.at(-1)}`}, ` +
+        `and a scenario file resolves no \`\${…}\` reference, so ${found.length === 1 ? 'it' : 'they'} would ` +
+        `reach the API as those characters — ${INSTEAD_OF_A_REFERENCE}.`,
+    );
+    this.name = 'ReferenceInScenarioError';
   }
-  return [...found];
 }
 
 export * from './load.js';
